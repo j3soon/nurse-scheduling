@@ -131,6 +131,8 @@ class ContextCompactor:
         if body and body[0].get("_compaction_summary"):
             previous_summary = body.pop(0)["content"].removeprefix(SUMMARY_PREFIX + "\n")
         if len(body) < 2:
+            if manual:
+                yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
             return
         window = self.window or 32768
         reserve = min(16384, window // 4)
@@ -143,6 +145,19 @@ class ContextCompactor:
         cut = _cut_point(body, recent_tokens)
         if cut < 1:
             cut = len(body)
+        if manual and cut < len(body) and body[cut]["role"] == "assistant":
+            # Manual compaction has no active turn. Include the completed reply
+            # instead of summarizing its question while retaining the larger answer.
+            cut = next(
+                (
+                    index
+                    for index in range(cut + 1, len(body))
+                    if body[index]["role"] == "user"
+                    and not body[index].get("_tool_image")
+                    and not str(body[index].get("content", "")).startswith(STATUS_PREFIX)
+                ),
+                len(body),
+            )
         # If a single recent tool batch fills the window, summarize that batch too.
         candidate_keep = sum(not message.get("_tool_image", False) for message in body[cut:])
         candidate = apply_compaction(messages, CompactionEntry("", candidate_keep, 0))
@@ -209,7 +224,9 @@ class ContextCompactor:
                             summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
             entry = CompactionEntry(summary, keep, self.tokens(messages, tools))
             if history_chars(apply_compaction(messages, entry)) >= history_chars(messages):
-                raise ProviderError("Compaction did not reduce context")
+                self.failed = True
+                yield AgentCompactionEnd(reason, False, tokens_before, skipped=True)
+                return
         except ProviderError:
             self.failed = True
             logger.warning("AI context compaction failed. Original context retained.", exc_info=True)

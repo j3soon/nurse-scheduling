@@ -41,6 +41,7 @@ export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response'
   if (entry.kind === 'compaction') return {
     running: 'Summarizing conversation', completed: 'Conversation summarized',
     failed: 'Summarization failed', interrupted: 'Summarization interrupted',
+    skipped: 'No compaction needed',
   }[entry.state];
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';

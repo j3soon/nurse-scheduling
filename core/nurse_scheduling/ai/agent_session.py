@@ -877,6 +877,7 @@ class AgentSession:
         messages = build_provider_messages(
             history, snapshot.schedule_yaml, "", max_download_bytes=settings.max_download_bytes
         )[:-1]
+        skipped = False
         async with runtime.concurrency_limit:
             compactor = ContextCompactor(
                 runtime.provider,
@@ -898,6 +899,8 @@ class AgentSession:
                     wire = output.consume(event)
                     if wire is not None:
                         events.emit(wire)
+                    if isinstance(event, AgentCompactionEnd):
+                        skipped = event.skipped
                     if isinstance(event, AgentCompactionEnd) and event.success:
                         events.emit(
                             {
@@ -910,7 +913,7 @@ class AgentSession:
                                 ),
                             }
                         )
-        if not self.agent.state.messages:
+        if not self.agent.state.messages and not skipped:
             events.emit(
                 {
                     "type": "warning",

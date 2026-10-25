@@ -41,32 +41,36 @@ CASES = json.loads((FIXTURES / "chat-export-parity.json").read_text(encoding="ut
 
 
 @pytest.mark.parametrize(
-    "success,aborted,state,label",
+    "success,aborted,skipped,state,label",
     [
-        (True, False, "completed", "Conversation summarized"),
-        (False, False, "failed", "Summarization failed"),
-        (False, True, "interrupted", "Summarization interrupted"),
+        (True, False, False, "completed", "Conversation summarized"),
+        (False, False, False, "failed", "Summarization failed"),
+        (False, True, False, "interrupted", "Summarization interrupted"),
+        (False, False, True, "skipped", "No compaction needed"),
     ],
 )
-def test_saved_compaction_status_matches_live_activity_and_exports(success, aborted, state, label):
+@pytest.mark.parametrize("reason", ["threshold", "manual"])
+def test_saved_compaction_status_matches_live_activity_and_exports(success, aborted, skipped, state, label, reason):
     snapshot = saved_case("saved-rich")
     run = snapshot["runs"][0]
     snapshot["runs"] = [run]
-    data = {"run_id": run["id"], "reason": "threshold", "tokens_before": 25000}
+    data = {"run_id": run["id"], "reason": reason, "tokens_before": 25000}
     snapshot["events"] = [
         {"type": "compaction_start", "data": data, "occurred_at": snapshot["snapshot_at"]},
         {
             "type": "compaction_end",
-            "data": {**data, "success": success, "aborted": aborted},
+            "data": {**data, "success": success, "aborted": aborted, "skipped": skipped},
             "occurred_at": snapshot["snapshot_at"],
         },
     ]
     messages, _ = project_saved_chat(snapshot)
     activity = messages[-1]["activity"]
-    assert len(activity) == 1 and activity[0]["kind"] == "compaction" and activity[0]["state"] == state
+    assert len(activity) == (2 if reason == "manual" else 1)
+    assert activity[-1]["kind"] == "compaction" and activity[-1]["state"] == state
     for format in ("html", "markdown"):
         rendered = build_saved_chat_export(snapshot, format)
-        assert label in rendered and activity[0]["text"] in rendered
+        assert label in rendered and activity[-1]["text"] in rendered
+        assert rendered.count("You requested context compaction.") == (1 if reason == "manual" else 0)
 
 
 def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():

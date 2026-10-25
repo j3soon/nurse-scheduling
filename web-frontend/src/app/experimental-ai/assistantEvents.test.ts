@@ -35,6 +35,18 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it.each([true, false])('records a manual request and skips unchanged context, with start=%s', withStart => {
+    const message = reduce([
+      ...(withStart ? [{ type: 'compaction_start' as const, reason: 'manual' as const, tokensBefore: 4000 }] : []),
+      { type: 'compaction_end', reason: 'manual', tokensBefore: 4000, success: false, aborted: false, skipped: true },
+      { type: 'done' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'skipped',
+        text: 'Compaction would not reduce context. The original context was kept.' },
+    ]);
+  });
   it('preserves the exact compaction summary and marks it discarded after a failed run', () => {
     const compacted = reduce([
       { type: 'compaction_end', reason: 'threshold', tokensBefore: 25000, success: true, aborted: false,

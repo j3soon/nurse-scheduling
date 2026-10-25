@@ -546,6 +546,7 @@ describe('ExperimentalAiPage', () => {
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByText('You requested context compaction.')).toBeVisible();
     await act(async () => {
       stream.onEvent!({ type: 'compaction_end', runId: 'compact-run', reason: 'manual', tokensBefore: 12000,
         success: true, aborted: false, summary: 'Keep the night constraints.', keepMessages: 2, estimatedTokensAfter: 1000 });

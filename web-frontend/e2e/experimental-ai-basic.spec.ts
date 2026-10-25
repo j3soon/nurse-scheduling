@@ -532,6 +532,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(input).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
@@ -550,8 +551,35 @@ test('compacts context on demand and restores the summary after reload', async (
   expect(captured.messageBodies).toHaveLength(1);
   await page.screenshot({ path: '../artifacts/manual-compaction.png', fullPage: true });
   await page.reload();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
+});
+
+test('keeps short context with a manual request notice instead of a compaction failure', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Hello.']);
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await input.fill('Hi');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Compact context', exact: true }).click();
+  captured.publishEvent('compaction_end', { run_id: 'manual-summary', reason: 'manual', tokens_before: 4000,
+    success: false, aborted: false, skipped: true });
+  captured.publishEvent('done', { run_id: 'manual-summary' });
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No compaction needed', { exact: true })).toBeVisible();
+  await expect(input).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeEnabled();
+  await expect(page.getByText('Summarization failed', { exact: true })).toBeHidden();
+  await page.getByText('No compaction needed', { exact: true }).click();
+  await expect(page.getByText('Compaction would not reduce context. The original context was kept.', { exact: true })).toBeVisible();
+  expect(captured.messageBodies).toHaveLength(1);
+  await page.screenshot({ path: '../artifacts/manual-compaction-skipped.png', fullPage: true });
+  await page.reload();
+  await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No compaction needed', { exact: true })).toBeVisible();
+  await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
 });
 
 test('shows compaction status and the reduced context before an answer', async ({ page }) => {

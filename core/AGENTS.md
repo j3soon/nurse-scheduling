@@ -173,6 +173,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   compaction boundary. A status message cannot stand in for the current request.
   Manual compaction shares run admission, Stop, replay, and persistence. Keep
   its request ID idempotent. Do not create a user question or allocate a workspace.
+  Cover short questions with longer completed replies. Treat a summary that does
+  not reduce context as unchanged context rather than a provider failure.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including

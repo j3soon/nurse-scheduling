@@ -108,6 +108,8 @@ class RunOutput:
             }
             if event.estimated_tokens_after is not None:
                 result["estimated_tokens_after"] = event.estimated_tokens_after
+            if event.skipped:
+                result["skipped"] = True
             if event.success and event.summary is not None:
                 result["summary"] = event.summary
                 result["keep_messages"] = event.keep_messages

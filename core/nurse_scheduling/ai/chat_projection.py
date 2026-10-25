@@ -176,6 +176,10 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         assistant = turn["assistant"]
         activity = assistant.setdefault("activity", [])
         if kind in {"compaction_start", "compaction_end"}:
+            if data["reason"] == "manual" and not any(
+                entry["kind"] == "compaction" and entry["reason"] == "manual" for entry in activity
+            ):
+                activity.append({"kind": "notice", "text": "You requested context compaction."})
             state = (
                 "running"
                 if kind == "compaction_start"
@@ -183,6 +187,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if data["success"]
                 else "interrupted"
                 if data.get("aborted")
+                else "skipped"
+                if data.get("skipped")
                 else "failed"
             )
             entry = {
@@ -195,6 +201,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if state == "completed"
                 else "Summarization stopped. The original context was kept."
                 if state == "interrupted"
+                else "Compaction would not reduce context. The original context was kept."
+                if state == "skipped"
                 else "Summarization failed. The original context was kept.",
             }
             if "summary" in data:

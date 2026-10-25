@@ -185,6 +185,7 @@ def _summary(entry):
             "completed": "Conversation summarized",
             "failed": "Summarization failed",
             "interrupted": "Summarization interrupted",
+            "skipped": "No compaction needed",
         }[entry["state"]]
     if kind == "schedule-check":
         return "Schedule check passed" if entry["ok"] else "Schedule check failed"

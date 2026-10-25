@@ -69,6 +69,16 @@ it('decodes compaction status and rejects malformed estimates', () => {
   expect(() => decodeEvent('compaction_end', {
     reason: 'overflow', tokens_before: 25000, success: true, aborted: false, estimated_tokens_after: -1,
   })).toThrow('invalid compaction');
+  expect(decodeEvent('compaction_end', {
+    reason: 'manual', tokens_before: 4000, success: false, aborted: false, skipped: true,
+  })).toEqual([
+    { type: 'compaction_end', reason: 'manual', tokensBefore: 4000, success: false, aborted: false, skipped: true },
+  ]);
+  for (const outcome of [{ skipped: 'yes' }, { skipped: true, success: true }, { skipped: true, aborted: true }]) {
+    expect(() => decodeEvent('compaction_end', {
+      reason: 'manual', tokens_before: 4000, success: false, aborted: false, ...outcome,
+    })).toThrow('invalid compaction');
+  }
 });
 
 function streamedResponse(chunks: string[]): Response {

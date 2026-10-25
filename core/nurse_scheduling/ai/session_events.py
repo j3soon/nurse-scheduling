@@ -173,6 +173,7 @@ class CompactionEndEvent(CompactionFields):
     type: Literal["compaction_end"]
     success: bool
     aborted: bool
+    skipped: NotRequired[bool]
     estimated_tokens_after: NotRequired[int]
     summary: NotRequired[str]
     keep_messages: NotRequired[int]

@@ -115,18 +115,25 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       };
     case 'reasoning':
       return { ...message, activity: appendReasoningActivity(activity, event.text) };
-    case 'compaction_start':
-      return { ...message, activity: [...activity, { kind: 'compaction', state: 'running', reason: event.reason,
+    case 'compaction_start': {
+      const notice: ActivityEntry[] = event.reason === 'manual'
+        ? [{ kind: 'notice', text: 'You requested context compaction.' }] : [];
+      return { ...message, activity: [...activity, ...notice, { kind: 'compaction', state: 'running', reason: event.reason,
         text: 'The conversation is being summarized.' }] };
+    }
     case 'compaction_end': {
-      const state = event.success ? 'completed' : event.aborted ? 'interrupted' : 'failed';
+      const state = event.success ? 'completed' : event.aborted ? 'interrupted' : event.skipped ? 'skipped' : 'failed';
+      const notice: ActivityEntry[] = event.reason === 'manual'
+        && !activity.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')
+        ? [{ kind: 'notice', text: 'You requested context compaction.' }] : [];
       const entry: ActivityEntry = { kind: 'compaction', state, reason: event.reason,
         ...(event.summary === undefined ? {} : { summary: event.summary }),
         ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
-          ? 'Summarization stopped. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+          ? 'Summarization stopped. The original context was kept.' : event.skipped
+            ? 'Compaction would not reduce context. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
-      return { ...message, activity: index < 0 ? [...activity, entry] : [...activity.slice(0, index), entry, ...activity.slice(index + 1)] };
+      return { ...message, activity: index < 0 ? [...activity, ...notice, entry] : [...activity.slice(0, index), entry, ...activity.slice(index + 1)] };
     }
     case 'truncated':
       return { ...message, truncated: true };

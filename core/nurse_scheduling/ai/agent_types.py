@@ -84,6 +84,7 @@ class AgentCompactionEnd:
     aborted: bool = False
     summary: str | None = None
     keep_messages: int = 0
+    skipped: bool = False
 
 
 @dataclass(frozen=True)

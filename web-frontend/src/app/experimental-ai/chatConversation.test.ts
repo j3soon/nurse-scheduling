@@ -44,8 +44,8 @@ describe('stored conversation compatibility', () => {
     });
   });
 
-  it('restores conversation summary activity after a reload', () => {
-    const summary = { kind: 'compaction', state: 'completed', reason: 'threshold', text: 'The conversation was summarized.' };
+  it.each(['completed', 'skipped'])('restores %s conversation summary activity after a reload', state => {
+    const summary = { kind: 'compaction', state, reason: 'manual', text: 'Compaction status.' };
     sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
       ...conversation(), messages: [{ id: 'answer', role: 'assistant', content: 'Answer', activity: [summary] }],
     }));

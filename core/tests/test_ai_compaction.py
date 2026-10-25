@@ -170,6 +170,47 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("has_exchange", [False, True], ids=["empty", "short-exchange"])
+def test_manual_compaction_skips_context_that_cannot_be_reduced(has_exchange):
+    import httpx
+
+    from . import test_ai_basic as basic
+
+    async def exercise():
+        provider = CompactionProvider()
+        app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
+            ) as client,
+        ):
+            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = app.state.session_store._sessions[sid]
+            original = [UserMessage("Hi"), AssistantMessage("Hello")] if has_exchange else []
+            for entry in original:
+                session._add_entry(entry)
+            publications = []
+            session.subscribe(publications.append)
+            request = {"message_id": "compact-short-context"}
+            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            assert response.status_code == 202
+            async with asyncio.timeout(3):
+                while app.state.runs.busy(sid):
+                    await asyncio.sleep(0)
+            assert (await client.post(f"/sessions/{sid}/compact", json=request)).json() == response.json()
+            end = next(event for event in publications if event["type"] == "compaction_end")
+            assert end["skipped"] and not end["success"] and not end["aborted"]
+            assert len(provider.summaries) == int(has_exchange)
+            assert not provider.requests
+            assert session.transcript == original
+            assert app.state.sandbox_factory.created == []
+            assert not any(event["type"] in {"warning", "error"} for event in publications)
+            assert publications[-1]["type"] == "done"
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("invalid", ["primary", "unavailable", None])
 def test_live_compaction_validates_models_before_starting_paid_cases(monkeypatch, invalid):
     from nurse_scheduling.ai.models import AvailableModel
@@ -736,8 +777,9 @@ def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
     assert json.dumps(messages) == before
 
 
+@pytest.mark.parametrize("short_history", [False, True], ids=["long-question", "short-question"])
 @pytest.mark.parametrize("failure", [None, "error", "cancel"])
-def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure):
+def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure, short_history):
     import httpx
 
     from . import test_ai_basic as basic
@@ -754,7 +796,11 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
         ):
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             session = app.state.session_store._sessions[sid]
-            original = [UserMessage("Keep nights " + "x" * 12000), AssistantMessage("Earlier answer")]
+            original = (
+                [UserMessage("Hello"), AssistantMessage("I can help with schedules. " * 30)]
+                if short_history
+                else [UserMessage("Keep nights " + "x" * 12000), AssistantMessage("Earlier answer")]
+            )
             for entry in original:
                 session._add_entry(entry)
             publications = []
@@ -793,6 +839,9 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             if failure is None:
                 assert isinstance(session.transcript[-1], CompactionEntry)
                 assert end["summary"] == session.transcript[-1].summary
+                if short_history:
+                    assert original[-1].text in provider.summaries[0][0][-1]["content"]
+                    assert session.transcript[-1].keep_messages == 0
                 assert any(event["type"] == "context_usage" and event["estimated"] for event in publications)
             else:
                 assert session.transcript == original

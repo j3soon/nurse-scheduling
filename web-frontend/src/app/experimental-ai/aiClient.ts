@@ -240,6 +240,7 @@ interface SsePayload {
   tokens_before?: unknown;
   success?: unknown;
   aborted?: unknown;
+  skipped?: unknown;
   estimated_tokens_after?: unknown;
   call_id?: unknown;
   status?: unknown;
@@ -580,6 +581,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     if (!['threshold', 'overflow', 'manual'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
+        || (payload.skipped !== undefined && (typeof payload.skipped !== 'boolean' || (payload.skipped && (payload.success || payload.aborted))))
         || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
         || (payload.summary !== undefined && typeof payload.summary !== 'string')
         || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
@@ -588,6 +590,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     const common = { reason: payload.reason as 'threshold' | 'overflow' | 'manual', tokensBefore: payload.tokens_before as number };
     if (eventType === 'compaction_start') emit({ type: 'compaction_start', ...common });
     else emit({ type: 'compaction_end', ...common, success: payload.success as boolean, aborted: payload.aborted as boolean,
+      ...(payload.skipped === undefined ? {} : { skipped: payload.skipped as boolean }),
       ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
       ...(payload.keep_messages === undefined ? {} : { keepMessages: payload.keep_messages as number }),
       ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
