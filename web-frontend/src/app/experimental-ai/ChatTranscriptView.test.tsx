@@ -138,6 +138,28 @@ it.each([undefined, 'failed', 'stopped'] as const)('keeps footer details on the 
     .closest('article')).toBe(answer);
 });
 
+it('keeps manual compaction metadata on the notice before its summary', () => {
+  const message: ChatMessage = {
+    id: 'compact', role: 'assistant', content: '',
+    createdAt: 1000, responseStartedAt: 1000, responseCompletedAt: 2500,
+    modelSelection: { model: 'test-model', reasoning: 'high' },
+    costSummary: { usd: '0.02', calls: 1, pending: 0, unavailable: 0 },
+    activity: [
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
+        summary: 'Keep nights.', keepMessages: 2 },
+    ],
+  };
+  const saved = structuredClone(message);
+  renderTranscript([message]);
+  const notice = screen.getByText('Conversation summarized').closest('article');
+  expect(screen.getByText('test-model · high').closest('article')).toBe(notice);
+  expect(screen.getByText(/^Estimated turn cost:/).closest('article')).toBe(notice);
+  expect(screen.getByText(/1\.5s/).closest('article')).toBe(notice);
+  expect(screen.getByText('User · Conversation summary').closest('article')).not.toBe(notice);
+  expect(message).toEqual(saved);
+});
+
 it('keeps failed-summary details and context notices separate from the assistant', () => {
   renderTranscript([{ id: 'answer', role: 'assistant', content: 'Partial.', status: 'failed', failureReason: 'Failed.', activity: [
     { kind: 'compaction', reason: 'threshold', state: 'completed', text: 'Summarized.', summary: 'Old summary.', invalidated: true },

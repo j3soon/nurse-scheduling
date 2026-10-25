@@ -402,7 +402,7 @@ def _display_messages(messages):
             parts.append({**base, "content": ""})
         footer = next(
             (part for part in reversed(parts) if part["role"] == "assistant" and part.get("presentation") != "notice"),
-            parts[-1],
+            next((part for part in reversed(parts) if part["role"] == "assistant"), parts[-1]),
         )
         footer.update({key: value for key, value in message.items() if key in footer_fields})
         for part in parts:

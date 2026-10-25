@@ -264,6 +264,40 @@ def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
     assert markdown.index("Estimated turn cost") < markdown.index("## App notice")
 
 
+def test_manual_compaction_keeps_metadata_on_notice_before_summary():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "responseStartedAt": 1000,
+            "responseCompletedAt": 2500,
+            "modelSelection": {"model": "test-model", "reasoning": "high"},
+            "costSummary": {"usd": "0.02", "calls": 1, "pending": 0, "unavailable": 0},
+            "activity": [
+                {"kind": "notice", "text": "You requested context compaction."},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "The conversation was summarized.",
+                    "summary": "Keep nights.",
+                    "keepMessages": 2,
+                },
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    notice, summary = build_html_chat(messages, metadata).split('<article class="')[1:]
+    assert notice.startswith('message assistant app-notice"')
+    for detail in ("Model: test-model", "Estimated turn cost", "1970-01-01T00:00:02.500Z", "1.5s"):
+        assert detail in notice and detail not in summary
+    markdown = build_markdown_chat(messages, metadata)
+    for detail in ("Model: test-model", "Estimated turn cost", "Completed:", "Response time: 1.5s"):
+        assert markdown.index(detail) < markdown.index("## User · Conversation summary")
+    assert messages == original
+
+
 def saved_case(variant):
     snapshot = copy.deepcopy(json.loads((FIXTURES / "chat-export.json").read_text(encoding="utf-8")))
     if variant == "missing-terminal":

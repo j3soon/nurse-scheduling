@@ -542,12 +542,18 @@ test('compacts context on demand and restores the summary after reload', async (
     summary: 'Keep the night constraints.', keep_messages: 2 });
   captured.publishEvent('context_usage', { run_id: 'manual-summary', used_chars: 500, max_chars: 200000,
     used_tokens: 1000, max_tokens: 32000, estimated: true });
+  const costSummary = { usd: '0.02', calls: 1, pending: 0, unavailable: 0, version: 10 };
+  captured.publishEvent('cost_summary', { run_id: 'manual-summary', conversation: costSummary, run: costSummary });
   captured.publishEvent('done', { run_id: 'manual-summary' });
   await expect(input).toBeEnabled();
   await expect(page.getByText('Context 3.1% used (est.)')).toBeVisible();
   await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
+  const notice = page.getByText('Conversation summarized', { exact: true }).locator('xpath=ancestor::article');
+  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.locator('time')).toBeVisible();
+  await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
   await page.getByText('Conversation summary', { exact: true }).click();
   await expect(page.getByText('[Conversation summary]\nKeep the night constraints.', { exact: true })).toBeVisible();
   expect(captured.messageBodies).toHaveLength(1);
@@ -555,6 +561,8 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.reload();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
+  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
 });
 
