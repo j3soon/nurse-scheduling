@@ -39,8 +39,14 @@ From the repository root, save the selected job's failed-step logs:
 
 ```sh
 mkdir -p artifacts
-gh run view RUN_ID --repo OWNER/REPO --attempt ATTEMPT --job JOB_ID \
-  --log-failed > artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+log_tmp=$(mktemp artifacts/.ci-RUN_ID-JOB_ID-ATTEMPT.XXXXXX)
+if gh run view RUN_ID --repo OWNER/REPO --attempt ATTEMPT --job JOB_ID \
+  --log-failed > "$log_tmp"; then
+  mv "$log_tmp" artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+else
+  rm -f "$log_tmp"
+  false
+fi
 ```
 
 Keep the run, job, and attempt in cache filenames. Reuse cached logs for
@@ -56,15 +62,25 @@ Run and job summary endpoints do not return log contents. The download endpoint
 returns a redirect that expires after one minute, so follow it immediately:
 
 ```sh
-curl --fail --location --silent --show-error \
+log_tmp=$(mktemp artifacts/.ci-RUN_ID-JOB_ID-ATTEMPT.XXXXXX)
+if curl --fail-with-body --location --silent --show-error \
   -H 'Accept: application/vnd.github+json' \
   https://api.github.com/repos/OWNER/REPO/actions/jobs/JOB_ID/logs \
-  > artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+  > "$log_tmp"; then
+  mv "$log_tmp" artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+else
+  cat "$log_tmp" >&2
+  rm -f "$log_tmp"
+  false
+fi
 ```
 
+If curl lacks `--fail-with-body`, capture the HTTP status and response body
+separately and treat HTTP errors as failures. Keep the body for diagnosis.
 Public log access can still be denied. Report the specific authentication,
 permission, rate-limit, retention, or availability error. Reuse only successful
-downloads as cached logs. If access remains unavailable, reproduce locally or
+downloads as cached logs. Both examples replace the cache only after a successful
+download. If access remains unavailable, reproduce locally or
 request `GH_TOKEN` through the container environment, as the root `AGENTS.md`
 describes.
 
