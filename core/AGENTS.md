@@ -330,8 +330,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   the file version referenced by an earlier transcript entry.
   After rejecting optimizer files, check that a restart does not load an older
   workbook as the latest result.
-- Bound sandbox file and command output bytes while receiving them. Truncating
-  tool output after buffering does not bound the AI service's memory use.
+- Bound sandbox file bytes while receiving them. Capture full command logs inside
+  the sandbox and return a bounded tail with its log path. Check whether SDK
+  callbacks run after buffering. Truncation there does not bound backend memory.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
@@ -371,6 +372,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   they stopped or that replay is safe.
   Evaluate tool deadlines through the tool's timeout parameter. Shell timers can
   start separate process groups and exercise a different cleanup path.
+  In live cleanup tests, wait for a child's ready signal before starting the
+  deadline. Cover timeouts before startup as separate cases.
 - Sandbox allocation is lazy. Only file tools and optimizer start need a
   sandbox. Optimizer status and finish-now controls must not allocate or resume
   one. Tests that verify attachment hydration must call a sandbox tool.

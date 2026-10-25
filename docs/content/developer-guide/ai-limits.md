@@ -50,7 +50,7 @@ Model token limits bound generated text and reasoning.
 | Command deadline | Optional tool timeout, no default | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS=60`. A tool can request a shorter deadline. |
 | Agent run deadline | N/A | `AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600` (6 hours) |
 | Default sandbox file read | N/A | 64 MiB. Schedule and ZIP reads use their specific limits. |
-| Captured command output | Pi truncates model-facing output and saves full output | Defensive 64 MiB capture ceiling, plus Pi-style model-facing truncation. Exceeding the capture ceiling fails the run. |
+| Captured command output | Bounded tail in memory, full output saved to a file | Same. Capture runs inside the sandbox. The model receives at most 2,000 lines or 50 KiB and the full log path when truncated. |
 | JSON request body | N/A | 64 MiB, counted before JSON parsing. |
 | Schedule YAML | N/A | 16,000,000 bytes (16 MB) |
 

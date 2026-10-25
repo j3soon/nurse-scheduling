@@ -542,7 +542,10 @@ cleaned while the AI service is offline.
 Defensive input, history, response, and tool-count bounds use code defaults.
 Optional environment overrides are documented in the limits page and omitted
 from the environment examples. Questions have no separate character limit.
-JSON request bodies are bounded to 64 MiB before parsing. See the
+JSON request bodies are bounded to 64 MiB before parsing. Command output streams
+to a sandbox log. The model sees
+the last 2,000 lines or 50 KiB and the full log path when truncated. Sandbox
+disk capacity and command deadlines bound log capture. See the
 [AI runtime limits and Pi comparison](https://github.com/j3soon/nurse-scheduling/blob/dev/docs/content/developer-guide/ai-limits.md).
 
 Attachments are always enabled. Every upload is copied unchanged into the

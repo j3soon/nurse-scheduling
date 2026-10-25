@@ -472,13 +472,16 @@ turn, so each replayed tool call has a result.
 The `tool_start` event carries the tool name and arguments before execution, so
 the UI and evaluation artifact retain a command even if the sandbox fails. A
 later `tool` event carries its result and whether the call did what it was
-asked. Sandbox backends return raw command output to the AI layer. The AI
-`bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
-and stores the full output in the temporary sandbox when truncation occurs.
-This display policy stays outside the provider-neutral sandbox interface.
-The E2B adapter separately bounds combined stdout and stderr to 64 MiB while
-receiving it. Exceeding that bound stops the stream, destroys the sandbox,
-and fails the turn. File reads stream at most 64 MiB by default. Schedule
+asked. The E2B command wrapper combines stdout and stderr as they arrive and
+writes the full log inside the sandbox. It retains a bounded UTF-8 tail and
+sends that tail with line and byte counts through the SDK. The `bash` adapter
+keeps the last 2,000 lines or 50 KiB and links the full log when truncated.
+Small logs are deleted after capture. A command timeout preserves partial logs
+when process cleanup succeeds. Logs live until the disposable sandbox closes.
+Command output has no separate capture ceiling. Sandbox disk capacity and
+execution deadlines bound resource use. A 1 MiB transport bound protects the
+small JSON report, independently of the log's size.
+File reads stream at most 64 MiB by default. Schedule
 reads use the configured schedule limit, and ZIP reads use the download limit.
 
 When one model response requests multiple reads, the reads run concurrently
