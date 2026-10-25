@@ -45,6 +45,9 @@ elif [[ "$run_full_suite" == false ]]; then
   for file in "${changed_files[@]}"; do
     relative="${file#core/}"
     case "$relative" in
+      tests/ai/*)
+        test_paths+=(tests/test_ai_testcases.py)
+        ;;
       tests/test_ai_*.py | tests/ai_fixtures/*)
         ai_changed=true
         ;;

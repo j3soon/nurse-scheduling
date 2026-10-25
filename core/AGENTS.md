@@ -16,7 +16,8 @@ project packages are installed system-wide, so run `python`, `pytest`, and
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
-  files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
+  files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
+  `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
   suites. Tests marked `requires_solver` skip automatically when their optional
   runtime package is absent. An installed runtime that fails its availability
@@ -691,6 +692,14 @@ stderr. Do not replace an explicitly selected file with a fallback.
   in `tests/test_schedule_pulp_highs.py` and `tests/test_schedule_pulp_scip.py`.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
+- Add human-reviewed AI regression conversations under `tests/ai/testcases/`.
+  Validate definitions with `python -m tests.ai.runner validate` without AI
+  credentials. Run behavior with `python -m tests.ai.runner run` and the existing
+  provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
+  Keep this tester independent of `ai_eval` and `ai_fixtures`. Inspect failed
+  replies before changing production guidance. Accept equivalent phrasing in
+  text assertions and require tool calls only when their use is part of the
+  intended behavior. Do not weaken assertions to hide a live behavior failure.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.

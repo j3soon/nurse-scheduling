@@ -35,10 +35,12 @@ for path in \
   core/nurse_scheduling/ai/prompts/system-steps.json \
   core/tests/test_ai_basic.py \
   core/tests/test_ai_provider.py \
+  core/tests/test_ai_testcases.py \
   core/tests/test_preference_audit.py \
   core/tests/test_scheduler.py \
   core/tests/ai_eval/cases/basics/case.json \
   core/tests/ai_fixtures/chat-export.json \
+  core/tests/ai/testcases/basics/case.yaml \
   web-frontend/src/app/page.tsx \
   web-frontend/src/app/page.test.tsx \
   web-frontend/e2e/page.spec.ts \
@@ -94,6 +96,19 @@ assert_line "$output" 'test: tests/test_ai_basic.py'
 assert_line "$output" 'test: tests/test_preference_audit.py'
 assert_no_line "$output" 'test: tests/test_scheduler.py'
 write_fixture core/tests/ai_eval/cases/basics/case.json
+
+printf 'change\n' >> "$fixture_root/core/tests/ai/testcases/basics/case.yaml"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_testcases.py'
+assert_no_line "$output" 'test: tests/test_ai_basic.py'
+assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+write_fixture core/tests/ai/testcases/basics/case.yaml
+
+rm -- "$fixture_root/core/tests/ai/testcases/basics/case.yaml"
+output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+assert_line "$output" 'test: tests/test_ai_testcases.py'
+assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+write_fixture core/tests/ai/testcases/basics/case.yaml
 
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
 
