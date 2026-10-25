@@ -977,11 +977,13 @@ export async function getChatExportUrl(sessionId: string, authToken: string | nu
   });
   if (!response.ok) throw await responseError(response);
   const value: unknown = await response.json();
-  if (!isRecord(value) || (value.download_token !== null && (typeof value.download_token !== 'string'
+  if (!isRecord(value) || typeof value.download_id !== 'string' || !/^[a-f0-9]{32}$/.test(value.download_id)
+    || (value.download_token !== null && (typeof value.download_token !== 'string'
     || !/^[0-9]{1,20}\.[0-9a-f]{64}$/.test(value.download_token)))) {
     throw new Error('The AI backend returned an invalid chat download link.');
   }
-  return value.download_token === null ? path : `${path}?token=${encodeURIComponent(value.download_token)}`;
+  const preparedPath = `${path}?download=${value.download_id}`;
+  return value.download_token === null ? preparedPath : `${preparedPath}&token=${encodeURIComponent(value.download_token)}`;
 }
 
 /** Summarize an idle session without asking a new question. */

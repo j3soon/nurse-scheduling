@@ -434,41 +434,45 @@ describe('ExperimentalAiPage', () => {
     expect(versions).not.toHaveTextContent('versions do not match');
   });
 
-  it('downloads the server archive directly without building a browser Blob', async () => {
+  it('downloads the prepared server archive in a hidden frame without a popup or Blob', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
     const user = userEvent.setup();
     const blob = vi.spyOn(URL, 'createObjectURL');
-    const replace = vi.fn();
-    const tab = { document: document.implementation.createHTMLDocument(), location: { replace }, close: vi.fn(), closed: false, opener: window };
-    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+    const open = vi.spyOn(window, 'open');
     let finishPreparation!: (url: string) => void;
     mockGetChatExportUrl.mockReturnValue(new Promise<string>(resolve => { finishPreparation = resolve; }));
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
-    expect(open).toHaveBeenCalledExactlyOnceWith('about:blank', '_blank');
-    expect(tab.opener).toBeNull();
-    expect(tab.document.body.textContent).toContain('Preparing the chat download');
-    expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Preparing export…' })).toBeDisabled();
+    expect(document.querySelector('iframe')).toBeNull();
     expect(mockGetChatExportUrl).toHaveBeenCalledWith('session-id', null, '/ai');
-    finishPreparation('/ai/sessions/session-id/export?token=temporary');
-    await waitFor(() => expect(replace).toHaveBeenCalledExactlyOnceWith('/ai/sessions/session-id/export?token=temporary'));
+    finishPreparation('/ai/sessions/session-id/export?download=prepared&token=temporary');
+    await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
+    const frame = document.querySelector('iframe')!;
+    expect(frame.hidden).toBe(true);
+    await waitFor(() => expect(frame.src).toContain('/export?download=prepared&token=temporary'));
+    expect(open).not.toHaveBeenCalled();
     expect(blob).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: 'HTML', exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Markdown', exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText('Chat download requested. Check your browser’s downloads.')).toBeVisible();
+    // A server error loads a document instead of starting an attachment download.
+    fireEvent.load(frame);
+    expect(screen.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
   });
 
-  it('reports a blocked export tab before requesting an archive', async () => {
+  it('reports archive preparation errors inline without opening a download frame', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
-    vi.spyOn(window, 'open').mockReturnValue(null);
+    mockGetChatExportUrl.mockRejectedValue(new Error('The chat archive could not be created. Try again.'));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
-    expect(screen.getByText('Allow pop-ups for this site to export the chat, then try again.')).toBeVisible();
-    expect(mockGetChatExportUrl).not.toHaveBeenCalled();
+    expect(screen.getByText('The chat archive could not be created. Try again.')).toBeVisible();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
   });
 
   it('disables chat export when the server has no saved history', async () => {

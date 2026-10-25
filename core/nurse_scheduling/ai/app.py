@@ -27,7 +27,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
-from typing import Annotated, Literal, cast
+from typing import Annotated, BinaryIO, Literal, cast
 from uuid import UUID, uuid4
 
 import anyio
@@ -46,7 +46,7 @@ from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_regis
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
-from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, create_chat_archive
+from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, PreparedChatArchives, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
 from .history import ChatHistory, stop_maintenance
@@ -325,6 +325,7 @@ def create_app(
     event_stream = SessionEventStream(max_sessions=settings.max_sessions)
     store = SessionStore(settings, event_stream=event_stream)
     recovery = SessionRecovery(history_log, store, event_stream)
+    prepared_exports = PreparedChatArchives()
     runs = SessionRuns()
     concurrency_limit = asyncio.Semaphore(settings.max_concurrent_requests)
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
@@ -481,6 +482,11 @@ def create_app(
             )
         )
 
+    async def maintain_prepared_exports() -> None:
+        while True:
+            await asyncio.sleep(30)
+            prepared_exports.prune()
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
@@ -489,6 +495,7 @@ def create_app(
         if history_log is not None and not await history_log.write("initialize"):
             raise RuntimeError("AI history database initialization failed")
         maintenance = asyncio.create_task(history_log.maintain()) if history_log is not None else None
+        export_maintenance = asyncio.create_task(maintain_prepared_exports())
         try:
             async with managed_sandbox_factory(sandbox_factory):
                 try:
@@ -500,6 +507,8 @@ def create_app(
                     await session_optimizer.close()
                     await recovery.close()
         finally:
+            await stop_maintenance(export_maintenance)
+            prepared_exports.close()
             if maintenance is not None:
                 await stop_maintenance(maintenance)
 
@@ -636,43 +645,7 @@ def create_app(
         )
         return CreateSessionResponse(id=session.id)
 
-    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
-    async def prepare_export(
-        session_id: str,
-        request: Request,
-        response: Response,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> dict[str, str | None]:
-        """Authorize a native download without putting a bearer credential in its URL."""
-        store.require_owned(session_id, owner)
-        if recovery.history is None:
-            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
-        credential = auth_registry.get(request.state.auth_credential_id)
-        token = (
-            None
-            if credential is None
-            else create_stream_token(
-                credential.token,
-                export_scope(session_id),
-                ttl_seconds=300,
-            )
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return {"download_token": token}
-
-    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
-    async def export_session(
-        session_id: str,
-        request: Request,
-        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
-    ) -> Response:
-        """Stream the same complete ZIP that the administrator command writes."""
-        if getattr(request.state, "export_link", False):
-            # The signed link authorizes this session in place of browser ownership. The
-            # archive reads storage directly, so the session need not be loaded.
-            owner = None
-        else:
-            store.require_owned(session_id, owner)
+    async def build_chat_archive(session_id: str, owner: str | None) -> BinaryIO:
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)
@@ -697,6 +670,53 @@ def create_app(
             raise HTTPException(status_code=503, detail="The chat archive could not be created. Try again.") from exc
         finally:
             release()
+        return archive
+
+    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    async def prepare_export(
+        session_id: str,
+        request: Request,
+        response: Response,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> dict[str, str | None]:
+        """Prepare the ZIP before returning a short-lived native download link."""
+        store.require_owned(session_id, owner)
+        if recovery.history is None:
+            raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
+        try:
+            with prepared_exports.reserve(session_id) as (download_id, entry):
+                entry.archive = await build_chat_archive(session_id, owner)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        credential = auth_registry.get(request.state.auth_credential_id)
+        token = (
+            None
+            if credential is None
+            else create_stream_token(
+                credential.token,
+                export_scope(session_id),
+                ttl_seconds=300,
+            )
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return {"download_token": token, "download_id": download_id}
+
+    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
+    async def export_session(
+        session_id: str,
+        request: Request,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Stream the prepared ZIP, rebuilding after a restart or an expired cache."""
+        if getattr(request.state, "export_link", False):
+            # The signed link authorizes this session in place of browser ownership. The
+            # archive reads storage directly, so the session need not be loaded.
+            owner = None
+        else:
+            store.require_owned(session_id, owner)
+        archive = prepared_exports.take(session_id, request.query_params.get("download", ""))
+        if archive is None:
+            archive = await build_chat_archive(session_id, owner)
         return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])

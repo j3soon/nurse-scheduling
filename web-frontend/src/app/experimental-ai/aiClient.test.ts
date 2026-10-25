@@ -1031,11 +1031,11 @@ describe('AI client', () => {
   });
 
   it.each([null, `1234567890.${'a'.repeat(64)}`])('requests a native chat download link (%s)', async token => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token })));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token, download_id: "a".repeat(32) })));
     vi.stubGlobal('fetch', fetchMock);
     const path = 'https://ai.example.test/sessions/session%2Fid/export';
     await expect(getChatExportUrl('session/id', 'ai-token', 'https://ai.example.test'))
-      .resolves.toEqual(token === null ? path : `${path}?token=${token}`);
+      .resolves.toEqual(`${path}?download=${"a".repeat(32)}${token === null ? "" : `&token=${token}`}`);
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(path, {
       method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' },
     });

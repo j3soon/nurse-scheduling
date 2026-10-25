@@ -30,12 +30,13 @@ interface ExportBackend {
   endpoint: string;
   requests: string[];
   saved: boolean;
+  preparationDelay: number;
   error: 'POST' | 'GET' | null;
 }
 
 const test = base.extend<{ backend: ExportBackend }>({
   backend: async ({ baseURL }, runTest) => {
-    const backend: ExportBackend = { endpoint: '', requests: [], saved: true, error: null };
+    const backend: ExportBackend = { endpoint: '', requests: [], saved: true, preparationDelay: 0, error: null };
     // Native Chromium downloads bypass route interception. Serve real bytes over HTTP.
     const server = createServer((request, response) => {
       request.resume();
@@ -60,7 +61,7 @@ const test = base.extend<{ backend: ExportBackend }>({
         if (backend.error === request.method) {
           response.statusCode = 503;
           body = { detail: 'Saved history is temporarily unavailable.' };
-        } else if (request.method === 'POST') body = { download_token: null };
+        } else if (request.method === 'POST') body = { download_token: null, download_id: 'a'.repeat(32) };
         else {
           response.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="complete-chat.zip"' }).end(archiveBytes);
           return;
@@ -81,7 +82,9 @@ const test = base.extend<{ backend: ExportBackend }>({
         body = { run_id: 'export-run' };
       } else body = { expires_in_seconds: 3600 };
       response.setHeader('Content-Type', 'application/json');
-      response.end(JSON.stringify(body));
+      if (request.method === 'POST' && path.endsWith('/export') && backend.preparationDelay) {
+        setTimeout(() => response.end(JSON.stringify(body)), backend.preparationDelay);
+      } else response.end(JSON.stringify(body));
     });
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
@@ -114,37 +117,65 @@ test('one Export Chat control downloads the server ZIP without changing its byte
   const requests = await openChat(page, backend);
   await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
   await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
-  const popup = page.context().waitForEvent('page');
-  const download = popup.then(tab => tab.waitForEvent('download'));
+  const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
   const delivered = await download;
-  expect(delivered.url()).toBe(`${backend.endpoint}/sessions/export-session/export`);
+  expect(delivered.url()).toBe(`${backend.endpoint}/sessions/export-session/export?download=${"a".repeat(32)}`);
   expect(delivered.suggestedFilename()).toBe('complete-chat.zip');
   expect((await readFile((await delivered.path())!)).equals(archiveBytes)).toBe(true);
   expect(requests).toEqual(['POST', 'GET']);
+  expect(page.context().pages()).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'HTML', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Markdown', exact: true })).toHaveCount(0);
 });
 
 test('an export preparation failure keeps the chat available for retry', async ({ page, backend }) => {
   await openChat(page, backend, { error: 'POST' });
-  const popup = page.context().waitForEvent('page');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
   await expect(page.getByText('Saved history is temporarily unavailable.')).toBeVisible();
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
-  await expect.poll(() => popup.then(tab => tab.isClosed())).toBe(true);
+  expect(page.context().pages()).toHaveLength(1);
+  await expect(page.locator('iframe')).toHaveCount(0);
 });
 
-test('a native export GET failure appears in its tab and leaves the chat available', async ({ page, backend }) => {
+test('a native export GET failure appears inline and leaves the chat available', async ({ page, backend }) => {
   const requests = await openChat(page, backend, { error: 'GET' });
-  const popup = page.context().waitForEvent('page');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
-  const tab = await popup;
-  await expect(tab.locator('body')).toContainText('Saved history is temporarily unavailable.');
+  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+  expect(page.context().pages()).toHaveLength(1);
   expect(requests).toEqual(['POST', 'GET']);
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
+});
+
+test('delayed preparation downloads without a popup and a failed request can be retried', async ({ page, backend }) => {
+  await openChat(page, backend);
+  backend.error = 'GET';
+  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+  backend.error = null;
+  // Exceed the transient user activation window used by popup-gated APIs.
+  backend.preparationDelay = 6000;
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Preparing export…' })).toBeDisabled();
+  const delivered = await download;
+  expect((await readFile((await delivered.path())!)).equals(archiveBytes)).toBe(true);
+  expect(page.context().pages()).toHaveLength(1);
+  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toHaveCount(0);
+  await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
+});
+
+test('export status and retry controls fit on a phone', async ({ page, backend }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openChat(page, backend);
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await download;
+  await expect(page.getByText('Chat download requested. Check your browser’s downloads.')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: '../artifacts/chat-export-phone.png' });
 });
 
 test('export is unavailable when the server does not retain saved history', async ({ page, backend }) => {

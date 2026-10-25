@@ -239,7 +239,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   only where intended. Then update the hashes in
   `tests/ai_fixtures/chat-export-parity.json` and the golden archive in
   `tests/ai_fixtures/chat-export-archive.json` together. Verify browser download
-  bytes and native download authorization with a rich saved-event fixture.
+  bytes and native download authorization with a rich saved-event fixture. Prepare
+  browser archives before starting native downloads. Bound pending disk files and
+  close them after download, expiry, preparation failure, or service shutdown.
 - Retry temporary provider failures automatically inside the provider request,
   with exponential backoff and a bounded total time. Retry only the incomplete
   model request, never commands or optimizer submissions. Do not wait for the

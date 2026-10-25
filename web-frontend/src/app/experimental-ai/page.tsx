@@ -246,6 +246,8 @@ export default function ExperimentalAiPage() {
   const [selection, setSelection] = useState<ModelSelection>();
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
+  const [chatExportNotice, setChatExportNotice] = useState<string | null>(null);
+  const chatExportFrameRef = useRef<HTMLIFrameElement | null>(null);
   const [fileCapability, setFileCapability] = useState(DISABLED_FILE_CAPABILITY);
   const [selectedAttachments, setSelectedAttachments] = useState<SelectedAttachment[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -283,6 +285,9 @@ export default function ExperimentalAiPage() {
     setDownloadingOptimizationId(null);
     setCancellingOptimizationId(null);
     setIsExportingChat(false);
+    setChatExportNotice(null);
+    chatExportFrameRef.current?.remove();
+    chatExportFrameRef.current = null;
   }, []);
   const {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
@@ -432,6 +437,7 @@ export default function ExperimentalAiPage() {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      chatExportFrameRef.current?.remove();
   }, []);
 
   useEffect(() => {
@@ -733,24 +739,37 @@ export default function ExperimentalAiPage() {
     const session = captureSession();
     if (session === null) return;
     setIsExportingChat(true);
-    let downloadWindow: Window | null = null;
+    setError(null);
+    setChatExportNotice(null);
     try {
-      // Reserve the native download tab while this click still has user activation.
-      downloadWindow = window.open('about:blank', '_blank');
-      if (downloadWindow === null) throw new Error('Allow pop-ups for this site to export the chat, then try again.');
-      downloadWindow.opener = null;
-      downloadWindow.document.title = 'Export Chat';
-      downloadWindow.document.body.textContent = 'Preparing the chat download…';
       const url = await getChatExportUrl(session.id, authToken, session.endpoint);
-      if (!session.ownsConversation()) {
-        downloadWindow.close();
-        return;
-      }
-      if (downloadWindow.closed) return;
-      downloadWindow.document.body.textContent = 'The ZIP download will start when the archive is ready. You can close this tab after the download starts. Any server error will appear here.';
-      downloadWindow.location.replace(url);
+      if (!session.ownsConversation()) return;
+      chatExportFrameRef.current?.remove();
+      const frame = document.createElement('iframe');
+      frame.hidden = true;
+      frame.title = 'Chat export download';
+      let initialized = false;
+      const failed = () => {
+        if (chatExportFrameRef.current !== frame || !session.ownsConversation()) return;
+        setChatExportNotice(null);
+        reportRequestError(new Error('The chat download could not start. Please try Export Chat again.'), 'The chat could not be exported.');
+      };
+      frame.onload = () => {
+        if (!initialized) {
+          initialized = true;
+          frame.src = url;
+        } else {
+          // An attachment starts a native download. A loaded document is an error,
+          // including errors from another origin whose body the browser cannot read.
+          failed();
+        }
+      };
+      frame.onerror = failed;
+      frame.src = 'about:blank';
+      chatExportFrameRef.current = frame;
+      document.body.appendChild(frame);
+      setChatExportNotice('Chat download requested. Check your browser’s downloads.');
     } catch (exportError) {
-      downloadWindow?.close();
       if (session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
     } finally {
       if (session.ownsConversation()) setIsExportingChat(false);
@@ -1010,6 +1029,7 @@ export default function ExperimentalAiPage() {
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+          {chatExportNotice && <span role="status">{chatExportNotice}</span>}
           {messages.length > 0 && (
             <div className="ml-auto flex flex-wrap items-center gap-2">
               <FiDownload aria-hidden="true" className="h-3.5 w-3.5" />
