@@ -64,24 +64,25 @@ def _serialize(messages: Sequence[ChatMessage]) -> str:
     return "\n\n".join(parts)
 
 
+def _is_cut_point(message: ChatMessage) -> bool:
+    return (
+        message["role"] != "tool"
+        and not message.get("_tool_image")
+        and not str(message.get("content", "")).startswith(STATUS_PREFIX)
+    )
+
+
 def _cut_point(messages: list[ChatMessage], keep_tokens: int) -> int:
-    """Keep recent exchanges without starting at a result or its supplemental image."""
+    """Use Pi's backwards token budget and keep tool calls with their results."""
+    cut_points = [index for index, message in enumerate(messages) if _is_cut_point(message)]
+    if not cut_points:
+        return 0
     accumulated = 0
-    cut = len(messages)
     for index in range(len(messages) - 1, -1, -1):
         accumulated += estimate_tokens(messages[index])
-        valid = (
-            messages[index]["role"] != "tool"
-            and not messages[index].get("_tool_image")
-            and not str(messages[index].get("content", "")).startswith(STATUS_PREFIX)
-        )
-        if accumulated >= keep_tokens and cut < len(messages):
-            break
-        if valid:
-            cut = index
-            if accumulated >= keep_tokens:
-                break
-    return cut
+        if accumulated >= keep_tokens:
+            return next((cut for cut in cut_points if cut >= index), cut_points[-1])
+    return 0
 
 
 class ContextCompactor:
@@ -140,29 +141,21 @@ class ContextCompactor:
             20000,
             window // 3,
             max(1, self.history_limit // 12),
-            max(1, sum(estimate_tokens(message) for message in body) // 2),
+            sum(estimate_tokens(message) for message in body[-max(1, self.message_limit // 3) :]),
         )
         cut = _cut_point(body, recent_tokens)
-        if cut < 1:
-            cut = len(body)
-        if manual and cut < len(body) and body[cut]["role"] == "assistant":
-            # Manual compaction has no active turn. Include the completed reply
-            # instead of summarizing its question while retaining the larger answer.
-            cut = next(
-                (
-                    index
-                    for index in range(cut + 1, len(body))
-                    if body[index]["role"] == "user"
-                    and not body[index].get("_tool_image")
-                    and not str(body[index].get("content", "")).startswith(STATUS_PREFIX)
-                ),
-                len(body),
-            )
-        # If a single recent tool batch fills the window, summarize that batch too.
-        candidate_keep = sum(not message.get("_tool_image", False) for message in body[cut:])
-        candidate = apply_compaction(messages, CompactionEntry("", candidate_keep, 0))
-        if sum(estimate_tokens(message) for message in candidate) > window - reserve:
-            cut = len(body)
+        if cut == 0:
+            if manual:
+                yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
+            return
+        # Smaller model windows can require a later safe boundary. Summarize the
+        # whole tail only when even its final tool batch cannot fit.
+        while cut < len(body):
+            candidate_keep = sum(not message.get("_tool_image", False) for message in body[cut:])
+            candidate = apply_compaction(messages, CompactionEntry("", candidate_keep, 0))
+            if sum(estimate_tokens(message) for message in candidate) <= window - reserve:
+                break
+            cut = next((index for index in range(cut + 1, len(body)) if _is_cut_point(body[index])), len(body))
         older, recent = body[:cut], body[cut:]
         keep = sum(not message.get("_tool_image", False) for message in recent)
         entries = load_system_prompt_entries(COMPACTION_MANIFEST)

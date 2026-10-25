@@ -175,6 +175,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   its request ID idempotent. Do not create a user question or allocate a workspace.
   Cover short questions with longer completed replies. Treat a summary that does
   not reduce context as unchanged context rather than a provider failure.
+  Use Pi's shared manual and automatic retention boundary. Keep recent messages
+  within the model and server limits, and skip a short conversation before calling
+  the provider when no older messages remain to summarize.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including

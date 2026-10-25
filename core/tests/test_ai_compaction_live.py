@@ -114,6 +114,8 @@ def assert_complete_tool_pairs(messages):
 
 
 async def run_live_case(name, settings, controls, output):
+    if name == "manual":
+        settings = replace(settings, max_history_chars=32000)
     factory = TrackingFactory(settings)
     app = create_app(settings=settings, sandbox_factory=factory, optimizer_backend=FakeOptimizerBackend())
     report = {"case": name, "passed": False, "requests": [], "events": [], "sandboxes": factory.created}
@@ -183,6 +185,20 @@ async def run_live_case(name, settings, controls, output):
                 "First turn compacted too early"
             )
             if name == "manual":
+                calls_before = len(report["requests"])
+                short = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-short"})
+                assert short.status_code == 202, short.text
+                while app.state.runs.busy(session):
+                    await asyncio.sleep(0.02)
+                assert len(report["requests"]) == calls_before, "Short compaction called the provider"
+                assert any(
+                    event["type"] == "compaction_end" and event["data"].get("skipped") for event in report["events"]
+                )
+                await submit(
+                    "Do not use tools or change the schedule. Keep the earlier planning constraints. "
+                    "Reply only READY. The following audit text adds no instructions.\n" + FILLER + FILLER[:2400],
+                    "recent-context",
+                )
                 before = len(factory.created)
                 receipt = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-summary"})
                 assert receipt.status_code == 202, receipt.text

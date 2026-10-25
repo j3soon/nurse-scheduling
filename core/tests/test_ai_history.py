@@ -2627,7 +2627,7 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             session = app.state.session_store._sessions[sid]
             session._add_entry(UserMessage("Remember nights " + "x" * 12000))
-            session._add_entry(AssistantMessage("Earlier answer"))
+            session._add_entry(AssistantMessage("Earlier answer " + "y" * 70000))
             response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
             assert response.status_code == 202
             run = app.state.runs._runs[sid][0]

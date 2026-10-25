@@ -89,7 +89,7 @@ def test_small_context_compaction_leaves_response_room(monkeypatch, window):
     messages = [
         {"role": "system", "content": "Scheduling assistant"},
         {"role": "user", "content": "Keep nights. " + "x" * 20000},
-        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "assistant", "content": "Earlier answer " + "y" * (window * 2)},
         {"role": "user", "content": "Inspect P1"},
     ]
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
@@ -222,7 +222,7 @@ def test_chunked_compaction_leaves_output_room_after_the_context_safety_margin(m
         {"role": "system", "content": "Scheduling assistant"},
         *([summary_message("s" * previous_chars)] if previous_chars else []),
         {"role": "user", "content": "Keep nights. " + "x" * 100000},
-        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "assistant", "content": "Earlier answer " + "y" * 24000},
         {"role": "user", "content": "Inspect P1"},
     ]
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))

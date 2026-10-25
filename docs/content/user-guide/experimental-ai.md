@@ -166,7 +166,9 @@ separate from context usage.
 Select **Compact context** below the message box while the assistant is idle to
 summarize older conversation context. This action does not generate an answer.
 The chat records **You requested context compaction**. **No compaction needed**
-means that compaction would not make the context smaller, so it stays unchanged.
+means that the conversation is short enough to keep unchanged, or a generated
+summary would not make the context smaller. Recent messages stay unchanged after
+the summary when older conversation context is compacted.
 Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
 context.
 

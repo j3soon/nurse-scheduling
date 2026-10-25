@@ -349,6 +349,16 @@ Without model metadata, the history limits still trigger compaction. Summary
 requests use a 32,768-token fallback window. An explicit context-overflow
 rejection can also trigger compaction.
 
+Manual and automatic compaction use Pi's same cut-point algorithm. The retention
+target is 20,000 recent tokens, capped by one third of the model window and the
+server history budgets. The character budget caps it at `max_history_chars / 12`,
+and the message budget caps it at the estimated tokens in the latest
+`max_history_messages / 3` messages. A short conversation stays unchanged without
+a provider call. A split turn retains its recent messages with their tool pairs.
+If that tail cannot fit a smaller model window, a later safe boundary is used.
+A single tool batch that still cannot fit is summarized too. A generated summary
+that would increase context is discarded.
+
 The estimate uses the most recent completed same-model input and output usage,
 plus estimates for later messages. A characters/4 estimate covers missing usage,
 changed model settings, tool definitions, and current system and status content.

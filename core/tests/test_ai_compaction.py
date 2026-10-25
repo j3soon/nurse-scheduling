@@ -107,7 +107,7 @@ def history(size=26000):
     return [
         {"role": "system", "content": "Scheduling assistant"},
         {"role": "user", "content": "Keep nights. " + "x" * size},
-        {"role": "assistant", "content": "Earlier answer"},
+        {"role": "assistant", "content": "Earlier answer " + "y" * (size // 2)},
         {"role": "user", "content": "Inspect P1"},
     ]
 
@@ -170,8 +170,10 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("has_exchange", [False, True], ids=["empty", "short-exchange"])
-def test_manual_compaction_skips_context_that_cannot_be_reduced(has_exchange):
+@pytest.mark.parametrize(
+    "reply", [None, "Hello", "I can help with schedules. " * 30], ids=["empty", "short", "longer-reply"]
+)
+def test_manual_compaction_skips_context_that_cannot_be_reduced(reply):
     import httpx
 
     from . import test_ai_basic as basic
@@ -187,7 +189,7 @@ def test_manual_compaction_skips_context_that_cannot_be_reduced(has_exchange):
         ):
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             session = app.state.session_store._sessions[sid]
-            original = [UserMessage("Hi"), AssistantMessage("Hello")] if has_exchange else []
+            original = [UserMessage("Hi"), AssistantMessage(reply)] if reply is not None else []
             for entry in original:
                 session._add_entry(entry)
             publications = []
@@ -201,7 +203,7 @@ def test_manual_compaction_skips_context_that_cannot_be_reduced(has_exchange):
             assert (await client.post(f"/sessions/{sid}/compact", json=request)).json() == response.json()
             end = next(event for event in publications if event["type"] == "compaction_end")
             assert end["skipped"] and not end["success"] and not end["aborted"]
-            assert len(provider.summaries) == int(has_exchange)
+            assert not provider.summaries
             assert not provider.requests
             assert session.transcript == original
             assert app.state.sandbox_factory.created == []
@@ -209,6 +211,30 @@ def test_manual_compaction_skips_context_that_cannot_be_reduced(has_exchange):
             assert publications[-1]["type"] == "done"
 
     asyncio.run(exercise())
+
+
+def test_manual_and_automatic_compaction_share_pi_retention():
+    messages = [{"role": "system", "content": "Scheduling assistant"}]
+    for index in range(12):
+        messages.extend(
+            [
+                {"role": "user", "content": f"Earlier task {index}"},
+                {"role": "assistant", "content": "Earlier work. " + "x" * 8000},
+            ]
+        )
+    messages.extend([{"role": "user", "content": "Latest task"}, {"role": "assistant", "content": "Latest answer"}])
+    retained = []
+    for manual in (False, True):
+        provider = CompactionProvider()
+        provider.context_tokens = 262144
+        compactor = ContextCompactor(provider, history_limit=1_000_000)
+        events = asyncio.run(collect(compactor.compact(messages, [], force=True, manual=manual)))
+        (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+        assert entry.keep_messages > 2
+        after = apply_compaction(messages, entry)
+        assert after[-2:] == messages[-2:]
+        retained.append(after)
+    assert retained[0] == retained[1]
 
 
 @pytest.mark.parametrize("invalid", ["primary", "unavailable", None])
@@ -348,7 +374,7 @@ def test_stop_during_summary_discards_partial_summary_and_closes_the_agent():
         provider = CompactionProvider(fail_summary="cancel")
         agent = Agent()
         task = asyncio.create_task(collect(agent.prompt(provider, history(), [])))
-        await provider.summary_started.wait()
+        await asyncio.wait_for(provider.summary_started.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -379,7 +405,7 @@ def test_session_stop_ends_compaction_before_the_terminal_event():
             snapshot = store.begin(session_id, session.owner_token)
             store.finish(
                 session_id,
-                [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer")],
+                [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
                 snapshot=snapshot,
             )
             turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}))
@@ -422,7 +448,9 @@ def test_context_overflow_retries_once_without_repeating_tools():
         return AgentToolOutcome("P1 result", True)
 
     tool = AgentTool({"type": "function", "function": {"name": "read", "parameters": {"type": "object"}}}, execute)
-    events = asyncio.run(collect(agent_loop(provider, history(8000), [tool])))
+    messages = history(8000)
+    messages[2]["content"] = "Earlier answer " + "y" * 24000
+    events = asyncio.run(collect(agent_loop(provider, messages, [tool])))
     assert executed == ["{}"]
     assert len(provider.requests) == 3
     assert any(isinstance(event, AgentCompaction) for event in events)
@@ -432,8 +460,10 @@ def test_context_overflow_retries_once_without_repeating_tools():
 def test_repeated_overflow_stops_after_one_compact_and_retry():
     provider = CompactionProvider(overflow=True)
     provider.context_tokens = 16000
+    messages = history(8000)
+    messages[2]["content"] = "Earlier answer " + "y" * 24000
     with pytest.raises(ProviderContextOverflowError):
-        asyncio.run(collect(agent_loop(provider, history(8000), [])))
+        asyncio.run(collect(agent_loop(provider, messages, [])))
     assert len(provider.requests) == 2
     assert len(provider.summaries) == 1
 
@@ -550,7 +580,9 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
         session = store._sessions[session_id]
         snapshot = store.begin(session_id, session.owner_token)
         store.finish(
-            session_id, [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer")], snapshot=snapshot
+            session_id,
+            [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
+            snapshot=snapshot,
         )
         response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect P1"})
         assert response.status_code == 200
@@ -777,9 +809,8 @@ def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
     assert json.dumps(messages) == before
 
 
-@pytest.mark.parametrize("short_history", [False, True], ids=["long-question", "short-question"])
 @pytest.mark.parametrize("failure", [None, "error", "cancel"])
-def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure, short_history):
+def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure):
     import httpx
 
     from . import test_ai_basic as basic
@@ -796,11 +827,12 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
         ):
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
             session = app.state.session_store._sessions[sid]
-            original = (
-                [UserMessage("Hello"), AssistantMessage("I can help with schedules. " * 30)]
-                if short_history
-                else [UserMessage("Keep nights " + "x" * 12000), AssistantMessage("Earlier answer")]
-            )
+            original = [
+                UserMessage("Keep nights " + "x" * 12000),
+                AssistantMessage("Earlier answer " + "y" * 70000),
+                UserMessage("Latest request"),
+                AssistantMessage("Latest answer"),
+            ]
             for entry in original:
                 session._add_entry(entry)
             publications = []
@@ -826,7 +858,7 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             assert not provider.requests
             assert app.state.sandbox_factory.created == []
             assert not session.active
-            assert session.transcript[:2] == original
+            assert session.transcript[: len(original)] == original
             assert not any(entry.text == "/compact" for entry in session.transcript if isinstance(entry, UserMessage))
             assert not any(
                 event["type"] in {"delta", "reasoning", "tool_start", "tool", "response_end"} for event in publications
@@ -839,9 +871,7 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             if failure is None:
                 assert isinstance(session.transcript[-1], CompactionEntry)
                 assert end["summary"] == session.transcript[-1].summary
-                if short_history:
-                    assert original[-1].text in provider.summaries[0][0][-1]["content"]
-                    assert session.transcript[-1].keep_messages == 0
+                assert session.transcript[-1].keep_messages > 0
                 assert any(event["type"] == "context_usage" and event["estimated"] for event in publications)
             else:
                 assert session.transcript == original
