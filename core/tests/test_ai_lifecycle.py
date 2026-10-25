@@ -395,7 +395,7 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
         )
 
         await asyncio.wait_for(finalizing.wait(), timeout=1)
-        assert [type(entry) for entry in session.transcript] == [UserMessage, AppEventEntry, AssistantMessage]
+        assert [type(entry) for entry in session.transcript] == [UserMessage, AssistantMessage]
         app.state.runs.stop(session.id)
         release.set()
         await asyncio.wait_for(running, timeout=1)

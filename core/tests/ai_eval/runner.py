@@ -494,11 +494,8 @@ async def run_case(
                 project_history(history, settings.max_history_chars),
                 text,
                 question,
-                attachments,
                 system_prompt=system_prompt,
                 max_download_bytes=settings.max_download_bytes,
-                optimizer_result_available=optimizer_result is not None,
-                frontend_timezone=case.frontend_timezone or "UTC",
             )
             prompt_messages.append(messages)
             turn_answer: list[str] = []

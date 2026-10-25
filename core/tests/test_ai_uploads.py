@@ -57,7 +57,7 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         path = f"/workspace/attachments/{files[0]['id']}-notes.txt"
         upload = provider.calls[0][1]
         assert path in upload["content"]
-        assert provider.calls[0][-2]["content"] == "Read"
+        assert provider.calls[0][-1]["content"] == "Read"
         assert provider.calls[2][1] == upload
         assert provider.calls[2][-1]["content"] == "Read again"
         assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"

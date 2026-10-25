@@ -61,7 +61,6 @@ from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
     SCHEDULE_CHANGED_EVENT,
-    STATUS_PREFIX,
     build_provider_messages,
     message_title,
     project_history,
@@ -309,7 +308,7 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
         if queued:
             assert session.snapshot.frontend_timezone == "Asia/Taipei"
         else:
-            assert "Workspace timezone: America/Los_Angeles" in provider.calls[0][-1]["content"]
+            assert provider.calls[0][-1] == {"role": "user", "content": "Hello"}
         assert session.recovery_state()["frontend_timezone"] == "America/Los_Angeles"
 
 
@@ -609,10 +608,6 @@ def exchange(question: str, answer: str) -> list[AgentMessage]:
     return [UserMessage(question), AssistantMessage(answer)]
 
 
-def timezone_entry(timezone="UTC"):
-    return AppEventEntry(f"[Current status]\nWorkspace timezone: {timezone}.")
-
-
 def parse_sse(
     response_text: str, *, include_model_input: bool = False, include_response_end: bool = False
 ) -> list[tuple[str, dict[str, str]]]:
@@ -762,7 +757,6 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
     )
     assert history == [
         UserMessage("Wait for me"),
-        timezone_entry(),
         *responses,
         *(
             [ToolResultMessage("call-1", BASH_TOOL, "No result provided. The tool exchange was interrupted.", False)]
@@ -866,13 +860,11 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
 
     assert transcript == [
         UserMessage("Rename P1."),
-        timezone_entry(),
         AssistantMessage("I renamed P1 to", "aborted"),
         AppEventEntry(ABORTED_RESPONSE_HISTORY),
     ]
     assert follow_up_prompt[1:] == [
         ChatMessage(role="user", content="Rename P1."),
-        ChatMessage(role="user", content=timezone_entry().text),
         ChatMessage(role="user", content=ABORTED_RESPONSE_HISTORY),
         ChatMessage(role="user", content="Rename P2 instead."),
     ]
@@ -903,7 +895,6 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
     ]
     assert app.state.session_store._sessions[session_id].transcript == [
         UserMessage("Explain."),
-        timezone_entry(),
         AssistantMessage("The first half", "length"),
     ]
 
@@ -1101,14 +1092,10 @@ def test_health_and_streamed_schedule_question() -> None:
         ("done", {"run_id": run_id}),
     ]
     usage = [data for name, data in events if name == "context_usage"][-1]
-    assert (
-        usage["used_chars"] == 97 + len(json.dumps({"role": "user", "content": timezone_entry().text}))
-        and usage["max_chars"] == 200_000
-    )
+    assert usage["used_chars"] == 97 and usage["max_chars"] == 200_000
     assert usage["used_tokens"] > 0
     prompt = provider.calls[0]
-    assert prompt[-2] == {"role": "user", "content": "Who works Monday?"}
-    assert "Workspace timezone: UTC" in prompt[-1]["content"]
+    assert prompt[-1] == {"role": "user", "content": "Who works Monday?"}
     # Schedule facts require a tool read.
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
@@ -1318,8 +1305,8 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         )
     )
     removed = f"[App event] The user removed a file from the workspace: {json.dumps(other)}"
-    # The question is sent as typed. Uploads stay in history, while the clock is request-specific.
-    assert provider.calls[0][1:-1] == [
+    # The question is sent as typed. Upload and removal events stay in history.
+    assert provider.calls[0][1:] == [
         {"role": "user", "content": uploaded},
         {"role": "user", "content": removed},
         {"role": "user", "content": "Read"},
@@ -1334,12 +1321,6 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
                 {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
                 {"kind": "question", "content": "Read"},
-                {
-                    "kind": "status",
-                    "index": 3,
-                    "content": provider.calls[0][-1]["content"],
-                    "title": "Workspace Timezone",
-                },
             ],
             "run_id": ANY,
         },
@@ -1349,32 +1330,6 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
     ]
 
 
-def test_status_lists_only_uploads_that_the_sent_history_does_not_show() -> None:
-    hidden = SandboxAttachment("hidden.csv", "text/csv", b"a,b", id="hidden")
-    listed = SandboxAttachment("listed.csv", "text/csv", b"c,d", id="listed")
-    history = project_history([AppEventEntry(upload_event([listed], 2))])
-
-    messages = build_provider_messages(history, "description: test", "Question", (hidden, listed))
-
-    assert messages[-1]["content"] == (
-        f"{STATUS_PREFIX}\nUploaded files not listed in this conversation: "
-        + json.dumps(
-            [
-                {
-                    "filename": "hidden.csv",
-                    "path": "/workspace/attachments/hidden-hidden.csv",
-                    "media_type": "text/csv",
-                    "bytes": 3,
-                }
-            ]
-        )
-    )
-    assert build_provider_messages(history, "description: test", "Question", (listed,))[-1] == {
-        "role": "user",
-        "content": "Question",
-    }
-
-
 def test_every_app_event_and_status_line_has_a_chat_title() -> None:
     attachment = SandboxAttachment("ward.csv", "text/csv", b"a", id="file")
     events = {
@@ -1382,7 +1337,7 @@ def test_every_app_event_and_status_line_has_a_chat_title() -> None:
         removal_event(attachment, 1): "File Removed",
         SCHEDULE_CHANGED_EVENT: "Schedule Changed",
     }
-    status = build_provider_messages(project_history([]), "description: test", "Q", (attachment,))[-1]["content"]
+    status = "[Current status]\nUploaded files not listed in this conversation: ward.csv"
 
     assert {message_title("app", content) for content in events} == set(events.values())
     assert all(message_title("app", content) == title for content, title in events.items())
@@ -1856,7 +1811,7 @@ def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPa
 
 def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."], ["Third answer."]])
-    settings = make_settings(max_history_chars=320, max_history_messages=100, max_session_bytes=1_000_000)
+    settings = make_settings(max_history_chars=200, max_history_messages=100, max_session_bytes=1_000_000)
     client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider))
     session_id = create_session(client)
 
@@ -1865,9 +1820,9 @@ def test_a_trimmed_prompt_history_is_reported_to_the_client() -> None:
     third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 50})
 
     assert [event for event, _ in parse_sse(first.text) if event == "history_trimmed"] == []
-    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [3]
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
     trimmed = [payload for event, payload in parse_sse(third.text) if event == "history_trimmed"]
-    assert [payload["dropped"] for payload in trimmed] == [3, 5]
+    assert [payload["dropped"] for payload in trimmed] == [2, 4]
     # The oldest exchange is dropped from the prompt while the newest survives.
     latest_prompt = json.dumps(provider.calls[-1])
     assert "A" * 50 not in latest_prompt
@@ -1970,7 +1925,7 @@ def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(wind
 
 def test_context_usage_reports_selected_history_before_and_after_each_run() -> None:
     provider = FakeProvider([["First answer."], ["Second answer."]])
-    app = create_test_app(settings=make_settings(max_history_chars=320), provider=provider)
+    app = create_test_app(settings=make_settings(max_history_chars=200), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
 
@@ -1994,9 +1949,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
     second_chars = len(json.dumps(ChatMessage(role="user", content="B" * 50), ensure_ascii=False)) + len(
         json.dumps(ChatMessage(role="assistant", content="Second answer."), ensure_ascii=False)
     )
-    first_chars += len(json.dumps({"role": "user", "content": timezone_entry().text}))
-    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 320, "used_tokens": ANY, "estimated": True}
-    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 320, "used_tokens": ANY, "estimated": True}
+    assert first_usage[-1] == {"used_chars": first_chars, "max_chars": 200, "used_tokens": ANY, "estimated": True}
+    assert second_usage[-1] == {"used_chars": second_chars, "max_chars": 200, "used_tokens": ANY, "estimated": True}
 
 
 def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messages() -> None:
@@ -2011,14 +1965,13 @@ def test_session_budget_keeps_the_latest_exchange_and_reports_all_dropped_messag
     third = client.post(f"/sessions/{session_id}/messages", json={"message": "C" * 10})
 
     assert [payload for event, payload in parse_sse(first.text) if event == "history_trimmed"] == []
-    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [3]
+    assert [payload["dropped"] for event, payload in parse_sse(second.text) if event == "history_trimmed"] == [2]
     assert [payload["dropped"] for event, payload in parse_sse(third.text) if event == "history_trimmed"] == [
-        3,
-        5,
+        2,
+        4,
     ]
     assert app.state.session_store._sessions[session_id].transcript == [
         UserMessage("C" * 10),
-        timezone_entry(),
         AssistantMessage("Z" * 20),
     ]
     latest_prompt = json.dumps(provider.calls[-1])
@@ -2533,15 +2486,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert events[4].data == {
             "system": provider.calls[2][0]["content"],
             "schedule_yaml": schedule_yaml(),
-            "messages": [
-                {"kind": "optimizer", "content": provider.calls[2][-2]["content"]},
-                {
-                    "kind": "status",
-                    "content": provider.calls[2][-1]["content"],
-                    "title": "Optimizer Result",
-                    "index": 9,
-                },
-            ],
+            "messages": [{"kind": "optimizer", "content": provider.calls[2][-1]["content"]}],
             "run_id": run_id,
         }
         assert provider.calls[2][0] == provider.calls[0][0]
@@ -2554,11 +2499,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
             assert history_starts[-1][1] == session_id
             # The review run hydrates the retained upload too.
             assert history_starts[-1][4:] == ("test-model", 1)
-        assert '"score": 23' in str(provider.calls[2][-2]["content"])
-        assert provider.calls[2][-1]["content"].endswith(
-            "\nOptimization result: /workspace/optimizer-results/optimized-schedule.xlsx."
-            " The user can already download this workbook with the chat's Download result button."
-        )
+        assert '"score": 23' in str(provider.calls[2][-1]["content"])
         background_sandbox = next(
             backend
             for backend in factory.created

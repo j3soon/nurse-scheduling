@@ -536,10 +536,8 @@ def test_date_cases_use_the_vm_timezone_and_an_explicit_reference_instant(case_i
     factory = _factory()
     run = _run(case_id, provider, factory)
     assert run.passed
-    context = provider.messages[0][-1]["content"]
-    assert CASE_BY_ID[case_id].frontend_timezone in context
-    assert "2031-" not in context
-    assert "2031-" in provider.messages[0][-2]["content"]
+    assert provider.messages[0][-1]["content"] == CASE_BY_ID[case_id].question
+    assert not any("[Current status]" in str(message.get("content")) for message in provider.messages[0])
     assert factory.created[0].envs == {"TZ": CASE_BY_ID[case_id].frontend_timezone}
 
 
@@ -560,7 +558,7 @@ def test_attachment_case_hydrates_generated_file_and_records_an_upload_event():
     prompt = run.trajectory["prompt"]
     assert prompt[1]["content"].startswith("[App event] The user uploaded files.")
     assert '"path": "/workspace/attachments/01-ward-notes.xlsx"' in prompt[1]["content"]
-    assert prompt[-2] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
+    assert prompt[-1] == {"role": "user", "content": CASE_BY_ID["read-second-xlsx-sheet"].question}
 
 
 def test_optimizer_case_uses_controlled_production_tool_contract():
@@ -1055,10 +1053,9 @@ def test_completion_only_case_seeds_history_without_counting_a_model_tool_call()
     assert run.turns == 1
     assert run.tools == []
     assert len(provider.messages) == 1
-    assert provider.messages[0][-4]["content"] == case.question
-    assert "Optimization is running in the background" in provider.messages[0][-3]["content"]
-    assert '"request_audit"' in provider.messages[0][-2]["content"]
-    assert provider.messages[0][-1]["content"].startswith("[Current status]")
+    assert provider.messages[0][-3]["content"] == case.question
+    assert "Optimization is running in the background" in provider.messages[0][-2]["content"]
+    assert '"request_audit"' in provider.messages[0][-1]["content"]
     assert not factory.created
 
 

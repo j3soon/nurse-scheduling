@@ -136,7 +136,7 @@ def test_app_event_indices_survive_compaction_retention_and_restore():
             snapshot = store.begin(session.id, "owner")
             published = []
             events = RunEvents("run", lambda event: published.append(event))
-            messages, _, _ = session._prepare_run(snapshot, "Continue", None, settings, events, "question")
+            messages, _, _ = session._prepare_run(snapshot, "Continue", settings, events, "question")
             events.flush()
             store.finish(session.id, [], snapshot=snapshot)
             model_input = next(event for event in published if event["type"] == "model_input")
@@ -274,9 +274,7 @@ def test_context_compaction_tool_continuation_keeps_native_tool_pairs_and_status
         ToolResultMessage(call.id, call.name, "P1 exists", True, ToolResultImage("image/png", b"png")),
     ]
     messages = prepare_provider_request(history()[:-1], entries, _preserve_native=True)
-    messages.append(
-        {"role": "user", "content": "[Current status]\nCurrent schedule is active", "_current_status": True}
-    )
+    messages.append({"role": "user", "content": "[Current status]\nCurrent schedule is active"})
     events = asyncio.run(collect(ContextCompactor(provider).compact(messages, [])))
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
     request = prepare_provider_request(apply_compaction(messages, entry), [], provider=provider.identity)

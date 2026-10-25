@@ -181,8 +181,8 @@ capability-gated control is missing, inspect the capabilities request from the
 exact browser origin. A loopback-only browser check can miss CORS failures.
 Send the browser's IANA timezone on session creation, chat messages, and queued
 messages. The backend sets the VM timezone once at creation. The agent gets the
-current time with `date`. Keep earlier status messages visible and deduplicate
-replayed status by its retained transcript index.
+current time with `date`. Preserve historical status messages in replay. New
+requests use ordinary app events without an automatic status message.
 Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.

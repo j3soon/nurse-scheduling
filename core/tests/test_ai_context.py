@@ -50,14 +50,15 @@ from nurse_scheduling.ai.transcript import (
 from .test_ai_basic import make_settings, schedule_yaml
 
 
-def test_timezone_is_explicit_without_automatic_clock_values():
-    messages = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei")
-    assert "Workspace timezone: Asia/Taipei" in messages[-1]["content"]
+def test_new_requests_do_not_inject_workspace_status_or_clock_values():
+    messages = build_provider_messages([], schedule_yaml(), "Today?")
+    assert messages[-1] == {"role": "user", "content": "Today?"}
+    assert "[Current status]" not in str(messages)
     assert "Current date and time:" not in str(messages)
 
 
 def test_tool_followup_preserves_the_entire_existing_prefix():
-    messages = build_provider_messages([], schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei")
+    messages = build_provider_messages([], schedule_yaml(), "Today?")
     entries = [AssistantMessage("Checking."), UserMessage("Continue.")]
     request = prepare_provider_request(messages, entries, _preserve_native=True)
     assert request[: len(messages)] == messages
@@ -78,13 +79,14 @@ def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_sessio
     assert recovered._sessions[session.id].frontend_timezone == "America/Los_Angeles"
 
 
-def test_returning_to_an_earlier_timezone_appends_a_new_status():
+def test_historical_status_is_unchanged_and_no_new_status_is_appended():
     history = [
         {"role": "user", "content": "[Current status]\nWorkspace timezone: Asia/Taipei."},
         {"role": "user", "content": "[Current status]\nWorkspace timezone: America/Los_Angeles."},
     ]
-    messages = build_provider_messages(history, schedule_yaml(), "Today?", frontend_timezone="Asia/Taipei")
-    assert messages[-1]["content"] == "[Current status]\nWorkspace timezone: Asia/Taipei."
+    messages = build_provider_messages(history, schedule_yaml(), "Today?")
+    assert messages[1:-1] == history
+    assert messages[-1] == {"role": "user", "content": "Today?"}
 
 
 @pytest.mark.parametrize("reason", ["aborted", "error"])

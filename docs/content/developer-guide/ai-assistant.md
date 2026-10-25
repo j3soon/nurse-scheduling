@@ -163,7 +163,8 @@ queueing a message or synchronizing a changed schedule renews that window. The b
 tab and verify the session without extending its lifetime.
 The session records typed questions, assistant responses, app events, reasoning metadata,
 and tool exchanges. Tool images are released when a run ends. Stop and failed runs retain their questions with an interruption
-note. Later model context excludes claims from their discarded workspace.
+note. Later model context omits the incomplete response, retains completed
+exchanges, and explains that earlier tool results describe the discarded workspace.
 Recovery stores typed entries, including their origin and interruption state.
 Existing text history remains readable when the service restores older sessions.
 New questions receive a JSON acknowledgement with their `run_id`. Foreground and
@@ -762,14 +763,16 @@ contain those decisions. They restore as the app events that the model received.
 A run that fails, is cancelled, or is abandoned retains its user message and
 an interrupted assistant entry. It discards its candidate and workspace
 changes. Its provisional activity may remain visible in the browser.
-Later model context replaces the interrupted assistant entry with
-`ABORTED_RESPONSE_HISTORY` and excludes discarded workspace claims. A successful
-run that only answers a question never changes the schedule.
+Later model context omits the interrupted assistant response and retains completed
+exchanges. A separate `ABORTED_RESPONSE_HISTORY` app event describes the discarded
+workspace. A successful run that only answers a question never changes the
+schedule.
 
 If the final candidate fails trusted validation, the UI reports that every
 schedule change from the turn was discarded and that the current schedule
 was not changed. The failed turn retains its question and an interrupted
-assistant entry, which later model context replaces with `ABORTED_RESPONSE_HISTORY`.
+assistant entry. Later model context omits that response and retains a separate
+`ABORTED_RESPONSE_HISTORY` app event.
 
 After a Bash command changes the candidate, the trusted application returns an
 intermediate validation result so the model can repair it. The backend reads
@@ -1121,7 +1124,6 @@ request therefore keeps earlier content unchanged and puts changing state last:
 1. The system message. It does not change during a chat.
 2. The chat history. Each entry stays unchanged once it is stored.
 3. The user's question, exactly as typed.
-4. A status message with new workspace facts, only when needed. History retains it.
 
 The backend stores app events as separate `user` messages in history when they
 happen. Each event starts with `[App event]`. Events record uploads, removals,
@@ -1131,12 +1133,10 @@ each file. A schedule change is recorded only when the parsed schedule data
 changes. Filenames stay out of the system prompt because they are untrusted
 input.
 
-The status message starts with `[Current status]`. It reports the workspace
-timezone, the optimizer result path, and retained files whose upload event is
-missing from the selected history. The frontend keeps these messages visible.
-New facts are appended instead of rewriting previous context. Each VM receives
-`TZ` once at creation from the browser timezone. The agent uses bash `date` when
-it needs the current date or time. The backend does not inject clock values.
+The backend does not append automatic status messages or restore workspace facts
+lost during compaction. Historical status messages remain unchanged. Each VM
+receives `TZ` once at creation from the browser timezone. The agent can use bash
+`date` when it needs the current date or time.
 
 When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
 messages until about half the budget remains. It keeps the newest completed
@@ -1145,13 +1145,12 @@ exchange. This keeps the request prefix unchanged for many turns between cuts.
 Each assistant turn starts with a `model_input` event. Its `system` field
 contains the system message. Its `messages` field lists the request messages
 added since the last assistant reply, in order. Each entry has a `kind` of
-`app`, `question`, `optimizer`, or `status`. An `app` entry also has its
-absolute transcript entry `index`, so a client shows it once when a failed turn
-is retried. Compaction and retention preserve this index. App events and status
-messages also have a short `title`, such as
-`Files Uploaded` or `Optimizer Result`. The chat shows it after the role
-label and keeps the exact text collapsed. A foreground turn sends this event first in the message stream. A
-background turn publishes it on the session event stream after `turn_start`.
+`app`, `question`, or `optimizer`. Historical events may also contain `status`.
+An `app` entry also has its absolute transcript entry `index`, so a client shows it once when a failed turn
+is retried. Compaction and retention preserve this index. App events also have a
+short `title`, such as `Files Uploaded` or `Schedule Changed`. The chat shows it
+after the role label and keeps the exact text collapsed. Foreground and background
+runs publish this event on the session event stream after `run_start`.
 
 `GET /health`, `GET /ready`, and `GET /capabilities` stay public so deployment
 probes work and the frontend can discover authentication and attachment limits.
@@ -1225,8 +1224,8 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   logs the upstream response body under that ID after redacting common
   credential forms.
 - A failed or cancelled turn retains its question and an interrupted assistant
-  entry. Later model context uses `ABORTED_RESPONSE_HISTORY` instead of partial
-  output and discarded workspace activity.
+  entry. Later model context omits the partial response, retains completed
+  exchanges, and appends the `ABORTED_RESPONSE_HISTORY` workspace notice.
 
 ## Troubleshoot local development
 

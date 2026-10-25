@@ -770,7 +770,6 @@ class AgentSession:
         self,
         snapshot: RunSnapshot,
         question: str,
-        artifact: OptimizerArtifact | None,
         settings: AiSettings,
         events: RunEvents,
         question_kind: QuestionKind,
@@ -782,10 +781,7 @@ class AgentSession:
             history,
             snapshot.schedule_yaml,
             question,
-            snapshot.uploads,
-            optimizer_result_available=artifact is not None,
             max_download_bytes=settings.max_download_bytes,
-            frontend_timezone=snapshot.frontend_timezone,
         )
         events.emit(
             {
@@ -800,7 +796,6 @@ class AgentSession:
                         for index, entry in enumerate(snapshot.transcript)
                         if isinstance(entry, AppEventEntry)
                     },
-                    status_index=snapshot.transcript_offset + len(snapshot.transcript) + 1,
                 ),
             }
         )
@@ -1270,7 +1265,6 @@ class AgentSession:
                 messages, dropped_history, context_chars = self._prepare_run(
                     snapshot,
                     question,
-                    artifact,
                     settings,
                     events,
                     "optimizer" if background else "question",

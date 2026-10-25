@@ -28,7 +28,6 @@ from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
-from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .provider import (
     ChatMessage,
     TokenUsage,
@@ -90,6 +89,7 @@ _APP_EVENT_TITLES = (
     (REMOVAL_EVENT_PREFIX, "File Removed"),
     (SCHEDULE_CHANGED_EVENT, "Schedule Changed"),
 )
+# Preserve titles when displaying historical status entries.
 _STATUS_TITLES = (
     (TIMEZONE_STATUS, "Workspace Timezone"),
     (OPTIMIZER_RESULT_STATUS, "Optimizer Result"),
@@ -124,46 +124,6 @@ def removal_event(attachment: SandboxAttachment, index: int) -> str:
     """Describe one removed file in history."""
     removed = {"filename": attachment.filename, "path": attachment_path(attachment, index)}
     return f"{REMOVAL_EVENT_PREFIX} {json.dumps(removed, ensure_ascii=False)}"
-
-
-def status_message(
-    history: Sequence[ChatMessage],
-    attachments: Sequence[SandboxAttachment],
-    *,
-    optimizer_result_available: bool,
-    frontend_timezone: str | None = None,
-) -> str:
-    """Describe request-specific state that would otherwise change the cached prompt prefix."""
-    lines = []
-    sent = "\n".join(str(message["content"]) for message in history)
-    if frontend_timezone is not None:
-        timezone = f"{TIMEZONE_STATUS}{frontend_timezone}."
-        previous_timezone = next(
-            (
-                line
-                for message in reversed(history)
-                if isinstance(message.get("content"), str) and message["content"].startswith(STATUS_PREFIX)
-                for line in reversed(message["content"].splitlines())
-                if line.startswith(TIMEZONE_STATUS)
-            ),
-            None,
-        )
-        if timezone != previous_timezone:
-            lines.append(timezone)
-    if optimizer_result_available and WORKSPACE_OPTIMIZER_RESULT not in sent:
-        lines.append(
-            f"{OPTIMIZER_RESULT_STATUS} {WORKSPACE_OPTIMIZER_RESULT}. "
-            "The user can already download this workbook with the chat's Download result button."
-        )
-    # Trimmed history or a failed turn can hide an upload event, so list only the files the request cannot show.
-    unlisted = [
-        entry
-        for index, attachment in enumerate(attachments, start=1)
-        if (entry := _file_entry(attachment, index))["path"] not in sent
-    ]
-    if unlisted:
-        lines.append(f"{UNLISTED_UPLOADS_STATUS} {json.dumps(unlisted, ensure_ascii=False)}")
-    return f"{STATUS_PREFIX}\n" + "\n".join(lines) if lines else ""
 
 
 def validate_frontend_timezone(value: str) -> str:
@@ -210,18 +170,15 @@ def build_provider_messages(
     history: HistoryContext | list[ChatMessage],
     schedule_yaml: str,
     question: str,
-    attachments: Sequence[SandboxAttachment] = (),
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    optimizer_result_available: bool = False,
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
     max_download_bytes: int = 50_000_000,
-    frontend_timezone: str | None = None,
 ) -> list[ChatMessage]:
     """Build a provider prompt whose system message and history stay unchanged between requests.
 
-    Providers reuse cached work only for an identical prefix. New workspace facts
-    go into a status message that the agent retains in history.
+    Providers reuse cached work only for an identical prefix. Workspace changes
+    are recorded as ordinary app events.
     """
     system_content = f"{system_prompt}\n\n{describe_schedule(schedule_yaml)}"
     system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
@@ -231,17 +188,10 @@ def build_provider_messages(
         else project_history(entries_from_legacy_history(history), max_history_chars)
     )
     retained = selected.messages
-    status = status_message(
-        retained,
-        attachments,
-        optimizer_result_available=optimizer_result_available,
-        frontend_timezone=frontend_timezone,
-    )
     return [
         ChatMessage(role="system", content=system_content),
         *retained,
         ChatMessage(role="user", content=question),
-        *([ChatMessage(role="user", content=status, _current_status=True)] if status else []),
     ]
 
 
@@ -267,7 +217,6 @@ def model_input(
     question_kind: QuestionKind,
     *,
     app_indices: set[int] | None = None,
-    status_index: int | None = None,
 ) -> dict[str, object]:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 
@@ -285,14 +234,6 @@ def model_input(
         and (app_indices is None or history_indices[index] in app_indices)
     ]
     added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
-    added.extend(
-        {
-            "kind": "status",
-            "content": message["content"],
-            **({"index": status_index} if status_index is not None else {}),
-        }
-        for message in messages[2 + history_count :]
-    )
     for entry in added:
         if title := message_title(str(entry["kind"]), str(entry["content"])):
             entry["title"] = title
@@ -412,7 +353,6 @@ def compatible_provider_messages(
         source = message.pop("_provider", None)
         message.pop("_usage", None)
         message.pop("_tool_image", None)
-        message.pop("_current_status", None)
         message.pop("_compaction_summary", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:

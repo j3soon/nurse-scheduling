@@ -169,7 +169,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
   cancelled runs. Keep a summary and its referenced recent tool messages together
   during retention. Reset older usage estimates at each compaction boundary.
   Keep app-event indices tied to transcript entries across compaction and retention.
-  Keep a trailing status message with its user question when choosing a
+  Keep a historical status message with its user question when choosing a
   compaction boundary. A status message cannot stand in for the current request.
   Manual compaction shares run admission, Stop, replay, and persistence. Keep
   its request ID idempotent. Do not create a user question or allocate a workspace.
@@ -316,7 +316,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Put fixed model instructions in a manifest-tracked prompt segment under
   `ai/prompts/`, so they get a hash, linked cases, and a benefit witness.
   `build_provider_messages` appends only request-specific values, such as a
-  configured limit or the workspace timezone.
+  configured limit.
 - Keep model-facing prompts and intermediate messages concise. Avoid repeated
   warnings about malicious uploads or prescribed workbook-inspection commands.
   Rely on sandbox and server controls for security, and give generated artifacts
@@ -484,8 +484,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   or asking the user to inspect the UI. Keep navigation advice valid for someone
   on another page.
 - Set the sandbox `TZ` environment once at creation from the browser timezone.
-  Let the agent use `date` for the current instant. Retain status messages and
-  append changed workspace facts instead of rewriting earlier context. Test that
+  Let the agent use `date` for the current instant. Do not inject automatic
+  status messages or reconstruct facts lost during compaction. Preserve historical
+  status entries and ordinary app events. Test that
   separate provider requests preserve their shared prefix until compaction or trimming.
 - Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
   Bind it to exact schedule and upload inputs, retain it only through the

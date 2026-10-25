@@ -61,7 +61,7 @@ from .provider import (
     ToolCallRequest,
     ToolCapableChatProvider,
 )
-from .transcript import AgentMessage, AppEventEntry, AssistantMessage, ToolResultMessage, UserMessage
+from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 MAX_PARALLEL_TOOL_CALLS = 8
@@ -101,8 +101,6 @@ async def agent_loop(
 
     conversation = [] if run_messages is None else run_messages
     prefix = list(messages)
-    if prefix and prefix[-1].get("_current_status"):
-        conversation.append(AppEventEntry(prefix.pop()["content"]))
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
