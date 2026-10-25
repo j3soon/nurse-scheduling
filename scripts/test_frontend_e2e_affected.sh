@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/web-frontend"
 source "$SCRIPT_DIR/affected_test_common.sh"
+# Pass Playwright options, such as `-g NAME`, after the spec paths.
+affected_forward_options=true
 affected_parse_args "$ROOT_DIR" "$@"
 
 specs=()
@@ -62,6 +64,9 @@ if [[ "$affected_list" == true ]]; then
   else
     echo "tests: none"
   fi
+  if ((${#affected_tool_args[@]} > 0)); then
+    echo "playwright args: ${affected_tool_args[*]}"
+  fi
   exit 0
 fi
 
@@ -74,11 +79,11 @@ bun run lint
 
 if [[ "$run_full_suite" == true ]]; then
   echo "Shared E2E files changed; running the compact full browser suite."
-  exec bunx playwright test --reporter=dot --quiet --max-failures=1
+  exec bunx playwright test --reporter=dot --quiet --max-failures=1 "${affected_tool_args[@]}"
 fi
 
 if ((${#specs[@]} == 0)); then
   echo "No changed frontend E2E specs; skipping Playwright."
   exit 0
 fi
-exec bunx playwright test --reporter=dot --quiet --max-failures=1 "${specs[@]}"
+exec bunx playwright test --reporter=dot --quiet --max-failures=1 "${affected_tool_args[@]}" "${specs[@]}"

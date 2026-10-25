@@ -69,8 +69,11 @@ byte parity. Include steering before output and optimizer events between replies
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
-run their whole suite. `test:e2e:affected` cannot infer browser coverage from
-changed app source or public assets. Without explicit spec paths or `--full`,
+run their whole suite. `test:e2e:affected` passes its first undefined option
+and every later argument to Playwright. For example,
+`bun run test:e2e:affected e2e/experimental-ai-basic.spec.ts -g 'model'` runs
+the matching tests of that spec. `test:e2e:affected` cannot infer browser
+coverage from changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
 builds the current checkout, launches its own server on an OS-selected port,
 and shuts it down afterwards. Existing local servers are never reused.
