@@ -202,7 +202,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
             <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`text-xs ${activityColor(entry)}`}>
               <summary className="cursor-pointer select-none py-0.5 hover:text-gray-700">{activitySummary(entry)}</summary>
               {entry.kind === 'schedule-check' && <p>Validation result sent to AI.</p>}
-              {entry.kind === 'schedule-applied' && <p>App notice. Not sent to AI.</p>}
+              {entry.kind === 'schedule-applied' && <p>Not sent to AI.</p>}
               <div className="mt-1 rounded bg-gray-50 p-2">
                 {entry.kind === 'tool'
                   ? <ToolBody entry={entry} />

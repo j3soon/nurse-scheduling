@@ -276,6 +276,7 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
         assert rendered.count("You requested context compaction.") == 1
         assert "User · Conversation summary" in rendered
         assert "[No message text]" not in rendered
+        assert ("Compacted out of context." not in rendered) if keep else ("Compacted out of context." in rendered)
     assert messages == original
 
 
@@ -421,14 +422,12 @@ def test_saved_activity_keeps_the_live_view_model_input_and_app_notice_labels():
     html = build_saved_chat_export(snapshot, "html")
     markdown = build_saved_chat_export(snapshot, "markdown")
     # A provider retry notice is an app notice in both formats.
-    assert (
-        '<div class="activity-entry app-notice"><details class="activity-details">\n            <summary>App notice</summary>'
-        in html
-    )
+    assert '<div class="activity-entry app-notice"><p class="notice-message" role="status">Retrying.</p></div>' in html
     assert "### App notice\n\n```text\nRetrying.\n```" in markdown
     assert '<div class="activity-entry model-input">' in html
     assert '<p class="activity-status">Validation result sent to AI.</p>' in html
-    assert '<p class="activity-status">App notice. Not sent to AI.</p>' in html
+    assert '<p class="activity-status">Not sent to AI.</p>' in html
+    assert "Sent to AI." not in html
 
 
 def test_response_renderer_links_urls_but_not_filenames_or_references():

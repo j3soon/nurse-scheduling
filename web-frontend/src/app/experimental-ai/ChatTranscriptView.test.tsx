@@ -91,8 +91,33 @@ it('distinguishes model input from app notices with alignment and labels', () =>
   expect(screen.getByText('User · Optimizer').closest('article')).toHaveClass('ml-auto');
   expect(screen.getByText('Optimizer').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Assistant').closest('article')).toHaveClass('mr-auto');
-  expect(screen.getAllByText('Sent to AI.')).toHaveLength(2);
-  expect(screen.getByText('App notice. Not sent to AI.')).toBeVisible();
+  expect(screen.queryByText('Sent to AI.')).not.toBeInTheDocument();
+  expect(screen.getByText('Not sent to AI.')).toBeVisible();
+});
+
+it('marks messages before the retained compaction tail as compacted out of context', () => {
+  renderTranscript([
+    { id: 'system', role: 'system', content: 'Instructions' },
+    { id: 'q1', role: 'user', content: 'First question' },
+    { id: 'a1', role: 'assistant', content: 'First answer', activity: [
+      { kind: 'tool', name: 'read', arguments: '{}', result: 'Read output', ok: true },
+      { kind: 'response', text: 'First answer' },
+    ] },
+    { id: 'q2', role: 'user', content: 'Second question' },
+    { id: 'a2', role: 'assistant', content: 'Second answer', activity: [
+      { kind: 'response', text: 'Second answer' },
+    ] },
+    { id: 'compact', role: 'assistant', content: '', activity: [
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
+        summary: 'Summary text.', keepMessages: 2 },
+    ] },
+  ]);
+  expect(screen.getByText('First question').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('First answer').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Second question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Second answer').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('System').closest('article')).not.toHaveTextContent('Compacted out of context.');
 });
 
 it.each([0, 4])('separates compaction notices, summary, and assistant activity with %s retained messages', async keepMessages => {

@@ -24,7 +24,7 @@ import { FiDownload } from 'react-icons/fi';
 import { AssistantActivity, CompactionSummary } from './AssistantActivity';
 import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
-import { characterCount, messageLabel, messageUploadedFileLines, transcriptMessages } from './chatPresentation';
+import { characterCount, messageLabel, messageUploadedFileLines, transcriptConversation } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -83,9 +83,9 @@ export function ChatTranscriptView({
   sessionExpiresAt,
   sessionRetentionSeconds,
 }: ChatTranscriptViewProps) {
-  const bubbles = messages.flatMap(message => transcriptMessages(message).map((part, index) => ({
-    message: part, key: `${message.id}-${index}`,
-  })));
+  const bubbles = transcriptConversation(messages).map((part, index) => ({
+    message: part, key: `${part.id}-${index}`,
+  }));
   return (
       <section
         aria-label="Chat messages"
@@ -122,11 +122,11 @@ export function ChatTranscriptView({
             >
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{notice ? 'App notice'
                 : summary ? summary.invalidated ? 'Discarded conversation summary' : 'User · Conversation summary' : messageLabel(message)}</p>
-              {(notice || summary || message.role === 'system' || message.source !== undefined || message.role === 'optimizer') && (
+              {/* Messages reach the model by default, so only exceptions get a status line. */}
+              {(notice || summary?.invalidated || message.role === 'optimizer' || message.compacted) && (
                 <p className="mb-2 text-xs opacity-70">
-                  {notice || message.role === 'optimizer' ? 'App notice. Not sent to AI.'
-                    : summary ? summary.invalidated ? 'Omitted from future model context.' : 'Summary used in future model context.'
-                      : message.presentation === 'context' ? 'Sent in future model context.' : 'Sent to AI.'}
+                  {summary?.invalidated ? 'Omitted from future model context.'
+                    : message.compacted ? 'Compacted out of context.' : 'Not sent to AI.'}
                 </p>
               )}
               {summary && <details className="text-xs">

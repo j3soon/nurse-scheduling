@@ -25,7 +25,64 @@ import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 export type TranscriptMessage = ChatMessage & {
   presentation?: 'notice' | 'summary' | 'context';
   compaction?: CompactionActivity;
+  compacted?: boolean;
 };
+
+function contextMessageCount(message: TranscriptMessage): number {
+  if (message.role === 'system' || message.role === 'optimizer' || message.presentation === 'notice') return 0;
+  if (message.presentation === 'summary') return message.compaction?.invalidated ? 0 : 1;
+  if (message.role === 'user') return 1;
+  if (message.status === 'pending') return 0;
+  const activity = message.activity ?? [];
+  if (activity.length === 0) {
+    return message.status === 'failed' || message.status === 'stopped' || !message.content ? 0 : 1;
+  }
+  let count = 0;
+  let inStep = false;
+  for (const entry of activity) {
+    if (entry.kind === 'reasoning' || entry.kind === 'response') {
+      if (entry.context === 'omitted') {
+        inStep = false;
+        continue;
+      }
+      if (!inStep) {
+        count += 1;
+        inStep = true;
+      }
+    } else if (entry.kind === 'tool' && entry.state !== 'preparing') {
+      if (!inStep) count += 1;
+      count += 1;
+      inStep = false;
+    }
+  }
+  return count;
+}
+
+export function transcriptConversation(messages: ChatMessage[]): TranscriptMessage[] {
+  const bubbles = messages.flatMap(message => transcriptMessages(message));
+  const counts = bubbles.map(contextMessageCount);
+  let active = new Set<number>();
+  bubbles.forEach((bubble, index) => {
+    if (bubble.presentation === 'summary' && !bubble.compaction?.invalidated) {
+      let keep = bubble.compaction?.keepMessages ?? 0;
+      const retained = new Set<number>();
+      for (const prior of Array.from(active).reverse()) {
+        if (keep <= 0) break;
+        if (counts[prior] > 0) {
+          retained.add(prior);
+          keep -= counts[prior];
+        }
+      }
+      retained.add(index);
+      active = retained;
+    } else if (counts[index] > 0) {
+      active.add(index);
+    }
+  });
+  return bubbles.map((bubble, index) => (
+    counts[index] > 0 && !active.has(index) ? { ...bubble, compacted: true } : bubble
+  ));
+}
 
 // Derive bubbles for display. Keep saved messages and execution ownership intact.
 export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {

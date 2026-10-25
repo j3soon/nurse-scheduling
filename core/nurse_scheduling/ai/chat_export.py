@@ -257,7 +257,9 @@ def _activity_text(entry):
 
 def _activity_html(entry):
     kind = entry["kind"]
-    if kind in {"notice", "reasoning", "schedule-check", "schedule-applied", "compaction"}:
+    if kind == "notice":
+        return '<p class="notice-message" role="status">' + escape_html(entry["text"]) + "</p>"
+    if kind in {"reasoning", "schedule-check", "schedule-applied", "compaction"}:
         body = '<pre class="activity-output">' + escape_html(_activity_text(entry)) + "</pre>"
     elif kind == "schedule-change":
         before, after = entry["before"].split("\n"), entry["after"].split("\n")
@@ -315,7 +317,7 @@ def _activity_html(entry):
     audience = (
         '<p class="activity-status">Validation result sent to AI.</p>'
         if kind == "schedule-check"
-        else '<p class="activity-status">App notice. Not sent to AI.</p>'
+        else '<p class="activity-status">Not sent to AI.</p>'
         if kind == "schedule-applied"
         else ""
     )
@@ -345,6 +347,39 @@ def _append_activity_bubble(parts, base, entry, presentation=None):
         parts[-1]["content"] += entry["text"]
 
 
+def _context_message_count(message) -> int:
+    role = message["role"]
+    presentation = message.get("presentation")
+    if role in {"system", "optimizer"} or presentation == "notice":
+        return 0
+    if presentation == "summary":
+        return 0 if message["compaction"].get("invalidated") else 1
+    if role == "user":
+        return 1
+    if message.get("status") == "pending":
+        return 0
+    activity = message.get("activity", [])
+    if not activity:
+        return 0 if message.get("status") in {"failed", "stopped"} or not message.get("content") else 1
+    count = 0
+    in_step = False
+    for entry in activity:
+        kind = entry["kind"]
+        if kind in {"reasoning", "response"}:
+            if entry.get("context") == "omitted":
+                in_step = False
+                continue
+            if not in_step:
+                count += 1
+                in_step = True
+        elif kind == "tool" and entry.get("state") != "preparing":
+            if not in_step:
+                count += 1
+            count += 1
+            in_step = False
+    return count
+
+
 def _display_messages(messages):
     """Match live bubbles without changing saved messages or model context."""
     footer_fields = {
@@ -360,12 +395,13 @@ def _display_messages(messages):
         "downloadId",
         "unsentFiles",
     }
+    bubbles = []
     for message in messages:
         activity = message.get("activity", [])
         if message["role"] != "assistant" or not any(
             entry["kind"] in {"notice", "schedule-applied", "compaction"} for entry in activity
         ):
-            yield message
+            bubbles.append(dict(message))
             continue
         base = {key: value for key, value in message.items() if key not in footer_fields | {"activity", "content"}}
         parts = []
@@ -423,7 +459,27 @@ def _display_messages(messages):
         for part in parts:
             if part is not footer and part.get("presentation") is None:
                 part["split"] = True
-        yield from parts
+        bubbles.extend(parts)
+    counts = [_context_message_count(bubble) for bubble in bubbles]
+    active = set()
+    for index, bubble in enumerate(bubbles):
+        if bubble.get("presentation") == "summary" and not bubble["compaction"].get("invalidated"):
+            keep = bubble["compaction"].get("keepMessages", 0)
+            retained = set()
+            for prior in sorted(active, reverse=True):
+                if keep <= 0:
+                    break
+                if counts[prior] > 0:
+                    retained.add(prior)
+                    keep -= counts[prior]
+            retained.add(index)
+            active = retained
+        elif counts[index] > 0:
+            active.add(index)
+    for index, bubble in enumerate(bubbles):
+        if counts[index] > 0 and index not in active:
+            bubble["compacted"] = True
+        yield bubble
 
 
 def message_label(message):
@@ -605,7 +661,9 @@ def build_markdown_chat(messages, metadata):
     for message in _display_messages(messages):
         lines += ["", "## " + message_label(message)]
         if message.get("presentation") == "notice":
-            lines += ["", "App notice. Not sent to AI."]
+            lines += ["", "Not sent to AI."]
+        elif message.get("compacted"):
+            lines += ["", "Compacted out of context."]
         files = _message_files(message, urls)
         if files:
             lines += ["", *["- " + _file_markdown(file) for file in files]]
@@ -761,17 +819,14 @@ def build_html_chat(messages, metadata):
                 else ""
             )
             timing = f'<time datetime="{iso}" title="{escape_html(display)}">{escape_html(display)}{duration}</time>'
+        # Messages reach the model by default, so only exceptions get a status line.
         audience = (
             '<p class="message-status">Omitted from future model context.</p>'
             if compaction and compaction.get("invalidated")
-            else '<p class="message-status">Summary used in future model context.</p>'
-            if compaction
-            else '<p class="message-status">Sent in future model context.</p>'
-            if presentation == "context"
-            else '<p class="message-status">App notice. Not sent to AI.</p>'
-            if notice or role == "optimizer"
-            else '<p class="message-status">Sent to AI.</p>'
-            if role == "system" or message.get("source")
+            else '<p class="message-status">Compacted out of context.</p>'
+            if message.get("compacted")
+            else '<p class="message-status">Not sent to AI.</p>'
+            if presentation == "notice" or role == "optimizer"
             else ""
         )
         model_cost = "".join(
