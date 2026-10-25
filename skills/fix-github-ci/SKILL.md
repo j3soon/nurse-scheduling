@@ -11,13 +11,54 @@ coverage the CI job is intended to enforce.
 
 ## Investigate
 
+Check `test -f /.dockerenv` and follow the root
+`AGENTS.md` environment rules. Setup commands, interpreters, and absolute
+paths differ between a dev container (`/workspace`) and a host checkout.
+
+Prefer authenticated `gh` for GitHub reads. It uses an existing `GH_TOKEN`
+automatically. Check `gh auth status >/dev/null 2>&1` and report only whether
+authentication succeeded. Do not print credentials. If the CLI is unavailable
+or lacks access, try a connected GitHub integration. Do not assume an
+integration has the same access as the CLI.
+
+Identify the relevant commit, workflow run, attempt, failed job, and failed
+step before downloading logs. Use `--json` with `--jq` to print only these
+fields. For a supplied run, a compact job summary is:
+
+```sh
+gh run view RUN_ID --repo OWNER/REPO --json headSha,attempt,jobs \
+  --jq '{sha: .headSha, attempt, failed_jobs: [.jobs[] | select(.conclusion == "failure") | {id: .databaseId, name, steps: [.steps[] | select(.conclusion == "failure") | {name, number}]}]}'
+```
+
+For a PR, select runs for its current head SHA. If those runs pass, report
+that state instead of investigating an unrelated older failure. Keep older
+failures separate when the user explicitly asks about them. Paginate run and
+job listings when the relevant entry is not on the first page.
+
+From the repository root, save the selected job's failed-step logs:
+
+```sh
+mkdir -p artifacts
+gh run view RUN_ID --repo OWNER/REPO --attempt ATTEMPT --job JOB_ID \
+  --log-failed > artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+```
+
+Keep the run, job, and attempt in cache filenames. Reuse cached logs for
+completed attempts. Search the saved log with `rg -n` and read small line
+ranges around the failure. Do not print the whole log. Use `--log` for the
+selected job only when failed-step output omits necessary setup or surrounding
+diagnostics.
+When CLI step names show `UNKNOWN STEP`, use job metadata to identify the step.
+
+If log access fails, report the specific authentication, permission, retention,
+or availability error. Public unauthenticated REST can provide run and job
+summaries, but cannot download Actions logs. Try authenticated integration
+access before falling back to local reproduction or requesting `GH_TOKEN`
+through the container environment, as the root `AGENTS.md` describes.
+
 Inspect the failure log, runner matrix, workflow step, and exact command that
 failed. Reproduce the smallest relevant command locally when possible, then
 compare the local environment with the runner context.
-
-Before reproducing locally, check `test -f /.dockerenv` and follow the root
-`AGENTS.md` environment rules. Setup commands, interpreters, and absolute
-paths differ between a dev container (`/workspace`) and a host checkout.
 
 Use the evidence to distinguish among an application defect, a non-portable or
 flaky test, incorrect workflow setup, a dependency mismatch, and a transient
