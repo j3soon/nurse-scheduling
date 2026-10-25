@@ -23,7 +23,7 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { CostDetails } from './CostDetails';
-import { formatUsd, isCostSummary, latestCostSummary, replaceCall, type ProviderCallCost } from './costs';
+import { costLabel, formatUsd, isCostSummary, latestCostSummary, replaceCall, type ProviderCallCost } from './costs';
 
 const call: ProviderCallCost = {
   callId: 'a', model: 'model', reasoning: 'high', status: 'pending', costUsd: null,
@@ -72,4 +72,6 @@ it('keeps a reported price when the process stops before the terminal call event
   render(<CostDetails summary={{ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }} running={false}
     calls={[{ ...call, costUsd: '0.1' }]} />);
   expect(screen.getByText('Estimated turn cost: $0.1000 · 1 call')).toBeInTheDocument();
+  expect(costLabel({ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }, false)).toBe('$0.1000');
+  expect(costLabel({ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }, true)).toBe('$0.1000 · 1 call · 1 pending');
 });

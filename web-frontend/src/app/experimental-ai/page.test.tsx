@@ -536,9 +536,9 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(maxTokens ? 'Context 3.3% used (est.)' : 'Context unavailable');
+    const usage = await screen.findByText(maxTokens ? 'Context ~3.3% used' : 'Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('current LLM context'));
-    const tokens = screen.getByText(`Tokens (est.): 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    const tokens = screen.getByText(`Tokens: ~4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
     expect(tokens).toHaveAttribute('title', 'Estimated current LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.');
   });
 
@@ -569,8 +569,8 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'done', runId: 'compact-run' });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
-    expect(screen.getByText('Context 10.0% used (est.)')).toBeInTheDocument();
-    expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
+    expect(screen.getByText('Context ~10.0% used')).toBeInTheDocument();
+    expect(screen.getByText('Tokens: ~1,000 / 10,000')).toBeInTheDocument();
     await user.click(screen.getByText('Conversation summary', { exact: true }));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
   });

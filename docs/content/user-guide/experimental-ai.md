@@ -157,7 +157,7 @@ same current LLM context. X includes system instructions, tools, conversation
 messages, and streamed output. N is the model context limit reported by the
 provider. The percentage is X divided by N.
 
-The app labels estimates with **(est.)** while streaming and after summarization.
+The app prefixes estimates with **~** while streaming and after summarization.
 Provider-reported token usage replaces estimates when available. If the model
 limit is unknown, the token count remains visible and the percentage shows
 **unavailable**. Hover over either value for its description. **Est. cost** is

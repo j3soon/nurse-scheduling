@@ -536,9 +536,10 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
     captured.publishEvent('cost_summary', {
       run_id: 'answer-1', conversation: { usd: index ? '0.02' : '0.01', calls: 1, pending: 1, unavailable: 0, version: 100 + index },
     });
-    await expect(footer).toContainText(index ? 'Context 3.8% used (est.)' : 'Context 3.1% used (est.)');
-    await expect(footer).toContainText(index ? 'Tokens (est.): 1,200 / 32,000' : 'Tokens (est.): 1,000 / 32,000');
+    await expect(footer).toContainText(index ? 'Context ~3.8% used' : 'Context ~3.1% used');
+    await expect(footer).toContainText(index ? 'Tokens: ~1,200 / 32,000' : 'Tokens: ~1,000 / 32,000');
     await expect(footer).toContainText(index ? 'Est. cost: $0.0200' : 'Est. cost: $0.0100');
+    await expect(footer).not.toContainText('1 pending');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   }
   await expect(page.getByText('First part. Second part.', { exact: true })).toBeVisible();
@@ -576,8 +577,8 @@ test('compacts context on demand and restores the summary after reload', async (
   captured.publishEvent('cost_summary', { run_id: 'manual-summary', conversation: costSummary, run: costSummary });
   captured.publishEvent('done', { run_id: 'manual-summary' });
   await expect(input).toBeEnabled();
-  await expect(page.getByText('Context 3.1% used (est.)')).toBeVisible();
-  await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context ~3.1% used')).toBeVisible();
+  await expect(page.getByText('Tokens: ~1,000 / 32,000')).toBeVisible();
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
   const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
@@ -754,7 +755,7 @@ test('shows compaction status and the reduced context before an answer', async (
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
-  await expect(page.getByText('Context 78.1% used (est.)')).toBeVisible();
+  await expect(page.getByText('Context ~78.1% used')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-running.png', fullPage: true });
   captured.publishEvent('compaction_end', {
     run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
@@ -765,8 +766,8 @@ test('shows compaction status and the reduced context before an answer', async (
     run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
   });
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
-  await expect(page.getByText('Context 12.5% used (est.)')).toBeVisible();
-  await expect(page.getByText('Tokens (est.): 4,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context ~12.5% used')).toBeVisible();
+  await expect(page.getByText('Tokens: ~4,000 / 32,000')).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();

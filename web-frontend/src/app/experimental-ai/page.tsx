@@ -1467,13 +1467,13 @@ export default function ExperimentalAiPage() {
           <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
             {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
               Context {contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
-                ? `${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used${contextUsage.estimated !== false ? ' (est.)' : ''}`
+                ? `${contextUsage.estimated !== false ? '~' : ''}${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used`
                 : 'unavailable'}
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
               <span title={tokenDescription}>
-                Tokens{contextUsage.estimated !== false ? ' (est.)' : ''}: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+                Tokens: {contextUsage.estimated !== false ? '~' : ''}{contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
             </>}
             {activeSessionId && <>
