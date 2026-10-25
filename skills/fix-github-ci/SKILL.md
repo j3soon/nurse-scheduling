@@ -50,11 +50,23 @@ selected job only when failed-step output omits necessary setup or surrounding
 diagnostics.
 When CLI step names show `UNKNOWN STEP`, use job metadata to identify the step.
 
-If log access fails, report the specific authentication, permission, retention,
-or availability error. Public unauthenticated REST can provide run and job
-summaries, but cannot download Actions logs. Try authenticated integration
-access before falling back to local reproduction or requesting `GH_TOKEN`
-through the container environment, as the root `AGENTS.md` describes.
+If CLI and connected integration access cannot retrieve a public repository's
+logs, try the selected job's [REST log-download endpoint](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run).
+Run and job summary endpoints do not return log contents. The download endpoint
+returns a redirect that expires after one minute, so follow it immediately:
+
+```sh
+curl --fail --location --silent --show-error \
+  -H 'Accept: application/vnd.github+json' \
+  https://api.github.com/repos/OWNER/REPO/actions/jobs/JOB_ID/logs \
+  > artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+```
+
+Public log access can still be denied. Report the specific authentication,
+permission, rate-limit, retention, or availability error. Reuse only successful
+downloads as cached logs. If access remains unavailable, reproduce locally or
+request `GH_TOKEN` through the container environment, as the root `AGENTS.md`
+describes.
 
 Inspect the failure log, runner matrix, workflow step, and exact command that
 failed. Reproduce the smallest relevant command locally when possible, then
