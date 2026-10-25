@@ -180,6 +180,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
+- Keep the root README focused on setup and usage for users. Put CI details in
+  the relevant module documentation.
 - Use plain technical English, inspired by ASD-STE100, in prompts, docs,
   commit descriptions, and replies. State the problem or task first. Use active
   voice, concrete verbs, and one main idea per sentence. Use the same term for

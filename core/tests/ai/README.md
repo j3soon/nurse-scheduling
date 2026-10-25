@@ -103,3 +103,20 @@ across turns. The timestamp offset determines sandbox timezone. Host clocks
 and timeout accounting remain real. A clock setup failure fails the testcase
 and closes the sandbox. No production clock or prompt changes are required.
 
+## CI
+
+The dedicated **Test Core AI** workflow validates definitions and runs the
+deterministic tester tests on Ubuntu for pushes and pull requests. Live
+conversations run on pushes to `j3soon/nurse-scheduling`, after validation passes.
+Pull requests and fork repositories do not run live conversations.
+
+Configure repository secrets `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
+`E2B_API_KEY`. No repository variables are required. Optional repository
+variables `AI_PROVIDER_MODEL` and `E2B_TEMPLATE` override the CI defaults:
+`unsloth/Qwen3.8-27B-NVFP4` and `nurse-scheduling-ai-sandbox-github-ci`.
+The live job builds its template from `docker/e2b/e2b.Dockerfile` before running
+the conversations. Jobs with the same template alias serialize building and
+testing, without cancelling an active job. The default CI alias is separate
+from production and staging. Missing credentials or a failed template build
+fail the live job. Each turn has a five-minute limit.
+Failure evidence is uploaded as the `ai-testcase-failures` workflow artifact.
