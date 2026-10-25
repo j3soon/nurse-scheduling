@@ -397,7 +397,7 @@ class ChatHistory:
                 row[0]["cost_totals_version"] = max(version, 0)
                 row[0]["pending_provider_calls"] = []
             entries = connection.execute(
-                "SELECT e.type, e.payload, r.status, e.run_id FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
+                "SELECT e.type, e.payload FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s "
                 "AND (e.run_id IS NULL OR e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
                 (session_id, row[0]["dropped_entries"]),
@@ -426,20 +426,6 @@ class ChatHistory:
                 "AND e.type IN ('done', 'stopped', 'stale', 'error'))) ORDER BY r.sequence",
                 (session_id,),
             ).fetchall()
-        parsed = [(entry_from_record(kind, payload), status, run_id) for kind, payload, status, run_id in entries]
-        last_assistant = {
-            run_id: index
-            for index, (entry, _status, run_id) in enumerate(parsed)
-            if isinstance(entry, AssistantMessage)
-        }
-        restored = []
-        for index, (entry, status, run_id) in enumerate(parsed):
-            if status in {"failed", "cancelled", "stale"}:
-                if isinstance(entry, AssistantMessage) and index == last_assistant[run_id] and not entry.tool_calls:
-                    entry = replace(entry, stop_reason="aborted" if status == "cancelled" else "error")
-                elif isinstance(entry, CompactionEntry):
-                    entry = replace(entry, valid=False)
-            restored.append(entry)
         return {
             "state": row[0],
             "credential_id": row[2],
@@ -449,7 +435,7 @@ class ChatHistory:
                 for upload_id, filename in removed_uploads
             ],
             "expires_at": float(row[1]),
-            "entries": restored,
+            "entries": [entry_from_record(kind, payload) for kind, payload in entries],
             "next_entry_seq": int(next_entry_seq),
             "last_event_id": int(last_event_id),
             "archive_bytes": int(archive_bytes),
@@ -612,18 +598,22 @@ def _recover_run_context(connection, session_id: str, run_id: str) -> None:
         (
             (seq, entry)
             for (seq, _kind, _payload), entry in zip(reversed(rows), reversed(original), strict=True)
+            # Shutdown finalization saves the notice after an answer row that already exists.
             if not isinstance(entry, CompactionEntry)
+            and not (isinstance(entry, AppEventEntry) and entry.text == ABORTED_RESPONSE_HISTORY)
         ),
         None,
     )
     final_answer = last is not None and isinstance(last[1], AssistantMessage) and not last[1].tool_calls
+    # Final validation may not have run before the process stopped, and an interrupted run's summary is not applied.
+    marked = [
+        (seq, run_id, replace(entry, valid=False))
+        for (seq, _kind, _payload), entry in zip(rows, original, strict=True)
+        if isinstance(entry, CompactionEntry) and entry.valid
+    ]
     if final_answer:
-        # Final validation may not have run before the process stopped.
-        _entry_type, payload = entry_record(replace(last[1], stop_reason="error"))
-        connection.execute(
-            "UPDATE chat_session_entries SET payload = %s WHERE session_id = %s AND seq = %s",
-            (_jsonb(payload), session_id, last[0]),
-        )
+        marked.append((last[0], run_id, replace(last[1], stop_reason="error")))
+    _insert_entries(connection, session_id, marked)
     appended = [*missing]
     if not final_answer:
         appended.append(AssistantMessage("", "error"))
@@ -676,7 +666,10 @@ def _recover_run_context(connection, session_id: str, run_id: str) -> None:
 
 
 def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) -> None:
-    """Insert entries by sequence number. A retried batch keeps the first copy."""
+    """Save entries by sequence number.
+
+    A later copy of a run's entry can change only its interruption state. Other conflicts keep the first copy.
+    """
     rows = []
     for seq, run_id, entry in entries:
         entry_type, payload = entry_record(entry)
@@ -684,8 +677,10 @@ def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) ->
     if rows:
         with connection.cursor() as cursor:
             cursor.executemany(
-                "INSERT INTO chat_session_entries (session_id, seq, run_id, type, payload) "
-                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                "INSERT INTO chat_session_entries AS e (session_id, seq, run_id, type, payload) "
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (session_id, seq) DO UPDATE SET payload = EXCLUDED.payload "
+                "WHERE e.run_id = EXCLUDED.run_id AND e.type = EXCLUDED.type AND e.payload <> EXCLUDED.payload "
+                "AND e.payload - 'stop_reason' - 'valid' = EXCLUDED.payload - 'stop_reason' - 'valid'",
                 rows,
             )
 

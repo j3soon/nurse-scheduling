@@ -1693,27 +1693,27 @@ def test_postgres_restart_repairs_unfinished_tools_and_omits_the_last_incomplete
 @pytest.mark.parametrize("finished_answer", [True, False])
 def test_postgres_restart_omits_final_text_that_was_pending_validation(postgres_history, finished_answer):
     from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
 
     session, run, owner = str(uuid4()), str(uuid4()), str(uuid4())
     state = session_state(owner)
     postgres_history.save_session(session, state)
     postgres_history.start_run(run, session, state, "First", 0, model="model", attachment_count=0)
-    postgres_history.append_entries(
-        session,
-        [
-            (1, run, AssistantMessage("Completed earlier exchange")),
-            (2, run, UserMessage("Now edit")),
-            *([(3, run, AssistantMessage("Provisional edit is saved"))] if finished_answer else []),
-        ],
-    )
+    saved = [AssistantMessage("Completed earlier exchange"), UserMessage("Now edit")]
+    if finished_answer:
+        saved.append(AssistantMessage("Provisional edit is saved"))
+    saved.append(CompactionEntry("Summary of the provisional edit", 1, 9000))
+    postgres_history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(saved, 1)])
     postgres_history.recover_run(session, run)
     entries = postgres_history.load_session(session, owner)["entries"]
     assert entries[1].stop_reason == "stop"
     if finished_answer:
         assert entries[3].text == "Provisional edit is saved" and entries[3].stop_reason == "error"
+    assert next(entry for entry in entries if isinstance(entry, CompactionEntry)).valid is False
     context = str(projected_history(entries))
     assert "Completed earlier exchange" in context
     assert "Provisional edit is saved" not in context
+    assert "Summary of the provisional edit" not in context
     assert basic.ABORTED_RESPONSE_HISTORY in context
 
 
@@ -2016,6 +2016,85 @@ def test_postgres_shutdown_reports_interrupted_run_as_restart(postgres_history, 
             "failed",
             "service_restart",
         )
+
+
+def test_postgres_shutdown_after_the_final_answer_omits_it_after_restart(postgres_history, monkeypatch):
+    from nurse_scheduling.ai.compaction import ContextCompactor
+
+    answered = asyncio.Event()
+    compact = ContextCompactor.compact
+
+    async def compact_after_answer(self, messages, *args, **kwargs):
+        if messages[-1]["role"] == "assistant":
+            # Hold the run in its post-answer compaction check until shutdown.
+            answered.set()
+            await asyncio.Event().wait()
+        async for event in compact(self, messages, *args, **kwargs):
+            yield event
+
+    settings = basic.make_settings(history_postgres_url="test")
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            await asyncio.wait_for(answered.wait(), timeout=5)
+            return session_id, client.cookies[basic.OWNER_COOKIE]
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ContextCompactor, "compact", compact_after_answer)
+        session_id, owner = asyncio.run(exercise())
+    provider = basic.FakeProvider([["Next answer"]])
+
+    async def restarted():
+        app = basic.create_test_app(settings=settings, provider=provider)
+        async with serving(app, owner) as client:
+            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Next"})
+            assert response.status_code == 202
+            await read_events(app, session_id, owner)
+
+    asyncio.run(restarted())
+    context = str(provider.calls[0])
+    assert "Provisional edit is saved" not in context
+    assert basic.ABORTED_RESPONSE_HISTORY in context
+
+
+def test_postgres_saves_the_interrupted_state_of_entries_that_were_already_saved(postgres_history, monkeypatch):
+    from nurse_scheduling.ai.agent_types import AgentCompaction
+    from nurse_scheduling.ai.compaction import ContextCompactor
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    compacted = asyncio.Event()
+    compact = ContextCompactor.compact
+
+    async def compact_after_answer(self, messages, *args, **kwargs):
+        if messages[-1]["role"] == "assistant":
+            # Save a summary after the final answer, then hold the run until Stop.
+            yield AgentCompaction(CompactionEntry("Summary", 0, 1000))
+            compacted.set()
+            await asyncio.Event().wait()
+        async for event in compact(self, messages, *args, **kwargs):
+            yield event
+
+    monkeypatch.setattr(ContextCompactor, "compact", compact_after_answer)
+    settings = basic.make_settings(history_postgres_url="test")
+
+    async def exercise():
+        app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
+        async with serving(app) as client:
+            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            await asyncio.wait_for(compacted.wait(), timeout=5)
+            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            await read_events(app, session_id, client.cookies[basic.OWNER_COOKIE], until="stopped")
+
+    asyncio.run(exercise())
+    with postgres_history._connect() as connection:
+        stored = dict(entry for entry in session_entries(connection) if entry[0] in {"assistant", "compaction"})
+    # The saved entries hold the state that the live session used, as Pi's session file does.
+    assert stored["assistant"]["stop_reason"] == "aborted"
+    assert stored["compaction"]["valid"] is False
 
 
 def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, monkeypatch):
@@ -2379,7 +2458,7 @@ def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_histo
 
 @pytest.mark.parametrize("status", ["completed", "cancelled", "failed"])
 def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_history, status):
-    from nurse_scheduling.ai.context import projected_history
+    from nurse_scheduling.ai.context import interrupted_entries, projected_history
     from nurse_scheduling.ai.transcript import CompactionEntry
 
     history = postgres_history
@@ -2389,12 +2468,17 @@ def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_h
     history.start_run(run, session, state, "Keep nights", 0, model="model", attachment_count=0)
     entries = [AssistantMessage("old"), CompactionEntry("Goal: keep nights", 1, 9000), AssistantMessage("Done")]
     history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
-    history.finish_run(run, status, None, None, True, session_id=session, state=state)
+    reason = "aborted" if status == "cancelled" else "error"
+    # Finalization saves the interrupted state of entries that the run already saved.
+    final = entries if status == "completed" else interrupted_entries(entries, reason)
+    saved = [(seq, run, entry) for seq, entry in enumerate(final, 1)]
+    history.finish_run(run, status, None, None, True, session_id=session, state=state, entries=saved)
     restarted = ChatHistory("test")
     restarted.initialize()
     restored = restarted.load_session(session, owner)["entries"]
     summary = next(entry for entry in restored if isinstance(entry, CompactionEntry))
     assert summary.valid == (status == "completed")
+    assert restored[3].stop_reason == ("stop" if status == "completed" else reason)
     assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
 
 

@@ -28,6 +28,7 @@ import pytest
 from nurse_scheduling.ai.agent import Agent
 from nurse_scheduling.ai.agent_loop import agent_loop
 from nurse_scheduling.ai.agent_types import (
+    AgentCompaction,
     AgentContextUsage,
     AgentMessageEnd,
     AgentReasoning,
@@ -37,6 +38,7 @@ from nurse_scheduling.ai.agent_types import (
     AgentToolStart,
     AgentToolUse,
 )
+from nurse_scheduling.ai.compaction import ContextCompactor
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
@@ -48,7 +50,7 @@ from nurse_scheduling.ai.provider import (
     ToolCallRequest,
     ToolResultImage,
 )
-from nurse_scheduling.ai.transcript import AssistantMessage
+from nurse_scheduling.ai.transcript import AssistantMessage, CompactionEntry
 
 from .ai_test_helper import bind_agent_tools
 
@@ -597,6 +599,34 @@ def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
         assert agent.state.messages == []
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("closed_after", [AgentMessageEnd, AgentCompaction])
+def test_agent_omits_a_final_answer_when_closed_before_the_run_finishes(monkeypatch, closed_after):
+    compact = ContextCompactor.compact
+
+    async def compact_after_answer(self, messages, tools, force=False):
+        if messages[-1]["role"] == "assistant":
+            yield AgentCompaction(CompactionEntry("Summary", 0, 1000))
+            return
+        async for event in compact(self, messages, tools, force=force):
+            yield event
+
+    monkeypatch.setattr(ContextCompactor, "compact", compact_after_answer)
+
+    async def exercise():
+        agent = Agent()
+        stream = agent.prompt(FakeProvider(_text("Provisional edit is saved")), QUESTION, [])
+        async for event in stream:
+            if isinstance(event, closed_after):
+                break
+        await stream.aclose()
+        return agent.state.messages
+
+    assistant = [
+        (entry.text, entry.stop_reason) for entry in asyncio.run(exercise()) if isinstance(entry, AssistantMessage)
+    ]
+    assert assistant == [("Provisional edit is saved", "aborted")]
 
 
 @pytest.mark.parametrize(

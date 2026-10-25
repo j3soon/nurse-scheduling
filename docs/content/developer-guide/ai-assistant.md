@@ -459,7 +459,8 @@ was discarded and warns that earlier tool results describe that workspace.
 Timeout retries restart only the incomplete model call from the same request.
 Restart recovery saves interrupted tool results and the context-omission notice
 in the same transaction as the interrupted entries. A final answer awaiting
-validation is marked failed, while earlier completed exchanges remain.
+validation is marked failed, and the run's summaries are marked as not applied.
+Earlier completed exchanges remain.
 Missing tool results receive an explicit failure placeholder that is also shown in
 the frontend. Truncated calls expose their original arguments and the empty
 arguments used for model replay. Tool pairs are repaired before the next
@@ -873,7 +874,9 @@ When a request names a session that is not in memory, the service restores it
 from storage for its owner cookie. As Pi's `buildSessionContext` does, restore
 rebuilds the conversation from saved entries: app events and the messages of
 committed runs. It then skips the entries that retention trimmed.
-Failed and interrupted runs can retain safe conversation context. Stale runs
+Failed and interrupted runs can retain safe conversation context. Run
+finalization and restart recovery save the interrupted state of entries that
+the run already saved, so restore uses the entries as stored. Stale runs
 stay in the audit record only. Runs left running are reconciled with their saved terminal event. If no terminal
 event was saved, they end with an error that names the restart. Their saved
 question and output remain visible. A restart does not rerun model

@@ -260,6 +260,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   requests. Document backup and rollback when the old code cannot read the new schema.
   Do not add code that only preserves edge-case behavior for sessions saved by
   earlier versions, such as their interrupted runs or a missing model lock.
+- Store all session data in PostgreSQL, as Pi stores its session file. Save the
+  final state of each entry, including the interruption marks of saved entries,
+  so restore reads the stored entries without inferring state from run status.
 - Deliver terminal and optimizer status events even when their recovery write
   fails. When a call that could not fail becomes an awaited write, check every
   caller's failure path. Each caller must still release the session and report

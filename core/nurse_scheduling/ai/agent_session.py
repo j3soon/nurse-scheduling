@@ -316,7 +316,8 @@ class AgentSession:
     event_stream: SessionEventStream | None = field(default=None, repr=False)
     # Recovery storage, which receives each new entry as Pi's SessionManager does.
     entry_log: Callable[[str, EntryRow], None] | None = field(default=None, repr=False)
-    _saved_run_messages: int = field(default=0, repr=False)
+    # The sequence number and saved content of each run message, in run order.
+    _saved_run_messages: list[tuple[int, AgentMessage]] = field(default_factory=list, repr=False)
     _listeners: list[Callable[[AgentSessionEvent], None]] = field(default_factory=list, repr=False)
     _events_closed: bool = False
     _admission_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -449,9 +450,19 @@ class AgentSession:
         self._append_entries(run_id, [entry])
 
     def _save_run_messages(self, run_id: str | None, messages: Sequence[AgentMessage]) -> None:
-        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`."""
-        self._append_entries(run_id, messages[self._saved_run_messages :])
-        self._saved_run_messages = len(messages)
+        """Save the run messages that ended since the last call, as Pi saves each one on `message_end`.
+
+        An interruption can mark a saved message. Save that state under the message's sequence number,
+        so restored sessions match the live transcript.
+        """
+        for index, (seq, saved) in enumerate(self._saved_run_messages[: len(messages)]):
+            if messages[index] is not saved and messages[index] != saved:
+                self._saved_run_messages[index] = (seq, messages[index])
+                if self.entry_log is not None:
+                    self.entry_log(self.id, (seq, run_id, messages[index]))
+        for message in messages[len(self._saved_run_messages) :]:
+            self._saved_run_messages.append((self.next_entry_seq, message))
+            self._append_entries(run_id, [message])
 
     def subscribe(self, listener: Callable[[AgentSessionEvent], None]) -> Callable[[], None]:
         """Observe public session events. HTTP serialization belongs to the caller."""
@@ -638,7 +649,7 @@ class AgentSession:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
         self.agent.reset()
         self.agent.open_steering()
-        self._saved_run_messages = 0
+        self._saved_run_messages = []
         self.snapshot = RunSnapshot(
             list(self.transcript),
             self.schedule_yaml,
