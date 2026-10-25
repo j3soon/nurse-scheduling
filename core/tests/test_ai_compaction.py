@@ -850,13 +850,20 @@ def test_failed_split_turn_summary_leaves_original_context_intact(monkeypatch):
 
 
 @pytest.mark.parametrize("failure", [None, "error", "cancel"])
-def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure):
+@pytest.mark.parametrize("pending_cost", [None, "0.02"])
+def test_manual_compaction_uses_session_events_without_a_question_or_workspace(failure, pending_cost):
     import httpx
 
     from . import test_ai_basic as basic
 
+    class Provider(CompactionProvider):
+        async def stream_events(self, messages, tools=None):
+            yield ProviderCall("summary-1", "model", cost_usd=pending_cost)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
     async def exercise():
-        provider = CompactionProvider(fail_summary=failure)
+        provider = Provider(fail_summary=failure)
         provider.context_tokens = 131072
         app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
         async with (
@@ -898,6 +905,19 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
             assert not provider.requests
             assert app.state.sandbox_factory.created == []
             assert not session.active
+            expected_cost = "0.01" if failure is None else pending_cost or "0"
+            assert session.cost_totals.public() == {
+                "usd": expected_cost,
+                "calls": 1,
+                "pending": 0,
+                "unavailable": int(failure is not None and pending_cost is None),
+            }
+            assert not session.pending_provider_calls
+            assert session.recovery_state()["pending_provider_calls"] == []
+            calls = [event for event in publications if event["type"] == "provider_call"]
+            assert calls[-1]["status"] == (
+                "unavailable" if failure is not None and pending_cost is None else "reported"
+            )
             assert session.transcript[: len(original)] == original
             assert not any(entry.text == "/compact" for entry in session.transcript if isinstance(entry, UserMessage))
             assert not any(
