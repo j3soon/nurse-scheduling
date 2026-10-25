@@ -45,10 +45,14 @@ each case runs once.
 even if the second passes. Any failure keeps the command failed. Production
 provider retries still apply.
 Missing configuration fails the run. Failures include a case, turn, step, and
-observed evidence. Every attempt prints the full conversation to stdout, including
-reasoning, tool calls and results, and before/after schedule YAML. The final
-summary shows each outcome and failed/total attempt counts. Assertion failures
-do not stop later turns. Execution errors stop that attempt.
+observed evidence. Failed attempts print the full conversation to stdout,
+including reasoning, tool calls and results, and before/after schedule YAML.
+Every attempt saves a readable Markdown transcript under repository-root
+`artifacts/ai-testcases/<run>/`, including successful conversations. Passing
+attempts print one status line with the file path. Each run has its own directory,
+with a separate file for each case and attempt. The final summary shows each
+outcome and failed/total attempt counts. Assertion failures do not stop later turns.
+Execution errors stop that attempt.
 
 ## Authoring
 
@@ -94,7 +98,7 @@ Both phrase matching and the LLM judge must pass. The judge always runs for an
 executed turn, even when phrase matching or agent execution fails. It reads the
 conversation in a separate request with no tools and returns a boolean verdict
 and explanation. Invalid verdicts, request errors, and its two-minute timeout
-fail the attempt. Every transcript includes the rubric, model, full judge
+fail the attempt. All saved transcripts include the rubric, model, full judge
 request, raw response, verdict, and explanation. The judge uses the configured
 provider and model by default. `AI_TEST_JUDGE_MODEL` selects another model on
 the same provider. Other cases have no judge unless their assertion requests one.
@@ -136,5 +140,6 @@ testing, without cancelling an active job. The default CI alias is separate
 from production and staging. Missing credentials or a failed template build
 fail the live job. Each turn has a five-minute limit.
 CI runs two additional attempts for each initially failed case and stays failed.
-Read each attempt's full conversation and the final summary in the
-**Run human-reviewed AI conversations** step's job log. No artifacts are created.
+Read failed attempts' full conversations and the final summary in the
+**Run human-reviewed AI conversations** step's job log. CI uploads all saved
+transcripts in the `ai-testcase-conversations` artifact, on success and failure.

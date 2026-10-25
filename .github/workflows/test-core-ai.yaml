@@ -63,3 +63,10 @@ jobs:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           AI_SANDBOX_TURN_TIMEOUT_SECONDS: "300"
         run: python -m tests.ai.runner run --diagnostic-attempts 3
+      - name: Upload conversation transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-testcase-conversations
+          path: artifacts/ai-testcases/
+          if-no-files-found: ignore

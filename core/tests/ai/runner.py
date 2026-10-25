@@ -27,7 +27,7 @@ import os
 import shlex
 from contextlib import aclosing
 from dataclasses import asdict, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ from nurse_scheduling.ai.workspace_tools import run_workspace
 from .assertions import check_event, check_schedule
 from .judge import evaluate
 from .reporting import print_attempt, print_summary
-from .schema import FIXTURES, TESTCASES, Case, DefinitionError, Step, load_case
+from .schema import FIXTURES, ROOT, TESTCASES, Case, DefinitionError, Step, load_case
 
 
 class DatedFactory:
@@ -98,6 +98,7 @@ async def run_case(
     factory: SandboxFactory,
     *,
     judge_provider: Any = None,
+    transcript_path: Path | None = None,
 ) -> bool:
     """Execute one isolated conversation and retain all assertions and messages."""
     schedule = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
@@ -244,17 +245,32 @@ async def run_case(
                         "error": verdict["error"] or verdict["reason"],
                     }
                 )
-    print_attempt(case, errors, trace, settings)
+    print_attempt(case, errors, trace, settings, transcript_path)
     return not errors
 
 
-async def run_cases(cases, provider, settings, factory, diagnostic_attempts: int = 1, *, judge_provider=None) -> bool:
+async def run_cases(
+    cases,
+    provider,
+    settings,
+    factory,
+    diagnostic_attempts: int = 1,
+    *,
+    judge_provider=None,
+    output_dir: Path | None = None,
+) -> bool:
     """Repeat initially failed cases for inspection without changing their outcome."""
     results = []
     for case in cases:
         for attempt in range(1, diagnostic_attempts + 1):
             print(f"Attempt {attempt}: {case.path}", flush=True)
-            passed = await run_case(case, provider, settings, factory, judge_provider=judge_provider)
+            relative = case.path.relative_to(TESTCASES) if case.path.is_relative_to(TESTCASES) else Path(case.path.name)
+            transcript_path = (
+                output_dir / relative.with_suffix("") / f"attempt-{attempt}.md" if output_dir is not None else None
+            )
+            passed = await run_case(
+                case, provider, settings, factory, judge_provider=judge_provider, transcript_path=transcript_path
+            )
             results.append(
                 {
                     "case": case.path.stem,
@@ -268,6 +284,9 @@ async def run_cases(cases, provider, settings, factory, diagnostic_attempts: int
     return all(result["passed"] for result in results)
 
 
+TRANSCRIPTS = ROOT.parents[2] / "artifacts" / "ai-testcases"
+
+
 async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
     settings = AiSettings.from_env()
     provider = OpenAiCompatibleProvider(settings)
@@ -276,8 +295,17 @@ async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
     judge_provider = OpenAiCompatibleProvider(
         replace(settings, provider_model=judge_model), parameters={"temperature": 0}
     )
+    output_dir = TRANSCRIPTS / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     async with managed_sandbox_factory(factory):
-        return await run_cases(cases, provider, settings, factory, diagnostic_attempts, judge_provider=judge_provider)
+        return await run_cases(
+            cases,
+            provider,
+            settings,
+            factory,
+            diagnostic_attempts,
+            judge_provider=judge_provider,
+            output_dir=output_dir,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

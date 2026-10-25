@@ -247,12 +247,15 @@ def test_failure_stdout_and_sandbox_cleanup(tmp_path, capsys, failure):
                 yield event
 
     factory = FakeSandboxFactory()
-    assert not asyncio.run(run_case(case, Provider(responses), settings(), factory))
+    transcript = tmp_path / "attempt-1.md"
+    assert not asyncio.run(run_case(case, Provider(responses), settings(), factory, transcript_path=transcript))
     assert factory.created[0].closed
     log = capsys.readouterr().out
     assert "provider-secret" not in log and "sandbox-secret" not in log
     assert "turn 1, step" in log and "Schedule before" in log
-    assert not list(tmp_path.glob("evidence*"))
+    saved = transcript.read_text(encoding="utf-8")
+    assert "provider-secret" not in saved and "sandbox-secret" not in saved
+    assert saved in log
     if failure == "unexpected-change":
         assert "unexpected schedule changes" in log
 
@@ -477,24 +480,34 @@ def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_pa
         ]
     )
     factory = FakeSandboxFactory()
-    passed = asyncio.run(run_cases([case], provider, settings(), factory, diagnostic_attempts=3))
+    output_dir = tmp_path / "transcripts"
+    passed = asyncio.run(run_cases([case], provider, settings(), factory, diagnostic_attempts=3, output_dir=output_dir))
     assert passed is (replies[0] == "expected")
     assert len(factory.created) == len(replies)
     assert all(sandbox.closed for sandbox in factory.created)
     assert all(sum(message["role"] == "user" for message in request) == 1 for request in provider.requests)
     log = capsys.readouterr().out
-    assert log.count("## Turn 1") == len(replies)
+    assert log.count("## Turn 1") == sum(reply != "expected" for reply in replies)
     for attempt, reply in enumerate(replies, start=1):
-        assert f"Attempt {attempt}:" in log and reply in log
+        assert f"Attempt {attempt}:" in log
         assert f"| case | {attempt} | {'PASS' if reply == 'expected' else 'FAIL'} |" in log
     assert f"| case | {sum(reply != 'expected' for reply in replies)}/{len(replies)} |" in log
-    assert list(tmp_path.iterdir()) == [case.path]
+    transcripts = sorted((output_dir / "case").glob("attempt-*.md"))
+    assert len(transcripts) == len(replies)
+    for path, reply in zip(transcripts, replies, strict=True):
+        assert reply in path.read_text(encoding="utf-8")
 
 
-def test_stdout_includes_all_messages_tools_and_reasoning(tmp_path, capsys):
+@pytest.mark.parametrize("passed", [True, False], ids=["passing-summary", "failed-conversation"])
+def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed):
     from nurse_scheduling.ai.provider import ReasoningDelta
 
-    case = definition(tmp_path, "steps: [{user: Read the people.}, {user: Thanks.}]")
+    case = definition(
+        tmp_path,
+        "steps: [{user: Read the people.}, {user: Thanks.}, {assistant: {contains_any: ["
+        + ("welcome" if passed else "missing")
+        + "]}}]",
+    )
     provider = ScriptedProvider(
         [
             [ReasoningDelta("Inspect the schedule."), tool_call("r", "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
@@ -502,8 +515,24 @@ def test_stdout_includes_all_messages_tools_and_reasoning(tmp_path, capsys):
             [TextDelta("You're welcome."), ResponseEnd("stop")],
         ]
     )
-    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory()))
+    transcript = tmp_path / "transcripts" / "attempt-1.md"
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), transcript_path=transcript)) is passed
+    saved = transcript.read_text(encoding="utf-8")
+    assert all(
+        text in saved
+        for text in [
+            "Read the people.",
+            "Inspect the schedule.",
+            "You're welcome.",
+            "Schedule before",
+            "Schedule after",
+        ]
+    )
+    assert ("# case.yaml: PASS" if passed else "# case.yaml: FAIL") in saved
     log = capsys.readouterr().out
+    if passed:
+        assert log == f"PASS {case.path} (2 turns); transcript: {transcript}\n"
+        return
     assert log.count("## Turn ") == 2
     assert all(
         text in log
@@ -519,7 +548,7 @@ def test_stdout_includes_all_messages_tools_and_reasoning(tmp_path, capsys):
             "Schedule after",
         ]
     )
-    assert list(tmp_path.iterdir()) == [case.path]
+    assert str(transcript) in log
 
 
 @pytest.mark.parametrize("rubric", ["", None, True, {"contains": "here"}], ids=["empty", "null", "boolean", "mapping"])
@@ -539,17 +568,29 @@ def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
     ],
     ids=["both-pass", "term-only", "judge-only", "both-fail"],
 )
-def test_identity_requires_terms_and_judge_and_always_logs_verdict(capsys, reply, judge_pass, expected):
+def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsys, reply, judge_pass, expected):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
     judge = ScriptedProvider(
         [[TextDelta(json.dumps({"passed": judge_pass, "reason": "Semantic verdict."})), ResponseEnd("stop")]]
     )
-    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is expected
+    transcript = tmp_path / "attempt-1.md"
+    assert (
+        asyncio.run(
+            run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+        )
+        is expected
+    )
+    saved = transcript.read_text(encoding="utf-8")
+    assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in saved
+    assert "Semantic verdict." in saved and "Judge request:" in saved
     log = capsys.readouterr().out
-    assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
-    assert case.steps[2].value["judge"] in log
-    assert "Semantic verdict." in log and "Judge request:" in log
+    if expected:
+        assert log == f"PASS {case.path} (1 turns); transcript: {transcript}\n"
+    else:
+        assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
+        assert case.steps[2].value["judge"] in log
+        assert "Semantic verdict." in log and "Judge request:" in log
     assert len(judge.requests) == 1
     assert all("current-schedule.yaml" not in str(message) for message in judge.requests[0])
     assert any(reply in message.get("content", "") for message in judge.requests[0])
@@ -624,3 +665,21 @@ def test_judge_timeout_keeps_partial_reply_and_closes_stream(monkeypatch):
     result = asyncio.run(evaluate(provider, "Current chat.", [], "test"))
     assert result["passed"] is False and result["error"].startswith("TimeoutError:")
     assert result["response"] == "partial verdict" and provider.closed
+
+
+def test_cli_run_saves_successful_conversation_by_default(tmp_path, monkeypatch, capsys):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+    provider = ScriptedProvider([[TextDelta("Successful local reply."), ResponseEnd("stop")]])
+    output_dir = tmp_path / "transcripts"
+    monkeypatch.setattr(runner, "TRANSCRIPTS", output_dir)
+    monkeypatch.setattr(AiSettings, "from_env", settings)
+    monkeypatch.setattr(runner, "OpenAiCompatibleProvider", lambda *args, **kwargs: provider)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda *_: FakeSandboxFactory())
+    assert main(["run", str(case.path)]) == 0
+    transcripts = list(output_dir.glob("*/case/attempt-1.md"))
+    assert len(transcripts) == 1
+    assert "Successful local reply." in transcripts[0].read_text(encoding="utf-8")
+    log = capsys.readouterr().out
+    assert str(transcripts[0]) in log and "Successful local reply." not in log

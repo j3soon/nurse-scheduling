@@ -1,4 +1,4 @@
-"""Print complete testcase transcripts and attempt summaries to stdout."""
+"""Save testcase transcripts and print failures and attempt summaries."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -86,7 +86,13 @@ def _transcript(record: dict) -> str:
     return "\n".join(lines)
 
 
-def print_attempt(case: Case, errors: list[dict], trace: list[dict], settings: AiSettings) -> None:
+def print_attempt(
+    case: Case,
+    errors: list[dict],
+    trace: list[dict],
+    settings: AiSettings,
+    transcript_path: Path | None = None,
+) -> None:
     record = {
         "case": str(case.path),
         "model": settings.provider_model,
@@ -101,7 +107,14 @@ def print_attempt(case: Case, errors: list[dict], trace: list[dict], settings: A
     for secret in (settings.provider_api_key, settings.e2b_api_key):
         if secret:
             text = text.replace(secret, "[redacted]")
-    print(text, flush=True)
+    if transcript_path is not None:
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        transcript_path.write_text(text, encoding="utf-8")
+    location = f"; transcript: {transcript_path}" if transcript_path is not None else ""
+    if errors:
+        print(text + (f"\nTranscript: {transcript_path}" if transcript_path is not None else ""), flush=True)
+    else:
+        print(f"PASS {case.path} ({len(trace)} turns){location}", flush=True)
 
 
 def print_summary(results: list[dict]) -> None:
