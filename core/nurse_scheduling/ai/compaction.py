@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart, AgentGenerationProgress
 from .context import STATUS_PREFIX, SUMMARY_PREFIX, apply_compaction, history_chars
-from .context_tokens import context_safety_tokens, estimate_context_tokens, estimate_tokens
+from .context_tokens import estimate_context_tokens, estimate_tokens
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -89,10 +89,12 @@ def _cut_point(messages: list[ChatMessage], keep_tokens: int) -> int:
 class ContextCompactor:
     """Prepare summaries without changing context until every summary call succeeds."""
 
-    def __init__(self, provider: ToolCapableChatProvider, *, history_limit: int = 200_000, message_limit: int = 1000):
+    def __init__(
+        self, provider: ToolCapableChatProvider, *, reserve_tokens: int = 16384, keep_recent_tokens: int = 20000
+    ):
         self.provider = provider
-        self.history_limit = history_limit
-        self.message_limit = message_limit
+        self.reserve_tokens = reserve_tokens
+        self.keep_recent_tokens = keep_recent_tokens
         self.failed = False
         self._summary_step = 0
 
@@ -115,14 +117,8 @@ class ContextCompactor:
     def needed(self, messages, tools) -> bool:
         if self.failed:
             return False
-        body = _conversation(messages)
         window = self.window
-        token_limit_reached = window is not None and self.tokens(messages, tools) > window - min(16384, window // 4)
-        return (
-            token_limit_reached
-            or history_chars(body) > self.history_limit * 0.8
-            or len(body) > max(2, self.message_limit * 0.8)
-        )
+        return window is not None and self.tokens(messages, tools) > window - self.reserve_tokens
 
     async def compact(
         self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False, manual: bool = False
@@ -139,44 +135,19 @@ class ContextCompactor:
             if manual:
                 yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
             return
-        window = self.window or 32768
-        reserve = min(16384, window // 4)
-        recent_tokens = min(
-            20000,
-            window // 3,
-            max(1, self.history_limit // 12),
-            sum(estimate_tokens(message) for message in body[-max(1, self.message_limit // 3) :]),
-        )
-        cut = _cut_point(body, recent_tokens)
+        if self.window is None:
+            raise ProviderError.for_user(
+                "The selected model has no valid context window. Configure its model metadata."
+            )
+        cut = _cut_point(body, self.keep_recent_tokens)
         if cut == 0:
             if manual:
                 yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
             return
-        # Smaller model windows can require a later safe boundary. Summarize the
-        # whole tail only when even its final tool batch cannot fit.
-        while cut < len(body):
-            candidate_keep = sum(not message.get("_tool_image", False) for message in body[cut:])
-            candidate = apply_compaction(messages, CompactionEntry("", candidate_keep, 0))
-            if sum(estimate_tokens(message) for message in candidate) <= window - reserve:
-                break
-            cut = next((index for index in range(cut + 1, len(body)) if _is_cut_point(body[index])), len(body))
         older, recent = body[:cut], body[cut:]
         keep = sum(not message.get("_tool_image", False) for message in recent)
         entries = load_system_prompt_entries(COMPACTION_MANIFEST)
         prompts = dict(zip((entry["id"] for entry in entries), load_system_prompt_sections(entries), strict=True))
-        instruction_chars = max(len(prompt) for key, prompt in prompts.items() if key != "compaction-system")
-        summary_space = (
-            (window - max(1, int(0.8 * reserve)) - context_safety_tokens(window)) * 4
-            - len(prompts["compaction-system"])
-            - instruction_chars
-            - 512
-        )
-        max_summary_chars = min(
-            16000, max(256, reserve * 2), max(256, self.history_limit // 4), max(256, summary_space // 2)
-        )
-        input_chars = summary_space - max_summary_chars
-        if input_chars < 256:
-            return
         turn_start = None
         if cut < len(body) and body[cut]["role"] == "assistant":
             turn_start = next(
@@ -197,7 +168,7 @@ class ContextCompactor:
         self._summary_step = 0
         try:
             if history:
-                events = self._summarize(history, prompts, input_chars, max_summary_chars, summary)
+                events = self._summarize(history, prompts, summary)
                 async with aclosing(events):
                     async for event in events:
                         if isinstance(event, (ProviderCall, AgentGenerationProgress)):
@@ -210,8 +181,6 @@ class ContextCompactor:
                 events = self._summarize(
                     body[turn_start:cut],
                     prompts,
-                    input_chars,
-                    max_summary_chars,
                     initial_prompt="compaction-turn-prefix",
                 )
                 async with aclosing(events):
@@ -221,10 +190,6 @@ class ContextCompactor:
                         else:
                             summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
             entry = CompactionEntry(summary, keep, self.tokens(messages, tools))
-            if history_chars(apply_compaction(messages, entry)) >= history_chars(messages):
-                self.failed = True
-                yield AgentCompactionEnd(reason, False, tokens_before, skipped=True)
-                return
         except ProviderError:
             self.failed = True
             logger.warning("AI context compaction failed. Original context retained.", exc_info=True)
@@ -237,7 +202,7 @@ class ContextCompactor:
             True,
             tokens_before,
             self.tokens(after, tools),
-            min(self.history_limit, history_chars(_conversation(after))),
+            history_chars(_conversation(after)),
             summary=entry.summary,
             keep_messages=entry.keep_messages,
         )
@@ -246,59 +211,48 @@ class ContextCompactor:
         self,
         messages: Sequence[ChatMessage],
         prompts: dict[str, str],
-        input_chars: int,
-        max_summary_chars: int,
         summary: str = "",
         *,
         initial_prompt: str = "context-compaction",
     ) -> AsyncIterator[ProviderCall | AgentGenerationProgress | str]:
-        """Use Pi's initial or update instructions with explicit conversation data."""
+        """Use Pi's summary prompts and token budgets without local text ceilings."""
         serialized = _serialize(messages)
-        # Retain bounded chunking when a history cannot fit in one request.
-        offset = 0
-        while offset < len(serialized):
-            # A split-turn checkpoint can contain both history and turn summaries.
-            chunk_chars = input_chars - max(0, len(summary) - max_summary_chars)
-            if chunk_chars < 256:
-                raise ProviderError("Compaction has no room for the previous summary")
-            chunk = serialized[offset : offset + chunk_chars]
-            offset += len(chunk)
-            instruction = prompts["compaction-update" if summary else initial_prompt]
-            content = f"<conversation>\n{chunk}\n</conversation>\n\n"
+        turn_prefix = initial_prompt == "compaction-turn-prefix"
+        if turn_prefix:
+            content = f"# Conversation\n{serialized}\n\n# Instructions\n{prompts[initial_prompt]}"
+        else:
+            content = f"<conversation>\n{serialized}\n</conversation>\n\n"
             if summary:
                 content += f"<previous-summary>\n{summary}\n</previous-summary>\n\n"
-            content += instruction + f"\n\nSummary character limit: {max_summary_chars}."
-            request = [
-                ChatMessage(role="system", content=prompts["compaction-system"]),
-                ChatMessage(role="user", content=content),
-            ]
-            text, finish, ended, text_chars = [], None, False, 0
-            self._summary_step += 1
-            yield AgentGenerationProgress("compaction", 0, self._summary_step)
-            bind_limit = getattr(self.provider, "with_output_limit", None)
-            reserve = min(16384, (self.window or 32768) // 4)
-            summary_provider = bind_limit(max(1, int(0.8 * reserve))) if bind_limit is not None else self.provider
-            events = summary_provider.stream_events(request, [])
-            async with aclosing(events):
-                async for event in events:
-                    if isinstance(event, ProviderCall):
-                        yield event
-                    elif isinstance(event, ProviderRetry):
-                        # Pi's completeSummarization accepts only the completed attempt.
-                        text, finish, ended, text_chars = [], None, False, 0
-                        yield AgentGenerationProgress("compaction", 0, self._summary_step)
-                    elif isinstance(event, TextDelta):
-                        text.append(event.text)
-                        text_chars += len(event.text)
-                        if text_chars > max_summary_chars:
-                            raise ProviderError("Compaction summary exceeded its size limit")
-                        yield AgentGenerationProgress("compaction", text_chars, self._summary_step)
-                    elif isinstance(event, ToolCallRequest) and event.calls:
-                        raise ProviderError("Compaction requested a tool")
-                    elif isinstance(event, ResponseEnd):
-                        finish = event.finish_reason
-                        ended = True
-            summary = "".join(text).strip()
-            if not summary or not ended or finish == "length":
-                raise ProviderError("Compaction returned an empty or incomplete summary")
+            content += prompts["compaction-update" if summary else initial_prompt]
+        request = [
+            ChatMessage(role="system", content=prompts["compaction-system"]),
+            ChatMessage(role="user", content=content),
+        ]
+        text, finish, ended, text_chars = [], None, False, 0
+        self._summary_step += 1
+        yield AgentGenerationProgress("compaction", 0, self._summary_step)
+        bind_limit = getattr(self.provider, "with_output_limit", None)
+        output_tokens = int((0.5 if turn_prefix else 0.8) * self.reserve_tokens)
+        summary_provider = bind_limit(output_tokens) if bind_limit is not None else self.provider
+        events = summary_provider.stream_events(request, [])
+        async with aclosing(events):
+            async for event in events:
+                if isinstance(event, ProviderCall):
+                    yield event
+                elif isinstance(event, ProviderRetry):
+                    text, finish, ended, text_chars = [], None, False, 0
+                    yield AgentGenerationProgress("compaction", 0, self._summary_step)
+                elif isinstance(event, TextDelta):
+                    text.append(event.text)
+                    text_chars += len(event.text)
+                    yield AgentGenerationProgress("compaction", text_chars, self._summary_step)
+                elif isinstance(event, ToolCallRequest) and event.calls:
+                    raise ProviderError("Compaction requested a tool")
+                elif isinstance(event, ResponseEnd):
+                    finish = event.finish_reason
+                    ended = True
+        summary = "".join(text).strip()
+        if not summary or not ended or finish == "length":
+            raise ProviderError("Compaction returned an empty or incomplete summary")
         yield summary

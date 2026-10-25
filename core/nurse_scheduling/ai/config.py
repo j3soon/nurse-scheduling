@@ -142,6 +142,8 @@ class AiSettings:
     budget plus the newest message of each live session. Size
     the process above that floor, not at this value.
     """
+    compaction_reserve_tokens: int = 16384
+    compaction_keep_recent_tokens: int = 20000
     max_history_messages: int = 1000
     max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS
     max_message_chars: int = 8000
@@ -221,6 +223,8 @@ class AiSettings:
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 1024 * 1024 * 1024),
+            compaction_reserve_tokens=_read_positive_int("AI_COMPACTION_RESERVE_TOKENS", 16384),
+            compaction_keep_recent_tokens=_read_positive_int("AI_COMPACTION_KEEP_RECENT_TOKENS", 20000),
             max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
             max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
             max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),

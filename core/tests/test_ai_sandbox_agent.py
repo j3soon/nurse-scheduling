@@ -228,6 +228,8 @@ def test_large_provider_read_batch_preserves_workspace_and_proposal(monkeypatch)
             provider_model="test-model",
         )
     )
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=checkpoint))
 
     events = _collect(provider, factory)

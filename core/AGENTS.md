@@ -173,11 +173,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
   compaction boundary. A status message cannot stand in for the current request.
   Manual compaction shares run admission, Stop, replay, and persistence. Keep
   its request ID idempotent. Do not create a user question or allocate a workspace.
-  Cover short questions with longer completed replies. Treat a summary that does
-  not reduce context as unchanged context rather than a provider failure.
-  Use Pi's shared manual and automatic retention boundary. Keep recent messages
-  within the model and server limits, and skip a short conversation before calling
-  the provider when no older messages remain to summarize.
+  Cover short questions with longer completed replies. Use Pi's token threshold,
+  shared manual and automatic retention boundary, and separate history and turn-prefix
+  output budgets. Do not derive normal compaction behavior from defensive history
+  limits. Accept completed summaries without a character-size reduction test.
+  Skip a short conversation when no older messages remain to summarize.
   Keep summary requests visible in provider cost records, but keep their text out
   of the answer stream. Test retries through each provider-stream consumer,
   including compaction. Keep only the successful draft and retain all cost records.
@@ -185,14 +185,15 @@ stderr. Do not replace an explicitly selected file with a fallback.
   exposing drafts. Count Unicode code points in chat, replay, and exports. Keep
   character counts separate from provider token usage.
   Use `tests/test_ai_compaction.py` for these contracts.
-  Test chunked summaries through the provider's token-limit calculation, including
-  updates with a previous split-turn summary and small model context windows.
+  Test complete summary requests through the provider's token-limit calculation,
+  including updates with a previous split-turn summary and oversized requests.
+  Require a valid discovered model context window before paid generation.
   Coalesce streamed context estimates with text batches. Replace token estimates
   with provider usage without adding estimates to billed usage or cost totals.
-  Test history character and message thresholds without model context metadata.
+  Test that defensive history budgets do not alter compaction thresholds or retention.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs five scenarios, at most four concurrently through the real session API
-  and prebuilt E2B sandboxes. A smaller history budget forces compaction.
+  and prebuilt E2B sandboxes. Explicit compaction token settings force compaction.
   Select an available model with a reported context limit. Check that model
   switching is rejected and supported reasoning-effort changes remain accepted.
   Check remembered file context separately from file availability in the new VM.

@@ -91,6 +91,8 @@ async def agent_loop(
     run_messages: list[AgentMessage] | None = None,
     history_limit: int = 200_000,
     message_limit: int = 1000,
+    reserve_tokens: int = 16384,
+    keep_recent_tokens: int = 20000,
 ) -> AsyncIterator[AgentEvent]:
     """Run the model/tool loop shared by agent capability layers."""
     registered = {tool.name: tool for tool in tools}
@@ -106,7 +108,7 @@ async def agent_loop(
     tool_rounds = 0
     tool_calls = 0
     final_answer_only = False
-    compactor = ContextCompactor(provider, history_limit=history_limit, message_limit=message_limit)
+    compactor = ContextCompactor(provider, reserve_tokens=reserve_tokens, keep_recent_tokens=keep_recent_tokens)
     await compactor.prepare()
     overflow_recovered = False
 

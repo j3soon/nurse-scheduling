@@ -889,8 +889,8 @@ class AgentSession:
             async with runtime.concurrency_limit:
                 compactor = ContextCompactor(
                     runtime.provider,
-                    history_limit=settings.max_history_chars,
-                    message_limit=settings.max_history_messages,
+                    reserve_tokens=settings.compaction_reserve_tokens,
+                    keep_recent_tokens=settings.compaction_keep_recent_tokens,
                 )
                 await compactor.prepare()
                 definitions = SandboxPiTools.tool_definitions(settings.sandbox_command_timeout_seconds)

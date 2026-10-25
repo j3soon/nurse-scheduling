@@ -537,6 +537,8 @@ cleaned while the AI service is offline.
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. Its stored uploads, generated ZIPs, and optimizer files remain in PostgreSQL and load again on demand. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
 | `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It leaves room for several sessions at the `AI_MAX_ATTACHMENT_TOTAL_BYTES` limit. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn instead drops its session's oldest complete exchanges and warns the browser. Size the process above this budget plus the newest turn of each session. |
+| `AI_COMPACTION_RESERVE_TOKENS` | `16384` | Output reserve used by Pi's automatic compaction threshold and summary budgets. |
+| `AI_COMPACTION_KEEP_RECENT_TOKENS` | `20000` | Estimated recent context retained after compaction. |
 | `AI_MAX_HISTORY_MESSAGES` | `1000` | Conversation messages retained per session. The effective minimum is two, so a completed question and answer survive when this is set to one. |
 | `AI_MAX_HISTORY_CHARS` | `200000` | Prompt budget for retained history. The newest messages that fit are sent, so a long session cannot outgrow the model context window. |
 | `AI_MAX_MESSAGE_CHARS` | `8000` | Maximum question length. |
@@ -637,14 +639,12 @@ The composer footer updates Context and Tokens during streamed reasoning and ans
 text. Token estimates are replaced when the provider reports usage. Estimated cost
 updates when provider cost figures arrive. Missing prices stay unavailable.
 Completion requests cap output against the model's advertised output limit and
-remaining context, with a safety margin of 4,096 tokens or half the context
-window, whichever is smaller. Summaries request up to
-80 percent of their reserved output space. Numeric reasoning budgets leave at
+remaining context, with a fixed safety margin of 4,096 tokens. History summaries
+request up to 80 percent of the output reserve. Split-turn prefix summaries
+request up to 50 percent. Numeric reasoning budgets leave at
 least 1,024 tokens for the answer within the same completion limit. The gateway's
-supported parameters determine the token-limit field. Unknown model limits keep
-provider defaults unless the request supplies an explicit cap.
-
-Without a reported context limit, the existing history limits still apply.
+supported parameters determine the token-limit field. A model must report a
+positive context window before generation.
 A confirmed context overflow permits one compact-and-retry attempt. PostgreSQL
 recovery retains successful summaries across service restarts.
 
@@ -812,10 +812,10 @@ and a prebuilt E2B template. Run it from the repository root:
 AI_ENV_FILE=docker/.env.staging ./scripts/test_ai_compaction_live.sh
 ```
 
-It runs four scenarios concurrently: automatic compaction across runs, repeated
-compaction, model switching, and Stop during a real summary stream followed by
-resume. A 24,000-character history budget forces compaction without filling the
-provider's full context window. Checks cover remembered constraints, complete
+It runs five scenarios, at most four concurrently: automatic compaction across
+runs, repeated compaction, model switching, Stop during a real summary stream
+followed by resume, and manual compaction. Explicit token settings force
+compaction without filling the provider's full context window. Checks cover remembered constraints, complete
 tool exchanges, reconnect replay, attempt costs, stable session IDs, and missing
 temporary files in each fresh sandbox. The schedule must stay unchanged.
 The cancellation case pauses after receiving a real summary fragment.

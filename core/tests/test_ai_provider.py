@@ -100,6 +100,8 @@ def test_provider_http_error_logs_redacted_body_and_returns_error_id(
             provider_max_attempts=1,
         )
     )
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
     messages: list[ChatMessage] = [{"role": "user", "content": "Question"}]
     caplog.set_level(logging.ERROR, logger="nurse_scheduling.ai.provider")
 
@@ -140,6 +142,8 @@ def test_provider_http_error_bounds_untrusted_response_excerpt(
             provider_max_attempts=1,
         )
     )
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
     caplog.set_level(logging.ERROR, logger="nurse_scheduling.ai.provider")
 
     with pytest.raises(ProviderError, match="HTTP 520"):
@@ -180,7 +184,12 @@ def _streaming_provider(
         if requests is not None:
             requests.append(request)
         if request.url.path.endswith("/models"):
-            return httpx.Response(models_status, json=model_metadata if model_metadata is not None else {"data": []})
+            return httpx.Response(
+                models_status,
+                json=model_metadata
+                if model_metadata is not None
+                else {"data": [{"id": "test-model", "context_length": 262144}]},
+            )
         return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, text=body)
 
     monkeypatch.setattr(
@@ -188,7 +197,7 @@ def _streaming_provider(
         "AsyncClient",
         lambda **kwargs: real_async_client(transport=httpx.MockTransport(handle), **kwargs),
     )
-    return OpenAiCompatibleProvider(
+    provider = OpenAiCompatibleProvider(
         AiSettings(
             provider_base_url="https://provider.example/v1",
             provider_api_key="test-token",
@@ -199,6 +208,11 @@ def _streaming_provider(
         ),
         include_usage=include_usage,
     )
+
+    if not include_usage:
+        provider.context_tokens = 262144
+        provider._context_tokens_loaded = True
+    return provider
 
 
 def _transport_provider(
@@ -222,7 +236,10 @@ def _transport_provider(
         "auth_token": "ai-shared-test-token",
     }
     settings.update(settings_overrides)
-    return OpenAiCompatibleProvider(AiSettings(**settings), include_attempts=include_attempts)
+    provider = OpenAiCompatibleProvider(AiSettings(**settings), include_attempts=include_attempts)
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
+    return provider
 
 
 def _events(provider: OpenAiCompatibleProvider, tools: list[dict] | None = None) -> list:
@@ -818,6 +835,11 @@ def test_discovers_and_caches_the_configured_model_context_limit(monkeypatch, mo
         model_metadata=model_metadata,
     )
 
+    if expected is None:
+        with pytest.raises(ProviderError, match="no valid context window"):
+            _events(provider)
+        assert [request.method for request in requests] == ["GET"]
+        return
     assert _events(provider) == _events(provider) == [TextDelta("Answer"), ResponseEnd(None)]
 
     assert provider.context_tokens == expected
@@ -827,7 +849,7 @@ def test_discovers_and_caches_the_configured_model_context_limit(monkeypatch, mo
 
 
 @pytest.mark.parametrize("status", [403, 404, 503])
-def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, status) -> None:
+def test_missing_model_metadata_refuses_chat_before_a_completion(monkeypatch, status) -> None:
     usage = {"prompt_tokens": 120, "completion_tokens": 30, "total_tokens": 150}
     provider = _streaming_provider(
         monkeypatch,
@@ -836,7 +858,8 @@ def test_missing_model_metadata_does_not_prevent_chat_or_usage(monkeypatch, stat
         models_status=status,
     )
 
-    assert _events(provider) == [TextDelta("Answer"), TokenUsage(120, 30, 150), ResponseEnd(None)]
+    with pytest.raises(ProviderError, match="no valid context window"):
+        _events(provider)
     assert provider.context_tokens is None
 
 
@@ -865,6 +888,8 @@ def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, mode
 
     original = _transport_provider(monkeypatch, handle)
     original._include_usage = True
+    original.context_tokens = None
+    original._context_tokens_loaded = False
     first = original.with_session_id("first").with_output_limit(1000)
     second = original.with_output_limit(2000).with_session_id("second")
 
@@ -874,6 +899,11 @@ def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, mode
         await asyncio.gather(*(_collect(provider.stream_events([])) for provider in (first, second, later)))
         return later
 
+    if models_status != 200:
+        with pytest.raises(ProviderError, match="no valid context window"):
+            asyncio.run(run())
+        assert [request.method for request in requests] == ["GET"]
+        return
     later = asyncio.run(run())
     assert len([request for request in requests if request.method == "GET"]) == 1
     parameter = "max_completion_tokens" if models_status == 200 else "max_tokens"
@@ -1315,7 +1345,9 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
 
     provider = _transport_provider(monkeypatch, handle)
     provider._include_usage = True
-    settings = basic.make_settings(max_history_messages=1000)
+    provider.context_tokens = None
+    provider._context_tokens_loaded = False
+    settings = basic.make_settings(max_history_messages=1000, compaction_keep_recent_tokens=1000)
     app = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
     with basic.AuthenticatedTestClient(app) as client:
         first = basic.create_session(client, basic.schedule_yaml())
@@ -1330,7 +1362,7 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
         snapshot = store.begin(first, session.owner_token)
         store.finish(
             first,
-            [UserMessage("Earlier constraints " + "x" * 100000), AssistantMessage("Earlier answer")],
+            [UserMessage("Earlier constraints " + "x" * 100000), AssistantMessage("Earlier answer " + "y" * 8000)],
             snapshot=snapshot,
         )
         expected_session = first

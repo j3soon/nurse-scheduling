@@ -200,6 +200,8 @@ class WorkspaceLimits:
     max_download_bytes: int = 50_000_000
     history_limit: int = 200_000
     message_limit: int = 1000
+    compaction_reserve_tokens: int = 16384
+    compaction_keep_recent_tokens: int = 20000
 
     @classmethod
     def from_settings(cls, settings: AiSettings) -> "WorkspaceLimits":
@@ -207,6 +209,8 @@ class WorkspaceLimits:
         return cls(
             max_schedule_bytes=settings.max_schedule_bytes,
             max_download_bytes=settings.max_download_bytes,
+            compaction_reserve_tokens=settings.compaction_reserve_tokens,
+            compaction_keep_recent_tokens=settings.compaction_keep_recent_tokens,
             history_limit=settings.max_history_chars,
             message_limit=settings.max_history_messages,
             turn_timeout_seconds=settings.sandbox_turn_timeout_seconds,

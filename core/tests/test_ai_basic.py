@@ -3195,9 +3195,10 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
         provider_module.httpx, "AsyncClient", lambda **kwargs: real_client(**{**kwargs, "transport": transport})
     )
     settings = make_settings()
-    with AuthenticatedTestClient(
-        create_test_app(settings=settings, provider=OpenAiCompatibleProvider(settings))
-    ) as client:
+    provider = OpenAiCompatibleProvider(settings)
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
+    with AuthenticatedTestClient(create_test_app(settings=settings, provider=provider)) as client:
         session = create_session(client)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
         message = parse_sse(response.text)[-1][1]["message"]

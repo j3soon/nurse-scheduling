@@ -473,6 +473,10 @@ class OpenAiCompatibleProvider:
     async def prepare_context(self) -> None:
         """Discover model limits before choosing whether to compact the next request."""
         await self._load_context_tokens()
+        if type(self.context_tokens) is not int or self.context_tokens <= 0:
+            raise ProviderError.for_user(
+                "The selected model has no valid context window. Configure its model metadata."
+            )
 
     async def stream_chat(self, messages: Sequence[ChatMessage]) -> AsyncIterator[str]:
         """Translate provider SSE chunks into plain text deltas."""
@@ -486,8 +490,7 @@ class OpenAiCompatibleProvider:
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[ChatStreamEvent]:
         """Translate SSE chunks and retry bounded transient provider failures."""
-        if self._include_usage:
-            await self._load_context_tokens()
+        await self.prepare_context()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
         headers = {"Authorization": f"Bearer {self._settings.provider_api_key}"}
         if self._session_id is not None:

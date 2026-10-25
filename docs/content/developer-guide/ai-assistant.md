@@ -350,24 +350,19 @@ summary text and incomplete tool arguments stay private. Chat and exports count
 Unicode code points and show tool-result size after execution. These character
 counts are separate from provider-reported token usage and costs.
 
-`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
-request and after the final answer, it checks the discovered model context
-window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
-smaller window. It also checks 80 percent of the configured history character
-and message limits, so normal retention does not discard older state first.
-Without model metadata, the history limits still trigger compaction. Summary
-requests use a 32,768-token fallback window. An explicit context-overflow
-rejection can also trigger compaction.
+`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Automatic
+compaction starts when context tokens exceed the model window minus
+`AI_COMPACTION_RESERVE_TOKENS` (default 16,384). Character and message retention
+budgets do not trigger compaction. Model metadata must report a positive context
+window. A missing window rejects generation instead of assuming a fallback size.
 
-Manual and automatic compaction use Pi's same cut-point algorithm. The retention
-target is 20,000 recent tokens, capped by one third of the model window and the
-server history budgets. The character budget caps it at `max_history_chars / 12`,
-and the message budget caps it at the estimated tokens in the latest
-`max_history_messages / 3` messages. A short conversation stays unchanged without
-a provider call. A split turn retains its recent messages with their tool pairs.
-If that tail cannot fit a smaller model window, a later safe boundary is used.
-A single tool batch that still cannot fit is summarized too. A generated summary
-that would increase context is discarded.
+Manual and automatic compaction use Pi's same cut-point algorithm with
+`AI_COMPACTION_KEEP_RECENT_TOKENS` (default 20,000). The model window and server
+history budgets do not reduce that retention target. Cut points preserve tool
+calls with their results. A short conversation stays unchanged when no older
+messages remain to summarize. If the cut splits a turn, older history and the
+turn prefix receive separate summaries. A completed summary is accepted without
+a character-count reduction requirement. Failed summaries keep original context.
 
 The estimate uses the most recent completed same-model input and output usage,
 plus estimates for later messages. A characters/4 estimate covers missing usage,
@@ -390,18 +385,8 @@ exports show the same status. Successful compaction replaces the context meter
 with a fresh estimate until the next model call reports usage. Summary failures
 keep the original context. Stop closes the summary stream and finishes its status.
 
-The cut point keeps up to 20,000 recent estimated tokens, reduced for smaller
-windows and history budgets. It can split a long turn before an assistant
-response, but never between a tool call and its results. Supplemental tool
-images stay with their exchange and do not count as durable messages. If a
-single tool batch fills the available input, its essential results enter the
-summary instead. The current system instructions and trusted request status
-remain outside the summary.
-
 Older messages are serialized as conversation data. Tool arguments retain file
-paths. Tool results are limited to 2,000 characters per result, as in Pi. Large
-inputs use bounded successive summary requests, updating the previous summary.
-Opaque reasoning is never converted to text for summarization. The separate
+paths. Tool results are limited to 2,000 characters per result, as in Pi. Opaque reasoning is never converted to text for summarization. The separate
 manifest `ai/prompts/compaction.json` records the initial, update, split-turn,
 and system prompts from Pi v1.0.0 at `a13d35a`. Each upstream string is unchanged.
 The manifest records matching upstream and model-input hashes. Project guidance
@@ -411,23 +396,17 @@ The prompt loader removes provenance comments before model requests.
 A later compaction passes the existing summary separately in `previous-summary`
 tags and uses Pi's update instructions. When a cut splits an active turn, older
 history and the active turn prefix receive separate summaries. The latter uses
-Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Large
-inputs retain bounded chunking and use the update instructions after each chunk.
-Recent responses retain their native replay metadata. File paths still depend
+Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Recent responses retain their native replay metadata. File paths still depend
 on the summary and recent messages. Pi's separate cumulative file-operation
 records are not implemented.
 
-Summary calls use the frozen run model and reasoning selection. Their provider
-output limit is at most 80 percent of the reserved tokens, following Pi. Every
-completion also fits the model's advertised output cap and remaining context
-with a safety margin of 4,096 tokens or half the context window, whichever is
-smaller. Summary chunks use the same margin. Reported same-model usage informs the request
-estimate when available, including tool definitions and later messages. Numeric
-thinking budgets leave 1,024 tokens for answer text. Models without discovered
-limits retain provider defaults unless the caller supplies a cap.
-An exhausted context budget triggers overflow recovery. An output cap too small
-for reasoning and answer text reports a provider error without compacting history.
-Summary chunks leave room for the full previous summary, output, and safety margin.
+Summary calls use the frozen run model and reasoning selection. Pi limits history
+summary output to 80 percent of the reserved tokens and turn-prefix output to
+50 percent, both subject to the provider's model and remaining-context limits.
+There is no additional summary character limit or local input chunking.
+An oversized summary request fails without replacing the original context.
+The provider keeps its context safety margin and numeric thinking allowance.
+
 Summary requests have no tools, and their text and reasoning do not enter the answer stream.
 Their provider call records include costs and usage. An empty, truncated, oversized,
 failed, or tool-requesting summary leaves the original context intact. Stop
@@ -1266,8 +1245,8 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
 `test_ai_compaction_live.sh` command exercises the real session API and E2B with
-five long-chat scenarios, at most four concurrently. A smaller history budget
-forces compaction. The scenarios check constraints, complete tool exchanges,
+five long-chat scenarios, at most four concurrently. Explicit compaction token settings
+force compaction. The scenarios check constraints, complete tool exchanges,
 manual compaction, Stop, reconnect replay, and fresh sandbox filesystems. They
 also check that model changes return HTTP 409 and supported reasoning-effort
 changes remain accepted. The command uses synthetic test conversations. It does

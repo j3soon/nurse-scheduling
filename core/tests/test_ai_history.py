@@ -2621,7 +2621,7 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
     async def exercise():
         provider = CompactionProvider()
         provider.context_tokens = 131072
-        settings = basic.make_settings(history_postgres_url="test")
+        settings = basic.make_settings(history_postgres_url="test", compaction_keep_recent_tokens=1000)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]

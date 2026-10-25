@@ -189,6 +189,8 @@ async def run_workspace(
                     take_steering=take_steering,
                     max_tool_rounds=limits.max_tool_rounds,
                     max_tool_calls=limits.max_tool_calls,
+                    reserve_tokens=limits.compaction_reserve_tokens,
+                    keep_recent_tokens=limits.compaction_keep_recent_tokens,
                     history_limit=limits.history_limit,
                     message_limit=limits.message_limit,
                 )

@@ -118,6 +118,8 @@ class Agent:
         max_tool_calls: int | None = None,
         history_limit: int = 200_000,
         message_limit: int = 1000,
+        reserve_tokens: int = 16384,
+        keep_recent_tokens: int = 20000,
     ) -> AsyncIterator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
@@ -135,6 +137,8 @@ class Agent:
             run_messages=self.state.messages,
             history_limit=history_limit,
             message_limit=message_limit,
+            reserve_tokens=reserve_tokens,
+            keep_recent_tokens=keep_recent_tokens,
         )
         try:
             async with aclosing(events):
