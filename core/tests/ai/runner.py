@@ -23,9 +23,10 @@ import argparse
 import asyncio
 import json
 import mimetypes
+import os
 import shlex
 from contextlib import aclosing
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from nurse_scheduling.ai.workspace import AgentAnalysis, SandboxAttachment, Work
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .assertions import check_event, check_schedule
+from .judge import evaluate
 from .reporting import print_attempt, print_summary
 from .schema import FIXTURES, TESTCASES, Case, DefinitionError, Step, load_case
 
@@ -89,7 +91,14 @@ def _timezone(date: datetime | None) -> str:
     return f"UTC{sign}{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
-async def run_case(case: Case, provider: Any, settings: AiSettings, factory: SandboxFactory) -> bool:
+async def run_case(
+    case: Case,
+    provider: Any,
+    settings: AiSettings,
+    factory: SandboxFactory,
+    *,
+    judge_provider: Any = None,
+) -> bool:
     """Execute one isolated conversation and retain all assertions and messages."""
     schedule = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
     history = []
@@ -217,17 +226,35 @@ async def run_case(case: Case, provider: Any, settings: AiSettings, factory: San
             assert_schedule()
     except Exception as error:  # noqa: BLE001 - Preserve evidence from provider and sandbox adapters.
         errors.append({"turn": turn, "step": number, "kind": "execution", "error": str(error)})
+    judge_turn = 0
+    for step in case.steps:
+        if step.kind == "user":
+            judge_turn += 1
+        elif step.kind == "assistant" and "judge" in step.value and judge_turn <= len(trace):
+            judge = judge_provider if judge_provider is not None else provider
+            model = getattr(getattr(judge, "identity", None), "model", settings.provider_model)
+            verdict = await evaluate(judge, step.value["judge"], trace[:judge_turn], model)
+            trace[judge_turn - 1]["events"].append({**verdict, "step": step.number})
+            if not verdict["passed"]:
+                errors.append(
+                    {
+                        "turn": judge_turn,
+                        "step": step.number,
+                        "kind": "judge",
+                        "error": verdict["error"] or verdict["reason"],
+                    }
+                )
     print_attempt(case, errors, trace, settings)
     return not errors
 
 
-async def run_cases(cases, provider, settings, factory, diagnostic_attempts: int = 1) -> bool:
+async def run_cases(cases, provider, settings, factory, diagnostic_attempts: int = 1, *, judge_provider=None) -> bool:
     """Repeat initially failed cases for inspection without changing their outcome."""
     results = []
     for case in cases:
         for attempt in range(1, diagnostic_attempts + 1):
             print(f"Attempt {attempt}: {case.path}", flush=True)
-            passed = await run_case(case, provider, settings, factory)
+            passed = await run_case(case, provider, settings, factory, judge_provider=judge_provider)
             results.append(
                 {
                     "case": case.path.stem,
@@ -245,8 +272,12 @@ async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
     settings = AiSettings.from_env()
     provider = OpenAiCompatibleProvider(settings)
     factory = create_sandbox_factory(settings)
+    judge_model = os.getenv("AI_TEST_JUDGE_MODEL", "").strip() or settings.provider_model
+    judge_provider = OpenAiCompatibleProvider(
+        replace(settings, provider_model=judge_model), parameters={"temperature": 0}
+    )
     async with managed_sandbox_factory(factory):
-        return await run_cases(cases, provider, settings, factory, diagnostic_attempts)
+        return await run_cases(cases, provider, settings, factory, diagnostic_attempts, judge_provider=judge_provider)
 
 
 def main(argv: list[str] | None = None) -> int:

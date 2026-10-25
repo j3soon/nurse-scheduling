@@ -11,5 +11,9 @@ steps:
         - found it
         - this chat
         - chatting with
+      judge: >-
+        The assistant clearly explains that the user is already interacting with
+        the app's AI assistant in the current chat. Reject replies that only
+        direct the user to another page or contradict that explanation.
   - schedule:
       unchanged: true

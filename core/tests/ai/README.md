@@ -62,7 +62,7 @@ as an example. Each step has exactly one primary key:
 | `yaml` | Schedule fixture name relative to `fixtures/`. Replaces current schedule data. |
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
-| `assistant` | Requires `contains_any`, with optional boolean `case_sensitive`. |
+| `assistant` | Requires `contains_any`, with optional boolean `case_sensitive` and a `judge` rubric. |
 | `schedule` | Requires `unchanged: true` or `added` mapping dotted list paths to exact objects. |
 
 Unknown fields fail validation, except tool argument fields, which depend on
@@ -88,6 +88,16 @@ when using that tool is part of the intended behavior.
 Assistant assertions inspect individual completed messages, including text
 before a tool call. They exclude reasoning and failed responses. Matching is
 case-insensitive unless `case_sensitive: true` is set.
+
+The chat-identity case also uses `assistant.judge`, a nonempty rubric string.
+Both phrase matching and the LLM judge must pass. The judge always runs for an
+executed turn, even when phrase matching or agent execution fails. It reads the
+conversation in a separate request with no tools and returns a boolean verdict
+and explanation. Invalid verdicts, request errors, and its two-minute timeout
+fail the attempt. Every transcript includes the rubric, model, full judge
+request, raw response, verdict, and explanation. The judge uses the configured
+provider and model by default. `AI_TEST_JUDGE_MODEL` selects another model on
+the same provider. Other cases have no judge unless their assertion requests one.
 
 Schedule assertions compare parsed YAML at the beginning and end of the turn.
 Formatting and mapping-key order do not matter. Without a schedule assertion,
@@ -119,6 +129,7 @@ Configure repository secrets `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. No repository variables are required. Optional repository
 variables `AI_PROVIDER_MODEL` and `E2B_TEMPLATE` override the CI defaults:
 `unsloth/Qwen3.8-27B-NVFP4` and `nurse-scheduling-ai-sandbox-github-ci`.
+Optional variable `AI_TEST_JUDGE_MODEL` overrides the judge model.
 The live job builds its template from `docker/e2b/e2b.Dockerfile` before running
 the conversations. Jobs with the same template alias serialize building and
 testing, without cancelling an active job. The default CI alias is separate

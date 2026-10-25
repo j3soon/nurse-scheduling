@@ -58,6 +58,7 @@ jobs:
           AI_PROVIDER_BASE_URL: ${{ secrets.AI_PROVIDER_BASE_URL }}
           AI_PROVIDER_API_KEY: ${{ secrets.AI_PROVIDER_API_KEY }}
           AI_PROVIDER_MODEL: ${{ vars.AI_PROVIDER_MODEL || 'unsloth/Qwen3.8-27B-NVFP4' }}
+          AI_TEST_JUDGE_MODEL: ${{ vars.AI_TEST_JUDGE_MODEL }}
           AI_SANDBOX_BACKEND: e2b
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           AI_SANDBOX_TURN_TIMEOUT_SECONDS: "300"

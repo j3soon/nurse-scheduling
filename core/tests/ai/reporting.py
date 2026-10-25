@@ -59,6 +59,17 @@ def _transcript(record: dict) -> str:
                         "json",
                     )
                 )
+            elif event["kind"] == "judge":
+                lines.append(f"Verdict: **{'PASS' if event['passed'] else 'FAIL'}**. Model: `{event['model']}`.\n")
+                lines.extend(["Rubric:\n", _block(event["rubric"]), "Explanation:\n", _block(event["reason"])])
+                if event["error"]:
+                    lines.append(_block(event["error"]))
+                lines.extend(["Raw response:\n", _block(event["response"], "json")])
+                lines.extend(
+                    ["Judge request:\n", _block(json.dumps(event["messages"], ensure_ascii=False, indent=2), "json")]
+                )
+                if event["reasoning"]:
+                    lines.extend(["Judge reasoning:\n", _block(event["reasoning"])])
             elif event["kind"] == "tool_result":
                 lines.append(f"Tool: `{event['name']}`, succeeded: `{event['ok']}`.\n")
                 lines.append(_block(event["text"]))

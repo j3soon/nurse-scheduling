@@ -32,6 +32,7 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.transcript import ToolCall
 from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE
 from tests.ai.assertions import check_event, check_schedule
+from tests.ai.judge import evaluate
 from tests.ai.runner import DatedFactory, _timezone, main, run_case, run_cases
 from tests.ai.schema import FIXTURES, TESTCASES, DefinitionError, Step, load_case, load_yaml
 
@@ -382,7 +383,11 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
 def test_chat_identity_case_accepts_equivalent_acknowledgements(tmp_path, reply, passed):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
-    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory())) is passed
+    judge = ScriptedProvider(
+        [[TextDelta(json.dumps({"passed": passed, "reason": "Fixture verdict."})), ResponseEnd("stop")]]
+    )
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is passed
+    assert len(judge.requests) == 1
 
 
 @pytest.mark.parametrize("expected_history", ["", ", history: null", ", history: []"], ids=["omitted", "null", "empty"])
@@ -515,3 +520,107 @@ def test_stdout_includes_all_messages_tools_and_reasoning(tmp_path, capsys):
         ]
     )
     assert list(tmp_path.iterdir()) == [case.path]
+
+
+@pytest.mark.parametrize("rubric", ["", None, True, {"contains": "here"}], ids=["empty", "null", "boolean", "mapping"])
+def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_any": ["hi"], "judge": rubric}}]})
+    with pytest.raises(DefinitionError, match="judge must be a nonempty rubric"):
+        definition(tmp_path, text)
+
+
+@pytest.mark.parametrize(
+    ("reply", "judge_pass", "expected"),
+    [
+        ("You're already here.", True, True),
+        ("You already know the menu. Go to Experimental AI.", False, False),
+        ("You're speaking to the AI assistant right now.", True, False),
+        ("Go to Experimental AI.", False, False),
+    ],
+    ids=["both-pass", "term-only", "judge-only", "both-fail"],
+)
+def test_identity_requires_terms_and_judge_and_always_logs_verdict(capsys, reply, judge_pass, expected):
+    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+    provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
+    judge = ScriptedProvider(
+        [[TextDelta(json.dumps({"passed": judge_pass, "reason": "Semantic verdict."})), ResponseEnd("stop")]]
+    )
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is expected
+    log = capsys.readouterr().out
+    assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
+    assert case.steps[2].value["judge"] in log
+    assert "Semantic verdict." in log and "Judge request:" in log
+    assert len(judge.requests) == 1
+    assert all("current-schedule.yaml" not in str(message) for message in judge.requests[0])
+    assert any(reply in message.get("content", "") for message in judge.requests[0])
+    if not judge_pass:
+        assert "(judge): Semantic verdict." in log
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "not JSON",
+        '{"passed": "true", "reason": "wrong type"}',
+        '{"passed": true}',
+        '{"passed": true, "reason": ""}',
+        '{"passed": true, "reason": "ok", "extra": 1}',
+    ],
+    ids=["invalid-json", "string-boolean", "missing-reason", "empty-reason", "unknown-field"],
+)
+def test_malformed_judge_responses_fail_and_keep_raw_evidence(response):
+    provider = ScriptedProvider([[TextDelta(response), ResponseEnd("stop")]])
+    result = asyncio.run(evaluate(provider, "Clearly acknowledge current chat.", [], "judge-model"))
+    assert result["passed"] is False and result["error"]
+    assert result["response"] == response and result["model"] == "judge-model"
+
+
+@pytest.mark.parametrize("failure", ["provider", "length", "missing-end", "tool"], ids=str)
+def test_judge_execution_failures_never_pass(failure):
+    class Provider:
+        async def stream_events(self, messages):
+            yield TextDelta('{"passed": true, "reason": "ok"}')
+            if failure == "provider":
+                raise RuntimeError("provider-secret connection failed")
+            if failure == "length":
+                yield ResponseEnd("length")
+            if failure == "tool":
+                yield tool_call("r", "read", "{}")
+
+    result = asyncio.run(evaluate(Provider(), "Current chat.", [], "test"))
+    assert result["passed"] is False and result["error"]
+    assert result["response"]
+
+
+def test_judge_still_runs_when_agent_execution_fails(capsys):
+    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+    provider = ScriptedProvider([[TextDelta("Partial reply."), ResponseEnd("length")]])
+    judge = ScriptedProvider(
+        [[TextDelta('{"passed": false, "reason": "Incomplete acknowledgement."}'), ResponseEnd("stop")]]
+    )
+    assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge))
+    log = capsys.readouterr().out
+    assert "(execution):" in log and "Partial reply." in log
+    assert "Verdict: **FAIL**" in log
+    assert len(judge.requests) == 1
+
+
+def test_judge_timeout_keeps_partial_reply_and_closes_stream(monkeypatch):
+    from tests.ai import judge
+
+    monkeypatch.setattr(judge, "TIMEOUT_SECONDS", 0.01)
+
+    class Provider:
+        closed = False
+
+        async def stream_events(self, messages):
+            try:
+                yield TextDelta("partial verdict")
+                await asyncio.Event().wait()
+            finally:
+                self.closed = True
+
+    provider = Provider()
+    result = asyncio.run(evaluate(provider, "Current chat.", [], "test"))
+    assert result["passed"] is False and result["error"].startswith("TimeoutError:")
+    assert result["response"] == "partial verdict" and provider.closed
