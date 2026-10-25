@@ -22,7 +22,7 @@
 import type { ActivityEntry } from './AssistantActivity';
 import type { ToolActivity, ToolStartActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
 // Plain-HTTP LAN origins lack randomUUID, so build the same version 4 UUID form from random bytes.
 export function messageId(): string {
@@ -53,6 +53,16 @@ export type AssistantEvent =
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
     || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
+}
+
+export function invalidateRunSummaries(messages: ChatMessage[], runId: string): ChatMessage[] {
+  return messages.map(message => {
+    if (message.role !== 'assistant' || (message.runId ?? message.id) !== runId
+      || !message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'completed' && !entry.invalidated)) return message;
+    return { ...message, activity: message.activity.map(entry => (
+      entry.kind === 'compaction' && entry.state === 'completed' ? { ...entry, invalidated: true } : entry
+    )) };
+  });
 }
 
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {

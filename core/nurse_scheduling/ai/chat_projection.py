@@ -38,10 +38,15 @@ def _finish(message: dict, kind: str, at: int, reason: str = "") -> None:
             message["failureReason"] = reason
     if kind != "done":
         for entry in message.get("activity", []):
-            if entry["kind"] == "compaction" and entry.get("state") == "completed":
-                entry["invalidated"] = True
             if entry["kind"] in {"tool", "compaction"} and entry.get("state") == "running":
                 entry["state"] = "interrupted"
+
+
+def _invalidate_summaries(turn: dict) -> None:
+    for message in turn["assistants"]:
+        for entry in message.get("activity", []):
+            if entry["kind"] == "compaction" and entry.get("state") == "completed":
+                entry["invalidated"] = True
 
 
 def _optimization_text(data: dict) -> str:
@@ -166,6 +171,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             turns[run_id] = {
                 "question": question,
                 "assistant": assistant,
+                "assistants": [assistant],
                 "cost_assistant": assistant,
                 "calls": {},
                 "has_output": False,
@@ -285,6 +291,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if "selection" in turn:
                     assistant["modelSelection"] = turn["selection"]
                 messages[index + 1 : index + 1] = [question, assistant]
+                turn["assistants"].append(assistant)
                 turn["assistant"], turn["has_output"] = assistant, False
             else:
                 messages.insert(index, question)
@@ -303,9 +310,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
                     entry["context"] = "omitted" if data["stop_reason"] in {"error", "aborted"} else "complete"
             if data.get("context_note"):
-                for entry in activity:
-                    if entry["kind"] == "compaction" and entry.get("state") == "completed":
-                        entry["invalidated"] = True
+                _invalidate_summaries(turn)
                 activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})
             if data["stop_reason"] == "length":
                 assistant["truncated"] = True
@@ -363,6 +368,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]
             activity.append({"kind": "schedule-applied", "text": data["diff"], "runId": run_id})
         elif kind in {"done", "stopped", "error", "stale"}:
+            if kind != "done":
+                _invalidate_summaries(turn)
             _finish(
                 assistant,
                 kind,
@@ -379,6 +386,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         run = runs.get(run_id, {})
         if turn["assistant"].get("status") == "pending" and run.get("status", "running") != "running":
             kind = {"cancelled": "stopped", "completed": "done"}.get(run["status"], "error")
+            if kind != "done":
+                _invalidate_summaries(turn)
             _finish(
                 turn["assistant"],
                 kind,

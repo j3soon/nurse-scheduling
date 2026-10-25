@@ -67,6 +67,7 @@ import {
   stopResponse,
   messageId,
   interruptRunningTools,
+  invalidateRunSummaries,
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
@@ -105,7 +106,12 @@ interface StreamCallbacks {
   onError?: (message: string) => void;
 }
 
-function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): void {
+function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks, setMessages: Dispatch<SetStateAction<ChatMessage[]>>): void {
+  const runId = event.runId;
+  if (runId && (event.type === 'error' || event.type === 'stopped' || event.type === 'stale'
+    || (event.type === 'response_end' && event.contextNote))) {
+    setMessages(previous => invalidateRunSummaries(previous, runId));
+  }
   if (event.runId && event.type !== 'run_context' && event.type !== 'session_reset') callbacks.onRunContext?.(event.runId);
   switch (event.type) {
     case 'provider_call': callbacks.onProviderCall?.(event.call); break;
@@ -615,7 +621,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       sessionId, endpoint, authToken, resetReplay,
       onEventId: () => setIsReconnecting(false),
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
-      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation),
+      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
@@ -859,7 +865,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
       const foreground = eventRouterRef.current.begin(
-        event => dispatchPageEvent(event, callbacks), rejectRun,
+        event => dispatchPageEvent(event, callbacks, setMessages), rejectRun,
         () => startSessionEventStream(sessionId, sessionEndpoint, true),
       );
       if (!sessionEvents.connected()) startSessionEventStream(sessionId, sessionEndpoint);

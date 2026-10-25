@@ -584,6 +584,44 @@ test('keeps short context with a manual request notice instead of a compaction f
   await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
 });
 
+for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['error', 'stopped'] as const) {
+  test(`discards summaries on earlier steering replies after ${trigger} ${terminal}`, async ({ page }) => {
+    const events = [
+      { type: 'compaction_end', data: { reason: 'threshold', tokens_before: 25000, success: true, aborted: false,
+        summary: 'Summary from a run that later fails.', keep_messages: 1 } },
+      { type: 'delta', data: { text: 'Earlier completed output.' } },
+      { type: 'steering', data: { message_id: 'steer', message: 'Now edit the schedule.' } },
+      { type: 'delta', data: { text: 'Partial second reply.' } },
+    ];
+    const captured = await mockAiBackend(page, trigger === 'user' ? [] : ['Previous run answer.'],
+      false, undefined, [], true, trigger === 'user' ? events : []);
+    if (trigger === 'user') captured.holdNextTurn();
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the constraints.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const runId = trigger === 'user' ? 'answer-1' : 'optimizer-review';
+    if (trigger === 'optimizer') {
+      await expect(page.getByText('Previous run answer.', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+      captured.publishEvent('run_start', { run_id: runId, trigger });
+      for (const event of events) captured.publishEvent(event.type, { ...event.data, run_id: runId });
+    }
+    await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
+    captured.publishEvent('response_end', { run_id: runId,
+      stop_reason: terminal === 'error' ? 'error' : 'aborted', context_note: '[App event] The run workspace was discarded.' });
+    captured.publishEvent(terminal, { run_id: runId, ...(terminal === 'error' ? { message: 'Validation failed.' } : {}) });
+    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Omitted from future model context.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Summary used in future model context.', { exact: true })).toBeHidden();
+    await page.screenshot({ path: `../artifacts/discarded-summary-${trigger}-${terminal}.png`, fullPage: true });
+    await page.reload();
+    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
+  });
+}
+
 test('shows compaction status and the reduced context before an answer', async ({ page }) => {
   const captured = await mockAiBackend(page, [], false, undefined, [], true, [
     { type: 'context_usage', data: { used_chars: 1800, max_chars: 2000, used_tokens: 25000, max_tokens: 32000 } },

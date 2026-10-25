@@ -72,6 +72,8 @@ to the model. A discarded summary belongs with app notices and must say that it
 is omitted from future context. Derive these bubbles for display without changing
 saved message identity, execution ownership, or model inputs. Match chat exports
 to this convention.
+Invalidate summaries across every reply from a failed run, including replies
+before steering. Test foreground output, background replay, and reload.
 
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after

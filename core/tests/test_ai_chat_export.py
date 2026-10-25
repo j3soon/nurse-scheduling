@@ -116,6 +116,61 @@ def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():
         assert "Arguments sent in later model context" in rendered
 
 
+@pytest.mark.parametrize("terminal", ["error", "stopped"])
+@pytest.mark.parametrize("boundary", [False, True], ids=["terminal-only", "response-boundary"])
+def test_failed_steered_run_discards_summaries_on_all_replies(terminal, boundary):
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    events = [
+        ("run_start", {"trigger": "user"}),
+        (
+            "compaction_end",
+            {
+                "reason": "threshold",
+                "tokens_before": 25000,
+                "success": True,
+                "aborted": False,
+                "summary": "Summary from a run that later fails.",
+                "keep_messages": 1,
+            },
+        ),
+        ("delta", {"text": "Earlier completed output."}),
+        ("steering", {"message_id": "steer", "message": "Now edit the schedule."}),
+        ("delta", {"text": "Partial second reply."}),
+        *(
+            [
+                (
+                    "response_end",
+                    {
+                        "stop_reason": "error" if terminal == "error" else "aborted",
+                        "context_note": "The run's summaries were discarded.",
+                    },
+                )
+            ]
+            if boundary
+            else []
+        ),
+        (terminal, {"message": "Validation failed."} if terminal == "error" else {}),
+    ]
+    snapshot["events"] = [
+        {"type": kind, "data": {"run_id": run["id"], **data}, "occurred_at": snapshot["snapshot_at"]}
+        for kind, data in events
+    ]
+    messages, _ = project_saved_chat(snapshot)
+    earlier, latest = [message for message in messages if message["role"] == "assistant"]
+    assert earlier["activity"][0].get("invalidated") is True
+    assert earlier["content"] == "Earlier completed output."
+    assert earlier["status"] is None
+    assert earlier["activity"][1].get("context") != "omitted"
+    assert latest["status"] == ("failed" if terminal == "error" else "stopped")
+    for format in ("html", "markdown"):
+        rendered = build_saved_chat_export(snapshot, format)
+        assert "Discarded conversation summary" in rendered
+        assert "Omitted from future model context" in rendered
+        assert "Summary used in future model context." not in rendered
+
+
 @pytest.mark.parametrize("keep", [0, 4])
 def test_export_separates_notices_and_summary_without_changing_saved_messages(keep):
     messages = [

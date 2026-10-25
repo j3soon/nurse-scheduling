@@ -430,7 +430,10 @@ Tool execution is not repeated by that retry.
 
 A successful summary appends a `CompactionEntry`, leaving earlier audit entries
 intact. Its completion event includes the exact summary and retained-message count.
-The frontend displays the summary separately and marks it discarded if its run fails. Context projection replays its summary plus the referenced recent tail.
+The frontend displays the summary separately and marks every summary from a failed
+run as discarded, including summaries before steering replies. Saved chat exports
+use the same rule. Context projection replays a valid summary plus its referenced
+recent tail.
 Retention keeps the summary and that tail together. Hard service memory limits
 can still remove an entire older context unit. Failed, cancelled, and stale
 runs cannot replay their summaries of discarded workspace work. Migration 009

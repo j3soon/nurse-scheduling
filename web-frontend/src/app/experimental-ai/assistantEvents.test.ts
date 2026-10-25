@@ -23,10 +23,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   AssistantEvent,
   applyAssistantEvent,
+  invalidateRunSummaries,
   messageId,
   toAssistantEvent,
 } from './assistantEvents';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
 const empty: ChatMessageContent = { role: 'assistant', content: '', status: 'pending' };
 
@@ -35,6 +36,21 @@ function reduce(events: AssistantEvent[]): ChatMessageContent {
 }
 
 describe('assistant events', () => {
+  it('invalidates only summaries from the failed run while preserving earlier output', () => {
+    const messages: ChatMessage[] = ['other', 'failed', 'failed'].map((runId, index) => ({
+      id: `reply-${index}`, runId, role: 'assistant', content: 'Completed output.',
+      activity: [{ kind: 'compaction', reason: 'threshold', state: 'completed', summary: `Summary ${index}`, text: 'Summarized.' },
+        { kind: 'response', text: 'Completed output.', context: 'complete' }],
+    }));
+    const updated = invalidateRunSummaries(messages, 'failed');
+    expect(updated[0]).toBe(messages[0]);
+    for (const message of updated.slice(1)) {
+      expect(message.activity?.[0]).toMatchObject({ invalidated: true });
+      expect(message.activity?.[1]).toMatchObject({ text: 'Completed output.', context: 'complete' });
+      expect(message.status).toBeUndefined();
+    }
+    expect(messages[1].activity?.[0]).not.toHaveProperty('invalidated');
+  });
   it.each([true, false])('records a manual request and skips unchanged context, with start=%s', withStart => {
     const message = reduce([
       ...(withStart ? [{ type: 'compaction_start' as const, reason: 'manual' as const, tokensBefore: 4000 }] : []),
