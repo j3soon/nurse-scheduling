@@ -31,6 +31,7 @@ from .provider import (
     ChatMessage,
     ProviderCall,
     ProviderError,
+    ProviderRetry,
     ResponseEnd,
     TextDelta,
     ToolCallRequest,
@@ -276,6 +277,9 @@ class ContextCompactor:
                 async for event in events:
                     if isinstance(event, ProviderCall):
                         yield event
+                    elif isinstance(event, ProviderRetry):
+                        # Pi's completeSummarization accepts only the completed attempt.
+                        text, finish, ended, text_chars = [], None, False, 0
                     elif isinstance(event, TextDelta):
                         text.append(event.text)
                         text_chars += len(event.text)

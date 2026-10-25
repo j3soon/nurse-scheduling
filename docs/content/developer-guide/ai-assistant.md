@@ -329,6 +329,9 @@ stay in the audit transcript but are omitted from model requests. The frontend
 labels their partial text and reasoning as omitted from future context. Failed
 reasoning metadata and partial tool arguments are discarded. Tools are released only after a clean response completion. A retry
 after a completed tool exchange resends its result without executing it again.
+Summary generation also discards the failed draft before collecting the retry,
+matching Pi's `completeSummarization`. Each attempt retains its cost record, and
+the provider's cumulative output limits still apply.
 
 ## Automatic context compaction
 

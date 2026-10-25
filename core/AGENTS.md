@@ -179,7 +179,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   within the model and server limits, and skip a short conversation before calling
   the provider when no older messages remain to summarize.
   Keep summary requests visible in provider cost records, but keep their text out
-  of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
+  of the answer stream. Test retries through each provider-stream consumer,
+  including compaction. Keep only the successful draft and retain all cost records.
+  Use `tests/test_ai_compaction.py` for these contracts.
   Test chunked summaries through the provider's token-limit calculation, including
   updates with a previous split-turn summary and small model context windows.
   Coalesce streamed context estimates with text batches. Replace token estimates

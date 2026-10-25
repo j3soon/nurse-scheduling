@@ -48,6 +48,7 @@ from nurse_scheduling.ai.provider import (
     ProviderCall,
     ProviderContextOverflowError,
     ProviderError,
+    ProviderRetry,
     ResponseEnd,
     TextDelta,
     TokenUsage,
@@ -317,6 +318,45 @@ def test_auto_compaction_preserves_current_request_and_persists_the_summary():
     )
     assert "Goal: keep nights" in str(request) and "x" * 1000 not in str(request)
     assert request[-1]["content"] == "Continue"
+
+
+@pytest.mark.parametrize(
+    "retry,draft_size",
+    [(False, "short"), (True, "short"), (True, "near-limit")],
+    ids=["uninterrupted", "retried", "retried-near-limit"],
+)
+def test_compaction_keeps_only_the_successful_attempt_and_all_cost_records(retry, draft_size):
+    class Provider(CompactionProvider):
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        async def stream_events(self, messages, tools=None):
+            self.summaries.append((messages, tools))
+            request_id = len(self.summaries)
+            if retry:
+                limit = int(messages[-1]["content"].rsplit("Summary character limit: ", 1)[1].rstrip("."))
+                draft = "FAILED ATTEMPT" + ("x" * (limit - 15) if draft_size == "near-limit" else "")
+                yield TextDelta(draft)
+                call = ProviderCall(f"failed-{request_id}", "model", "reported", "0.01")
+                self.calls.append(call)
+                yield call
+                yield ProviderRetry("Retry the original summary request")
+            yield TextDelta("P1 must avoid nights.")
+            call = ProviderCall(f"completed-{request_id}", "model", "reported", "0.02")
+            self.calls.append(call)
+            yield call
+            yield ResponseEnd("stop")
+
+    provider = Provider()
+    events = asyncio.run(collect(ContextCompactor(provider).compact(history(), [], force=True)))
+    assert next(event for event in events if isinstance(event, AgentCompactionEnd)).success
+    (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
+    assert "P1 must avoid nights." in entry.summary
+    assert "FAILED ATTEMPT" not in entry.summary
+    assert all("FAILED ATTEMPT" not in str(messages) for messages, _tools in provider.summaries)
+    assert [event for event in events if isinstance(event, ProviderCall)] == provider.calls
+    assert len(provider.calls) == len(provider.summaries) * (2 if retry else 1)
 
 
 def test_compaction_keeps_a_long_current_question_with_its_trailing_status():
