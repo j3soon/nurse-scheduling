@@ -172,8 +172,12 @@ the summary when older conversation context is compacted.
 Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
 context.
 
-When the conversation is summarized, expand **Conversation summarized** to read
-the summary sent to the assistant. A discarded summary stays visible and is
+When the conversation is summarized, expand **Conversation summary** in the
+right-aligned **User · Conversation summary** bubble to read the text supplied to
+the assistant. The app generates this summary using the user role. Its details
+explain which recent messages remain unchanged. Compaction status and other app
+notices that are not supplied to the assistant appear in separate centered
+bubbles. Assistant output and tool activity stay on the left. A discarded summary stays visible and is
 marked as omitted from future context. Earlier messages remain in the visible
 transcript even when the summary replaces them in model context.
 

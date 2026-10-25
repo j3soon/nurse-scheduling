@@ -21,10 +21,10 @@
 
 import { FiDownload } from 'react-icons/fi';
 
-import { AssistantActivity } from './AssistantActivity';
+import { AssistantActivity, CompactionSummary } from './AssistantActivity';
 import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
-import { messageLabel, messageUploadedFileLines } from './chatPresentation';
+import { messageLabel, messageUploadedFileLines, transcriptMessages } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -83,6 +83,9 @@ export function ChatTranscriptView({
   sessionExpiresAt,
   sessionRetentionSeconds,
 }: ChatTranscriptViewProps) {
+  const bubbles = messages.flatMap(message => transcriptMessages(message).map((part, index) => ({
+    message: part, key: `${message.id}-${index}`,
+  })));
   return (
       <section
         aria-label="Chat messages"
@@ -94,15 +97,19 @@ export function ChatTranscriptView({
             <p>Try asking “Who is available on the first date?”</p>
           </div>
         )}
-        {messages.map(message => {
+        {bubbles.map(({ message, key }) => {
+          const notice = message.presentation === 'notice';
+          const summary = message.presentation === 'summary' ? message.compaction : undefined;
           const uploads = messageUploadedFileLines(message);
           const timestamp = message.responseCompletedAt ?? message.createdAt;
           const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
           return (
             <article
-              key={message.id}
+              key={key}
               className={`min-w-0 rounded-xl px-3 py-3 sm:px-4 ${
-                message.role === 'optimizer'
+                notice || summary?.invalidated
+                  ? 'mx-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-gray-50 text-gray-700'
+                  : message.role === 'optimizer'
                   ? 'mx-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
                   : message.role === 'system'
                     ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-dashed border-gray-300 bg-gray-50 text-gray-700'
@@ -113,12 +120,19 @@ export function ChatTranscriptView({
                         : 'mr-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-white text-gray-900'
               }`}
             >
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{messageLabel(message)}</p>
-              {(message.role === 'system' || message.source !== undefined || message.role === 'optimizer') && (
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{notice ? 'App notice'
+                : summary ? summary.invalidated ? 'Discarded conversation summary' : 'User · Conversation summary' : messageLabel(message)}</p>
+              {(notice || summary || message.role === 'system' || message.source !== undefined || message.role === 'optimizer') && (
                 <p className="mb-2 text-xs opacity-70">
-                  {message.role === 'optimizer' ? 'App notice. Not sent to AI.' : 'Sent to AI.'}
+                  {notice || message.role === 'optimizer' ? 'App notice. Not sent to AI.'
+                    : summary ? summary.invalidated ? 'Omitted from future model context.' : 'Summary used in future model context.'
+                      : message.presentation === 'context' ? 'Sent in future model context.' : 'Sent to AI.'}
                 </p>
               )}
+              {summary && <details className="text-xs">
+                <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">Conversation summary</summary>
+                <CompactionSummary entry={summary} />
+              </details>}
               {uploads.length > 0 && (
                 <ul aria-label="Uploaded files in this message" className="mb-2 list-inside list-disc text-xs">
                   {uploads.map((file, index) => <li key={index}>{file}</li>)}
@@ -133,7 +147,9 @@ export function ChatTranscriptView({
                   ))}
                 />
               )}
-              {message.role === 'assistant' && !message.content && message.status === 'pending' ? (
+              {summary ? null : notice ? null : message.presentation === 'context' ? (
+                <p className="whitespace-pre-wrap break-words text-xs">{message.content}</p>
+              ) : message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null
                   : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
               ) : message.role === 'system' ? (

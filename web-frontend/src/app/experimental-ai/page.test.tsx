@@ -557,7 +557,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
     expect(screen.getByText('Context 10.0% used (est.)')).toBeInTheDocument();
     expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
-    await user.click(screen.getByText('Conversation summarized'));
+    await user.click(screen.getByText('Conversation summary', { exact: true }));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
   });
 

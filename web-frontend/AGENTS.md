@@ -62,6 +62,17 @@ initialization, such as loaded backend options enabling Optimize.
 Treat transcript visibility preferences as display settings. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
+Keep assistant output and tool activity, including tool results, left-aligned.
+Keep user, system, and app inputs to the model right-aligned with explicit role
+labels. Show the generated conversation summary on the right as
+`User · Conversation summary`. Keep display-only app events and notices in
+separate centered bubbles. Compaction progress and outcomes are app notices.
+Classify notices by their context provenance, because some report text supplied
+to the model. A discarded summary belongs with app notices and must say that it
+is omitted from future context. Derive these bubbles for display without changing
+saved message identity, execution ownership, or model inputs. Match chat exports
+to this convention.
+
 When comparing chat exports with the live transcript, identify the same message
 by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.

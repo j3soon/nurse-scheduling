@@ -116,6 +116,51 @@ def test_saved_summary_and_tool_repair_match_model_context_in_both_exports():
         assert "Arguments sent in later model context" in rendered
 
 
+@pytest.mark.parametrize("keep", [0, 4])
+def test_export_separates_notices_and_summary_without_changing_saved_messages(keep):
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Continued.",
+            "activity": [
+                {"kind": "tool", "name": "read", "arguments": "{}", "result": "Tool output", "ok": True},
+                {"kind": "notice", "text": "You requested context compaction."},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "The conversation was summarized.",
+                    "summary": "Keep nights.",
+                    "keepMessages": keep,
+                },
+                {"kind": "response", "text": "Continued."},
+                {"kind": "notice", "text": "Sent in future model context: [App event] Workspace discarded."},
+            ],
+        }
+    ]
+    original = copy.deepcopy(messages)
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    html = build_html_chat(messages, metadata)
+    articles = html.split('<article class="')[1:]
+    assert articles[0].startswith('message assistant"') and "Tool output" in articles[0]
+    assert (
+        articles[1].startswith('message assistant app-notice"') and "You requested context compaction." in articles[1]
+    )
+    assert articles[2].startswith('message user app"') and "User · Conversation summary" in articles[2]
+    assert articles[3].startswith('message assistant"') and "Continued." in articles[3]
+    assert articles[4].startswith('message user app"') and "[App event] Workspace discarded." in articles[4]
+    markdown = build_markdown_chat(messages, metadata)
+    for rendered in (html, markdown):
+        assert (
+            "The latest 4 messages remain unchanged after the summary." in rendered
+            if keep
+            else ("The summary replaces all earlier conversation messages in model context." in rendered)
+        )
+        assert rendered.count("You requested context compaction.") == 1
+        assert "User · Conversation summary" in rendered
+    assert messages == original
+
+
 def saved_case(variant):
     snapshot = copy.deepcopy(json.loads((FIXTURES / "chat-export.json").read_text(encoding="utf-8")))
     if variant == "missing-terminal":

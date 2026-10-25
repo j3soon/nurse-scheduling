@@ -47,7 +47,7 @@ describe('AssistantActivity', () => {
     ]} />);
     await user.click(screen.getByText('Conversation summarized'));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep P1 off nights\./)).toBeVisible();
-    expect(screen.getByText(/Retains 4 recent messages/)).toBeVisible();
+    expect(screen.getByText('The latest 4 messages remain unchanged after the summary.')).toBeVisible();
     await user.click(screen.getByText('bash · failed'));
     expect(screen.getByLabelText('Arguments sent in model context')).toHaveTextContent('{}');
   });

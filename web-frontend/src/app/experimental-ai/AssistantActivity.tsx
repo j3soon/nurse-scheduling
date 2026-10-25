@@ -157,6 +157,17 @@ function activityColor(entry: ActivityEntry): string {
   return entry.kind === 'schedule-check' ? 'text-red-700' : 'text-gray-500';
 }
 
+export function CompactionSummary({ entry }: { entry: CompactionActivity }) {
+  return <>
+    <p className="my-1">{entry.invalidated ? 'Omitted from future model context because this run failed.'
+      : 'The app supplies this summary to AI using the user role.'}</p>
+    {!entry.invalidated && <p className="my-1">{entry.keepMessages
+      ? `The latest ${entry.keepMessages} messages remain unchanged after the summary.`
+      : 'The summary replaces all earlier conversation messages in model context.'}</p>}
+    <ChunkedText text={`[Conversation summary]\n${entry.summary}`} label="summary" />
+  </>;
+}
+
 export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   if (entries.length === 0) return null;
 
@@ -190,11 +201,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
                   : entry.kind === 'compaction'
                     ? <>
                       <p>{entry.text}</p>
-                      {entry.summary !== undefined && <>
-                        <p className="my-1">{entry.invalidated ? 'Omitted from future model context because this run failed.'
-                          : `Sent to AI as a user-role summary. Retains ${entry.keepMessages ?? 0} recent messages after the summary.`}</p>
-                        <ChunkedText text={`[Conversation summary]\n${entry.summary}`} label="summary" />
-                      </>}
+                      {entry.summary !== undefined && <CompactionSummary entry={entry} />}
                     </>
                   : entry.kind === 'schedule-change'
                     ? <ScheduleChangePreview entry={entry} />
