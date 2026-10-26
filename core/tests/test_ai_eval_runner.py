@@ -271,7 +271,11 @@ def test_prompt_evidence_rejects_stale_or_inconclusive_receipts(change, message)
 
 
 def test_prompt_evidence_rejects_a_regressing_control():
-    step = next(step for step in load_prompt_steps() if step.evidence[0].get("controls"))
+    step = next(
+        step
+        for step in load_prompt_steps()
+        if step.evidence[0]["case"] in CASE_BY_ID and step.evidence[0].get("controls")
+    )
     record = {**step.evidence[0], "controls": [{**step.evidence[0]["controls"][0], "after": "2/3"}]}
     with pytest.raises(ValueError, match="all after attempts passing"):
         validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, FIXTURE_DIGESTS)
@@ -299,7 +303,7 @@ def test_attachment_evidence_binds_reproducible_binary_inputs(monkeypatch):
 
 @pytest.mark.parametrize("changed_input", ["clause", "case", "fixture"])
 def test_prompt_evidence_rejects_changed_inputs(changed_input):
-    step = load_prompt_steps()[0]
+    step = next(step for step in load_prompt_steps() if step.evidence[0]["case"] in CASE_BY_ID)
     case = CASE_BY_ID[step.evidence[0]["case"]]
     cases, fixtures = CASE_BY_ID, FIXTURE_DIGESTS
     if changed_input == "clause":

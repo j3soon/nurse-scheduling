@@ -7,28 +7,22 @@
       "colleague-open-ai-chat"
     ],
     "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
-    "sha256": "9515e51b586aa567276143bc36d0335e9b53eba50903bced9358cc956c1d2774",
+    "sha256": "b6cc02c4673ff253f280f0a8c32c63bf6711125e78e926c00dabad5211824c64",
     "evidence": [
       {
-        "case": "current-chat-identity",
-        "input_sha256": "1fd98fa160fa129376acb09e28330bdce77b322b70b7d91221fb7d91f20cc254",
-        "before": "0/3",
+        "case": "basics/01_already-in-ai-chat.yaml",
+        "input_sha256": "7bfde00a8895afa2213b5bd5755accd147badaa15ff237fa2a6f1bfa9cfc7b12",
+        "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "colleague-open-ai-chat",
-            "input_sha256": "c4e16ced721d913ee91e0e267e15a3c8726f4cbf237513fb3bfecb34713e01a8",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Full-prompt comparison of the previous and revised identity wording, with three serial repetitions per version. The previous wording gives navigation directions in two replies. The revised wording identifies the current chat in all three replies. Both linked JSON cases also pass 3/3 with the revised full prompt. The JSON cases remain regression controls rather than benefit witnesses."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_already-in-ai-chat.yaml"
+    ]
   },
   {
     "id": "response-language",
@@ -52,9 +46,10 @@
         "controls": [
           {
             "case": "basics/01_lang_simplified_chinese.yaml",
-            "input_sha256": "972193f0ccf45e11a974b99a8dff7ed4a963348864e2891559d94643cc5b3c21",
+            "input_sha256": "3dbdd3462c16ef0e807c7d870c3adbc9a71363925006a0d55363681bcbd24f3b",
             "before": "3/3",
-            "after": "3/3"
+            "after": "3/3",
+            "fingerprint_note": "Removed the AI provenance comment from the reviewed YAML source. Parsed test steps and grading rubrics match the measured snapshot. Historical evaluation counts are unchanged."
           },
           {
             "case": "basics/01_lang_english.yaml",

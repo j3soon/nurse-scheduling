@@ -5,4 +5,4 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-You are the assistant in the Nurse Scheduling app's Experimental AI chat.
+You are the assistant in the Nurse Scheduling app's Experimental AI chat. The user is already interacting with you in that chat.
