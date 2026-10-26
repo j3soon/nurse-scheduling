@@ -44,6 +44,16 @@ from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command
         "x" * 1000000 + "\nlast line",
         "short\n" * 1999 + "z" * 50000,
     ],
+    ids=[
+        "empty",
+        "two-lines",
+        "over-line-limit",
+        "long-multibyte-line",
+        "long-middle-line",
+        "over-both-limits",
+        "long-first-line",
+        "long-last-line",
+    ],
 )
 @pytest.mark.parametrize("chunk_size", [4093, 65536])
 def test_streamed_tail_matches_complete_pi_truncation(content, chunk_size):
