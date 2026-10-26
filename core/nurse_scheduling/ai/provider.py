@@ -456,7 +456,6 @@ class OpenAiCompatibleProvider:
         async with self._context_tokens_lock:
             if self._context_tokens_loaded:
                 return
-            self._context_tokens_loaded = True
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get(
@@ -466,7 +465,9 @@ class OpenAiCompatibleProvider:
                     response.raise_for_status()
                     metadata = response.json()
             except (httpx.HTTPError, ValueError):
+                # A transient failure must not disable the provider, so a later request retries.
                 return
+            self._context_tokens_loaded = True
             models = metadata.get("data") if isinstance(metadata, dict) else None
             if not isinstance(models, list):
                 return

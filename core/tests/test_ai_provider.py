@@ -864,8 +864,7 @@ def test_missing_model_metadata_refuses_chat_before_a_completion(monkeypatch, st
     assert provider.context_tokens is None
 
 
-@pytest.mark.parametrize("models_status", [200, 503], ids=["discovered", "unavailable"])
-def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, models_status):
+def test_session_and_output_copies_share_model_limit_discovery(monkeypatch):
     requests = []
 
     async def handle(request):
@@ -873,7 +872,7 @@ def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, mode
         if request.method == "GET":
             await asyncio.sleep(0)
             return httpx.Response(
-                models_status,
+                200,
                 json={
                     "data": [
                         {
@@ -900,17 +899,12 @@ def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, mode
         await asyncio.gather(*(_collect(provider.stream_events([])) for provider in (first, second, later)))
         return later
 
-    if models_status != 200:
-        with pytest.raises(ProviderError, match="no valid context window"):
-            asyncio.run(run())
-        assert [request.method for request in requests] == ["GET"]
-        return
     later = asyncio.run(run())
     assert len([request for request in requests if request.method == "GET"]) == 1
-    parameter = "max_completion_tokens" if models_status == 200 else "max_tokens"
+    parameter = "max_completion_tokens"
     for provider in (original, first, second, later):
-        assert provider.context_tokens == (32000 if models_status == 200 else None)
-        assert provider.output_tokens == (8192 if models_status == 200 else None)
+        assert provider.context_tokens == 32000
+        assert provider.output_tokens == 8192
         assert provider.output_token_parameter == parameter
     completions = [request for request in requests if request.method == "POST"]
     assert {request.headers["x-session-id"]: json.loads(request.content)[parameter] for request in completions} == {
@@ -919,6 +913,29 @@ def test_session_and_output_copies_share_model_limit_discovery(monkeypatch, mode
         "later": 3000,
     }
     assert original._session_id is None and original._max_output_tokens is None
+
+
+def test_failed_model_limit_discovery_is_retried(monkeypatch):
+    statuses = [503, 200]
+    requests = []
+
+    async def handle(request):
+        requests.append(request)
+        return httpx.Response(statuses.pop(0), json={"data": [{"id": "test-model", "context_length": 32000}]})
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider.context_tokens = None
+    provider._context_tokens_loaded = False
+    copy = provider.with_session_id("session")
+
+    async def run():
+        with pytest.raises(ProviderError, match="no valid context window"):
+            await copy.prepare_context()
+        await copy.prepare_context()
+
+    asyncio.run(run())
+    assert provider.context_tokens == copy.context_tokens == 32000
+    assert [request.method for request in requests] == ["GET", "GET"]
 
 
 def test_skips_a_choiceless_chunk_that_carries_no_usage(monkeypatch: pytest.MonkeyPatch) -> None:
