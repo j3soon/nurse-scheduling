@@ -171,6 +171,9 @@ out of the context percentage.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+Keep the chat textarea editable while submission is unavailable. Guard Send and
+Queue separately. Restore draft focus when a user submits, without moving focus
+when an assistant reply finishes or a queued message starts automatically.
 Show the model lock that the backend saves for the session, and read it again
 when a run starts or ends. Also lock the model control while a message is in
 flight. A rejected message leaves it editable. Keep reasoning effort editable

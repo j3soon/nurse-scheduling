@@ -309,7 +309,10 @@ export default function ExperimentalAiPage() {
         followPageBottomRef.current = true;
         setShowScrollToBottom(false);
       }
-      if (kind !== 'retry') setDraft('');
+      if (kind !== 'retry') {
+        setDraft('');
+        draftInputRef.current?.focus({ preventScroll: true });
+      }
       if (kind === 'send') {
         selectedAttachments.forEach(attachment => {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -320,7 +323,7 @@ export default function ExperimentalAiPage() {
   });
   const send = async (event: FormEvent) => {
     event.preventDefault();
-    if (modelSelectionEnabled && !selection) return;
+    if (!isClientReady || composerUnavailable) return;
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   useEffect(() => {
@@ -1369,11 +1372,10 @@ export default function ExperimentalAiPage() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            disabled={!isClientReady || composerUnavailable}
             rows={1}
             aria-label="Ask about the current schedule"
             placeholder="Ask anything…"
-            className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"
+            className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none"
           />
           <div className="flex shrink-0 items-center gap-1">
             {isClientReady && firefoxVersion !== null && !speechSupported ? (
@@ -1432,7 +1434,7 @@ export default function ExperimentalAiPage() {
               <>
                 <button
                   type="submit"
-                  disabled={!draft.trim()}
+                  disabled={!isClientReady || composerUnavailable || !draft.trim()}
                   aria-label="Queue message"
                   title="Queue message"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"

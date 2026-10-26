@@ -519,6 +519,64 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
+for (const submission of ['Enter', 'button'] as const) {
+  test(`keeps draft focus after ${submission} submission while session models reload`, async ({ page }) => {
+    const captured = await mockAiBackend(page, ['Answer in progress.'], false, undefined, [], true, [], {
+      default_model: 'fast', models: [
+        { id: 'fast', name: 'Fast', context_tokens: 32000, default_reasoning: 'default',
+          reasoning_options: [{ id: 'default', label: 'Default' }, { id: 'high', label: 'High' }] },
+      ],
+    });
+    captured.holdNextTurn();
+    let allowSelectionRead!: () => void;
+    const selectionReady = new Promise<void>(resolve => { allowSelectionRead = resolve; });
+    let selectionReadStarted = false;
+    await page.route('**/sessions/browser-session/model-selection', async route => {
+      selectionReadStarted = true;
+      await selectionReady;
+      await route.fallback();
+    });
+    await page.goto('/experimental-ai');
+    await expect(page.getByLabel('AI model')).toBeEnabled();
+    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await input.fill('First question');
+    if (submission === 'Enter') await page.keyboard.press('Enter');
+    else await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect.poll(() => selectionReadStarted).toBe(true);
+    await expect(page.getByText('Answer in progress.', { exact: true })).toBeVisible();
+    await expect(input).toBeEnabled();
+    await expect(input).toBeFocused();
+    await page.keyboard.type('Next question');
+    await expect(input).toHaveValue('Next question');
+    const queue = page.getByRole('button', { name: 'Queue message', exact: true });
+    await expect(queue).toBeDisabled();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('Next question');
+    await expect(page.getByText('Queued for steering', { exact: true })).toBeHidden();
+
+    allowSelectionRead();
+    await expect(queue).toBeEnabled();
+    if (submission === 'Enter') await page.keyboard.press('Enter');
+    else await queue.click();
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+    await expect(page.getByText('Queued for steering', { exact: true })).toBeVisible();
+    await page.keyboard.type('Draft for later');
+    await expect(input).toHaveValue('Draft for later');
+    await page.screenshot({ path: `../artifacts/chat-draft-focus-${submission}.png` });
+
+    // Completion and automatic queue dispatch must leave another control focused.
+    const reasoning = page.getByLabel('Reasoning', { exact: true });
+    await reasoning.focus();
+    captured.finishTurn();
+    await expect.poll(() => captured.messageBodies.length).toBe(2);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+    await expect(reasoning).toBeFocused();
+    await expect(input).toHaveValue('Draft for later');
+  });
+}
+
 test('updates Context, Tokens, and estimated cost while the answer is still streaming', async ({ page }) => {
   const captured = await mockAiBackend(page, []);
   captured.holdNextTurn();
@@ -558,7 +616,13 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.getByRole('button', { name: 'Compact context', exact: true }).click();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
-  await expect(input).toBeDisabled();
+  await expect(input).toBeEnabled();
+  await input.fill('Draft during compaction');
+  await expect(page.getByRole('button', { name: 'Queue message', exact: true })).toBeDisabled();
+  await input.press('Enter');
+  await expect(input).toHaveValue('Draft during compaction');
+  expect(captured.messageBodies).toHaveLength(1);
+  await input.fill('');
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 1200, step: 1 });
@@ -657,7 +721,7 @@ test('can stop manual compaction while admission waits before run_start', async 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Compact context', exact: true }).click();
-  await expect(input).toBeDisabled();
+  await expect(input).toBeEnabled();
   await expect.poll(() => compactionMessageId).toBeTruthy();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-admission-stop.png', fullPage: true });
@@ -824,7 +888,13 @@ test('authenticates AI session requests with an explicitly remembered token', as
 
   await page.goto('/experimental-ai');
   const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
-  await expect(composer).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Enter token for AI assistant' })).toBeVisible();
+  await expect(composer).toBeEnabled();
+  await composer.fill('Draft before authentication');
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  await composer.press('Enter');
+  await expect(composer).toHaveValue('Draft before authentication');
+  expect(captured.messageBodies).toHaveLength(0);
   await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
   await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
   await page.getByRole('checkbox', { name: /remember on this device/i }).check();

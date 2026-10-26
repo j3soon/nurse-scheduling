@@ -559,7 +559,13 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'compaction_start', runId: 'compact-run', reason: 'manual', tokensBefore: 12000 });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Draft during compaction');
+    expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockQueueMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Draft during compaction');
     expect(screen.getByText('You requested context compaction.')).toBeVisible();
     await act(async () => {
       stream.onEvent!({ type: 'compaction_end', runId: 'compact-run', reason: 'manual', tokensBefore: 12000,
@@ -569,6 +575,7 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'done', runId: 'compact-run' });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
+    expect(composer).toHaveValue('Draft during compaction');
     expect(screen.getByText('Context ~10.0% used')).toBeInTheDocument();
     expect(screen.getByText('Tokens: ~1,000 / 10,000')).toBeInTheDocument();
     await user.click(screen.getByText('Conversation summary', { exact: true }));
@@ -584,7 +591,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     const requestId = mockCompactSession.mock.calls[0][1] as string;
     expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
@@ -614,7 +621,8 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent({ type: 'done', runId: 'earlier-review' });
     });
     expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
     await act(async () => stream.onEvent({ type: 'done', runId: 'compact-run' }));
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
@@ -702,6 +710,7 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('reports an expired stored chat and requires a new conversation', async () => {
+    const user = userEvent.setup();
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'expired-session',
       endpoint: '/ai',
@@ -715,7 +724,13 @@ describe('ExperimentalAiPage', () => {
 
     expect(await screen.findByText('Old question')).toBeInTheDocument();
     expect(screen.getByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Draft for a new chat');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Draft for a new chat');
     expect(mockGetSessionStatus).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
   });
@@ -990,7 +1005,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
     expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
@@ -2596,14 +2611,19 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     const tokenButton = await screen.findByRole('button', { name: 'Enter token for AI assistant' });
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Who works?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Who works?');
     await user.click(tokenButton);
     await user.type(screen.getByLabelText('Token for AI assistant'), 'ai-session-token');
     await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
 
     expect(screen.getByText('Token set for this session')).toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-ai-auth')).toBeNull();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(
