@@ -298,19 +298,25 @@ class SessionStore:
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        return self._reserve(session, run_id=run_id, compact_only=compact_only)
+        if not compact_only:
+            self._check_history_capacity(session)
+        self._require_capacity(0)
+        return self._reserve(session, run_id=run_id)
 
     def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None:
+        """Reserve an optimizer review. Its preparation checks capacity, so a refusal is a visible failed review."""
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
         return self._reserve(session, run_id=run_id)
 
-    def _reserve(self, session: AgentSession, *, run_id: str | None, compact_only: bool = False) -> RunSnapshot:
-        if not compact_only:
-            self._check_history_capacity(session)
+    def check_capacity(self, session: AgentSession) -> None:
+        """Refuse an optimizer review at the same bounds as a new question."""
+        self._check_history_capacity(session)
         self._require_capacity(0)
+
+    def _reserve(self, session: AgentSession, *, run_id: str | None) -> RunSnapshot:
         snapshot = session.begin_run(run_id=run_id)
         if self._settings.history_postgres_url:
             snapshot.uploads = tuple(upload.reference() for upload in snapshot.uploads)

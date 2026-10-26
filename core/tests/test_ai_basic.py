@@ -3269,6 +3269,28 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
         assert not any(event.type in {"schedule_applied", "done"} for event in events)
 
 
+def test_background_review_at_the_history_limit_reports_a_failed_review():
+    provider = ScriptedToolProvider(
+        [ToolCallRequest((ToolCall("start", OPTIMIZER_TOOL, '{"action":"start"}'),))],
+        [TextDelta("Started.")],
+    )
+    optimizer = BackgroundTestOptimizer()
+    app = create_test_app(
+        settings=make_settings(max_history_messages=4, optimizer_poll_interval_seconds=0.001),
+        provider=provider,
+        sandbox_factory=FakeSandboxFactory(),
+        optimizer_backend=optimizer,
+    )
+    with AuthenticatedTestClient(app) as client:
+        session = create_session(client, schedule_yaml())
+        client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
+        optimizer.release.set()
+        events = review_run_events(app, session)
+        assert [event.type for event in events] == ["run_start", "response_end", "error"]
+        assert events[1].data["stop_reason"] == "error"
+        assert "defensive history limit" in events[-1].data["message"]
+
+
 def test_session_attachment_total_counts_existing_files_and_releases_removed_bytes():
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(max_attachment_total_bytes=6), provider=FakeProvider())

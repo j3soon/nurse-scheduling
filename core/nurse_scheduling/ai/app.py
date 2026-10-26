@@ -407,6 +407,11 @@ def create_app(
         session = store.get(session_id)
         if session is None:
             return
+
+        async def prepare_review() -> SessionRuntime:
+            store.check_capacity(session)
+            return await runtime_for(session.provider_credential_id, session.model_selection or selection)
+
         run = runs.start(
             session_id,
             lambda run: session.run(
@@ -416,9 +421,7 @@ def create_app(
                 background=True,
                 artifact=artifact,
                 credential_id=session.provider_credential_id,
-                prepare_runtime=lambda: runtime_for(
-                    session.provider_credential_id, session.model_selection or selection
-                ),
+                prepare_runtime=prepare_review,
             ),
             background=True,
         )

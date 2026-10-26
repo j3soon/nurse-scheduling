@@ -105,8 +105,9 @@ the accepted provider request. The HTTP body bound protects request parsing.
 
 A completed exchange remains available even if its output crosses a history or
 memory bound. Further work is refused until capacity is available, or the user
-exports the chat and starts another. Allow memory headroom for output from every
-admitted run.
+exports the chat and starts another. A refused optimizer review appears in the
+chat as a failed review with the same message. Allow memory headroom for output
+from every admitted run.
 
 Parallelism applies to independent read-only batches. A batch containing a
 mutating tool remains sequential. More slots can help large I/O batches.
