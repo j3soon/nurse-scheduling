@@ -23,7 +23,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ChatTranscriptView } from './ChatTranscriptView';
-import { failResponse } from './assistantEvents';
+import { failResponse, staleResponse } from './assistantEvents';
 import type { ChatMessage } from './chatTranscript';
 import type { ActivityEntry } from './AssistantActivity';
 
@@ -120,6 +120,37 @@ it('marks messages before the retained compaction tail as compacted out of conte
   expect(screen.getByText('System').closest('article')).not.toHaveTextContent('Compacted out of context.');
 });
 
+it('counts parallel tool calls as one step and ignores uncommitted turns when marking compacted messages', () => {
+  renderTranscript([
+    { id: 'q1', role: 'user', content: 'Compacted question' },
+    { id: 'a1', role: 'assistant', content: 'Compacted answer', activity: [
+      { kind: 'response', text: 'Compacted answer' },
+    ] },
+    { id: 'q2', role: 'user', content: 'Retained question' },
+    { id: 'a2', role: 'assistant', content: 'Retained answer', activity: [
+      { kind: 'reasoning', text: 'Checking both files.' },
+      { kind: 'tool', name: 'read', arguments: '{"path":"a"}', result: 'A', ok: true },
+      { kind: 'tool', name: 'read', arguments: '{"path":"b"}', result: 'B', ok: true },
+      { kind: 'response', text: 'Retained answer' },
+    ] },
+    { id: 'q-stale', role: 'user', content: 'Stale question' },
+    staleResponse({ id: 'a-stale', role: 'assistant', content: '' }, 'This response was not saved.'),
+    { id: 'q-unsent', role: 'user', content: 'Unsent question' },
+    failResponse({ id: 'a-unsent', role: 'assistant', content: '', unsentFiles: ['ward.xlsx'] }, 'Upload failed.'),
+    { id: 'compact', role: 'assistant', content: '', activity: [
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
+        summary: 'Summary text.', keepMessages: 5 },
+    ] },
+  ]);
+  expect(screen.getByText('Compacted question').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Compacted answer').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Retained question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Retained answer').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Stale question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Unsent question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+});
+
 it.each([0, 4])('separates compaction notices, summary, and assistant activity with %s retained messages', async keepMessages => {
   const user = userEvent.setup();
   const message: ChatMessage = { id: 'answer', role: 'assistant', content: 'Continued.', activity: [
@@ -199,6 +230,23 @@ it('keeps failed-summary details and context notices separate from the assistant
   expect(screen.getByText('Discarded conversation summary').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Partial.').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('Failed.').closest('article')).toHaveClass('mr-auto');
+  expect(screen.getByText('[App event] Workspace discarded.').closest('article')).toHaveClass('ml-auto');
+});
+
+it('keeps a failed turn without model text on the assistant bubble before its context notice', () => {
+  const failed = failResponse({
+    id: 'answer',
+    role: 'assistant',
+    content: '',
+    activity: [
+      { kind: 'compaction', reason: 'threshold', state: 'completed', text: 'Summarized.', summary: 'Old summary.', invalidated: true },
+      { kind: 'notice', text: 'Sent in future model context: [App event] Workspace discarded.' },
+    ],
+  }, reason);
+  renderTranscript([failed]);
+  expect(screen.getAllByText(reason)).toHaveLength(1);
+  expect(screen.getByText(reason).closest('article')).toHaveClass('mr-auto');
+  expect(screen.queryByText(`${reason.length} characters`)).not.toBeInTheDocument();
   expect(screen.getByText('[App event] Workspace discarded.').closest('article')).toHaveClass('ml-auto');
 });
 

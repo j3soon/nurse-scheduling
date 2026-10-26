@@ -362,21 +362,23 @@ def _context_message_count(message) -> int:
     if not activity:
         return 0 if message.get("status") in {"failed", "stopped"} or not message.get("content") else 1
     count = 0
-    in_step = False
+    step = "none"
     for entry in activity:
         kind = entry["kind"]
         if kind in {"reasoning", "response"}:
-            if entry.get("context") == "omitted":
-                in_step = False
+            if entry.get("context") == "omitted" or (
+                message.get("status") in {"failed", "stopped"} and entry.get("context") != "complete"
+            ):
+                step = "none"
                 continue
-            if not in_step:
+            if step != "text":
                 count += 1
-                in_step = True
+                step = "text"
         elif kind == "tool" and entry.get("state") != "preparing":
-            if not in_step:
+            if step == "none":
                 count += 1
             count += 1
-            in_step = False
+            step = "tools"
     return count
 
 
@@ -396,71 +398,105 @@ def _display_messages(messages):
         "unsentFiles",
     }
     bubbles = []
+    counts = []
     for message in messages:
         activity = message.get("activity", [])
         if message["role"] != "assistant" or not any(
             entry["kind"] in {"notice", "schedule-applied", "compaction"} for entry in activity
         ):
-            bubbles.append(dict(message))
-            continue
-        base = {key: value for key, value in message.items() if key not in footer_fields | {"activity", "content"}}
-        parts = []
+            parts = [dict(message)]
+        else:
+            base = {key: value for key, value in message.items() if key not in footer_fields | {"activity", "content"}}
+            parts = []
 
-        if message["content"] and not any(entry["kind"] == "response" for entry in activity):
-            _append_activity_bubble(parts, base, {"kind": "response", "text": message["content"]})
-        for entry in activity:
-            if entry["kind"] == "compaction":
-                _append_activity_bubble(
-                    parts,
-                    base,
-                    {key: value for key, value in entry.items() if key not in {"summary", "keepMessages"}},
-                    "notice",
-                )
-                if "summary" in entry:
+            if (
+                message["content"]
+                and (message.get("status") != "failed" or message["content"] != message.get("failureReason"))
+                and not any(entry["kind"] == "response" for entry in activity)
+            ):
+                _append_activity_bubble(parts, base, {"kind": "response", "text": message["content"]})
+            for entry in activity:
+                if entry["kind"] == "compaction":
+                    _append_activity_bubble(
+                        parts,
+                        base,
+                        {key: value for key, value in entry.items() if key not in {"summary", "keepMessages"}},
+                        "notice",
+                    )
+                    if "summary" in entry:
+                        parts.append(
+                            {
+                                **base,
+                                "role": "user",
+                                "source": "app",
+                                "content": f"[Conversation summary]\n{entry['summary']}",
+                                "presentation": "summary",
+                                "compaction": entry,
+                            }
+                        )
+                elif entry["kind"] == "notice" and entry["text"].startswith("Sent in future model context: "):
                     parts.append(
                         {
                             **base,
                             "role": "user",
                             "source": "app",
-                            "content": f"[Conversation summary]\n{entry['summary']}",
-                            "presentation": "summary",
-                            "compaction": entry,
+                            "title": "Context notice",
+                            "content": entry["text"].removeprefix("Sent in future model context: "),
+                            "presentation": "context",
                         }
                     )
-            elif entry["kind"] == "notice" and entry["text"].startswith("Sent in future model context: "):
-                parts.append(
-                    {
-                        **base,
-                        "role": "user",
-                        "source": "app",
-                        "title": "Context notice",
-                        "content": entry["text"].removeprefix("Sent in future model context: "),
-                        "presentation": "context",
-                    }
+                else:
+                    _append_activity_bubble(
+                        parts, base, entry, "notice" if entry["kind"] in {"notice", "schedule-applied"} else None
+                    )
+            if (
+                message.get("status") == "pending"
+                and parts[-1].get("presentation")
+                and not any(
+                    entry["kind"] == "compaction" and (entry["state"] == "running" or entry["reason"] == "manual")
+                    for entry in activity
                 )
-            else:
-                _append_activity_bubble(
-                    parts, base, entry, "notice" if entry["kind"] in {"notice", "schedule-applied"} else None
+            ):
+                parts.append({**base, "content": ""})
+            elif (
+                message.get("status") in {"failed", "stopped"}
+                and not any(part["role"] == "assistant" and not part.get("presentation") for part in parts)
+                and not any(entry["kind"] == "compaction" and entry.get("reason") == "manual" for entry in activity)
+            ):
+                context_index = next(
+                    (index for index, part in enumerate(parts) if part.get("presentation") == "context"),
+                    len(parts),
                 )
-        if (
-            message.get("status") == "pending"
-            and parts[-1].get("presentation")
-            and not any(
-                entry["kind"] == "compaction" and (entry["state"] == "running" or entry["reason"] == "manual")
-                for entry in activity
+                parts.insert(context_index, {**base, "content": ""})
+            footer = next(
+                (
+                    part
+                    for part in reversed(parts)
+                    if part["role"] == "assistant" and part.get("presentation") != "notice"
+                ),
+                next((part for part in reversed(parts) if part["role"] == "assistant"), parts[-1]),
             )
+            footer.update({key: value for key, value in message.items() if key in footer_fields})
+            for part in parts:
+                if part is not footer and part.get("presentation") is None:
+                    part["split"] = True
+        part_counts = [_context_message_count(part) for part in parts]
+        if (
+            message["role"] == "assistant"
+            and message.get("status") in {"failed", "stopped"}
+            and not any(part_counts)
+            and not any(entry["kind"] == "compaction" and entry.get("reason") == "manual" for entry in activity)
         ):
-            parts.append({**base, "content": ""})
-        footer = next(
-            (part for part in reversed(parts) if part["role"] == "assistant" and part.get("presentation") != "notice"),
-            next((part for part in reversed(parts) if part["role"] == "assistant"), parts[-1]),
-        )
-        footer.update({key: value for key, value in message.items() if key in footer_fields})
-        for part in parts:
-            if part is not footer and part.get("presentation") is None:
-                part["split"] = True
+            for index in range(len(bubbles) - 1, -1, -1):
+                if bubbles[index]["role"] == "assistant":
+                    break
+                if bubbles[index]["role"] == "user" and bubbles[index].get("source") == "status":
+                    counts[index] = 0
+                elif bubbles[index]["role"] == "user" and bubbles[index].get("source") in {None, "optimizer"}:
+                    counts[index] = 0
+                    break
         bubbles.extend(parts)
-    counts = [_context_message_count(bubble) for bubble in bubbles]
+        counts.extend(part_counts)
     active = set()
     for index, bubble in enumerate(bubbles):
         if bubble.get("presentation") == "summary" and not bubble["compaction"].get("invalidated"):

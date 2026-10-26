@@ -361,6 +361,82 @@ def test_manual_compaction_keeps_metadata_on_notice_before_summary():
     assert messages == original
 
 
+def test_export_counts_parallel_tools_and_omits_uncommitted_or_failed_split_turns():
+    reason = "The AI provider failed (HTTP 525)."
+    messages = [
+        {"role": "user", "content": "Compacted question"},
+        {
+            "role": "assistant",
+            "content": "Compacted answer",
+            "activity": [{"kind": "response", "text": "Compacted answer"}],
+        },
+        {"role": "user", "content": "Retained question"},
+        {
+            "role": "assistant",
+            "content": "Retained answer",
+            "activity": [
+                {"kind": "reasoning", "text": "Checking both files."},
+                {"kind": "tool", "name": "read", "arguments": '{"path":"a"}', "result": "A", "ok": True},
+                {"kind": "tool", "name": "read", "arguments": '{"path":"b"}', "result": "B", "ok": True},
+                {"kind": "response", "text": "Retained answer"},
+            ],
+        },
+        {"role": "user", "content": "Stale question"},
+        {
+            "role": "assistant",
+            "content": "This response was not saved.",
+            "status": "failed",
+            "activity": [{"kind": "response", "text": "This response was not saved."}],
+        },
+        {"role": "user", "content": "Unsent question"},
+        {
+            "role": "assistant",
+            "content": "Upload failed.",
+            "status": "failed",
+            "failureReason": "Upload failed.",
+            "unsentFiles": ["ward.xlsx"],
+        },
+        {"role": "user", "content": "Interrupted question"},
+        {
+            "role": "assistant",
+            "content": reason,
+            "status": "failed",
+            "failureReason": reason,
+            "activity": [
+                {"kind": "notice", "text": "Sent in future model context: [App event] Workspace discarded."},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "activity": [
+                {"kind": "notice", "text": "You requested context compaction."},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "The conversation was summarized.",
+                    "summary": "Summary text.",
+                    "keepMessages": 7,
+                },
+            ],
+        },
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    html = build_html_chat(messages, metadata)
+    assert f'<p class="failure">{reason}</p>' in html
+    assert f"{len(reason)} characters" not in html
+    articles = html.split('<article class="')[1:]
+    by_text = lambda text: next(article for article in articles if text in article)
+    assert "Compacted out of context." in by_text("Compacted question")
+    assert "Compacted out of context." in by_text("Compacted answer")
+    for text in ("Retained question", "Retained answer", "Stale question", "Unsent question", "Interrupted question"):
+        assert "Compacted out of context." not in by_text(text)
+    markdown = build_markdown_chat(messages, metadata)
+    assert markdown.count("Compacted out of context.") == 2
+    assert f"- Error: {reason}" in markdown
+
+
 def saved_case(variant):
     snapshot = copy.deepcopy(json.loads((FIXTURES / "chat-export.json").read_text(encoding="utf-8")))
     if variant == "missing-terminal":

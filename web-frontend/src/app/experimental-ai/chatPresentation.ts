@@ -38,29 +38,48 @@ function contextMessageCount(message: TranscriptMessage): number {
     return message.status === 'failed' || message.status === 'stopped' || !message.content ? 0 : 1;
   }
   let count = 0;
-  let inStep = false;
+  let step: 'none' | 'text' | 'tools' = 'none';
   for (const entry of activity) {
     if (entry.kind === 'reasoning' || entry.kind === 'response') {
-      if (entry.context === 'omitted') {
-        inStep = false;
+      if (entry.context === 'omitted'
+        || ((message.status === 'failed' || message.status === 'stopped') && entry.context !== 'complete')) {
+        step = 'none';
         continue;
       }
-      if (!inStep) {
+      if (step !== 'text') {
         count += 1;
-        inStep = true;
+        step = 'text';
       }
     } else if (entry.kind === 'tool' && entry.state !== 'preparing') {
-      if (!inStep) count += 1;
+      if (step === 'none') count += 1;
       count += 1;
-      inStep = false;
+      step = 'tools';
     }
   }
   return count;
 }
 
 export function transcriptConversation(messages: ChatMessage[]): TranscriptMessage[] {
-  const bubbles = messages.flatMap(message => transcriptMessages(message));
-  const counts = bubbles.map(contextMessageCount);
+  const bubbles: TranscriptMessage[] = [];
+  const counts: number[] = [];
+  for (const message of messages) {
+    const parts = transcriptMessages(message);
+    const partCounts = parts.map(contextMessageCount);
+    if (message.role === 'assistant' && (message.status === 'failed' || message.status === 'stopped')
+      && partCounts.every(count => count === 0)
+      && !message.activity?.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')) {
+      for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+        if (bubbles[i].role === 'assistant') break;
+        if (bubbles[i].role === 'user' && bubbles[i].source === 'status') counts[i] = 0;
+        else if (bubbles[i].role === 'user' && (bubbles[i].source === undefined || bubbles[i].source === 'optimizer')) {
+          counts[i] = 0;
+          break;
+        }
+      }
+    }
+    bubbles.push(...parts);
+    counts.push(...partCounts);
+  }
   let active = new Set<number>();
   bubbles.forEach((bubble, index) => {
     if (bubble.presentation === 'summary' && !bubble.compaction?.invalidated) {
@@ -101,7 +120,9 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
     part.activity!.push(entry);
     if (entry.kind === 'response') part.content += entry.text;
   };
-  if (content && !activity!.some(entry => entry.kind === 'response')) append({ kind: 'response', text: content });
+  if (content && (status !== 'failed' || content !== failureReason) && !activity!.some(entry => entry.kind === 'response')) {
+    append({ kind: 'response', text: content });
+  }
   for (const entry of activity!) {
     if (entry.kind === 'compaction') {
       const { summary, ...progress } = entry;
@@ -116,6 +137,12 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
   if (status === 'pending' && parts.at(-1)?.presentation && !activity!.some(entry => (
     entry.kind === 'compaction' && (entry.state === 'running' || entry.reason === 'manual')
   ))) parts.push({ ...base, content: '' });
+  else if ((status === 'failed' || status === 'stopped')
+    && !parts.some(part => part.role === 'assistant' && !part.presentation)
+    && !activity!.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')) {
+    const contextIndex = parts.findIndex(part => part.presentation === 'context');
+    parts.splice(contextIndex >= 0 ? contextIndex : parts.length, 0, { ...base, content: '' });
+  }
   const footer = parts.findLast(part => part.role === 'assistant' && part.presentation !== 'notice')
     ?? parts.findLast(part => part.role === 'assistant') ?? parts.at(-1)!;
   Object.assign(footer, { createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
