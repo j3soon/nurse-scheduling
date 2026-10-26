@@ -37,6 +37,9 @@ def main():
     if args.action == "render":
         from nurse_scheduling.ai.chat_export import build_saved_chat_export
 
+        # Windows pipes default to the legacy code page, but the browser test exchanges UTF-8.
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
         print(build_saved_chat_export(json.load(sys.stdin), "html"))
         return
 

@@ -89,6 +89,7 @@ Extend the scenario or its variants when adding a transcript activity kind.
 Use `core/nurse_scheduling/ai/chat_styles.css` for their shared appearance.
 The browser tests require the core Python runtime dependencies. Activate the
 core environment on a host, or set `AI_EXPORT_PYTHON` to its Python executable.
+Install them in every frontend E2E workflow, including macOS and Windows.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
