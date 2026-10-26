@@ -248,6 +248,8 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('schedule edit')).toBeVisible();
+  // Sending keeps focus in the composer, where Ctrl+Z is text undo.
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).blur();
   await page.keyboard.press('Control+z');
   state.finishAnswer();
   await expect(page.getByText(/replaced changes made during this response/)).toBeVisible();
