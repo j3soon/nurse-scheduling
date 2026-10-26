@@ -733,6 +733,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   guidance. Accept equivalent phrasing in
   text assertions and require tool calls only when their use is part of the
   intended behavior. Do not weaken assertions to hide a live behavior failure.
+  Let production provider retries finish before reporting an execution failure.
+  Keep interrupted drafts in transcripts, but exclude them from assertions and
+  judge input.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.

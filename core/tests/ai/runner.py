@@ -43,7 +43,7 @@ from nurse_scheduling.ai.context import (
     upload_event,
 )
 from nurse_scheduling.ai.litellm_concurrency import discover_capacity
-from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
+from nurse_scheduling.ai.provider import OpenAiCompatibleProvider, ProviderRetry
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
 from nurse_scheduling.ai.transcript import AppEventEntry, UserMessage
@@ -182,12 +182,14 @@ async def run_case(
                     analysis=analysis,
                     timezone=_timezone(clock.date),
                 )
+                last_response = None
                 async with aclosing(stream):
                     async for event in stream:
                         if isinstance(event, AgentMessageEnd):
+                            last_response = event.message
                             events.append({"kind": "assistant", **asdict(event.message)})
-                            if event.message.stop_reason in {"error", "aborted", "length"}:
-                                raise RuntimeError(f"assistant response ended with {event.message.stop_reason}")
+                        elif isinstance(event, ProviderRetry):
+                            events.append({"kind": "provider_retry", "message": event.message})
                         elif isinstance(event, AgentToolStart):
                             events.append(
                                 {
@@ -213,6 +215,8 @@ async def run_case(
                             entry["after"] = schedule
                         elif isinstance(event, AgentAnalysis):
                             analysis = event
+                if last_response is not None and last_response.stop_reason in {"error", "aborted", "length"}:
+                    raise RuntimeError(f"assistant response ended with {last_response.stop_reason}")
                 completed = retained_entries([UserMessage(step.value), *agent.state.messages])
                 history.extend(completed)
                 cap_transcript(history, settings.max_history_messages, settings.max_history_chars, len(completed))
@@ -319,6 +323,7 @@ TRANSCRIPTS = ROOT.parents[2] / "artifacts" / "ai-testcases"
 
 async def _run(cases: list[Case], diagnostic_attempts: int, jobs: int | None = None, repeat: int = 1) -> bool:
     settings = AiSettings.from_env()
+    settings = replace(settings, provider_max_attempts=min(settings.provider_max_attempts, 5))
     provider = OpenAiCompatibleProvider(settings)
     factory = create_sandbox_factory(settings)
     judge_model = os.getenv("AI_TEST_JUDGE_MODEL", "").strip() or settings.provider_model

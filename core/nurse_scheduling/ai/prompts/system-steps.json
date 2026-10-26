@@ -11,12 +11,12 @@
     "evidence": [
       {
         "case": "basics/01_already-in-ai-chat.yaml",
-        "input_sha256": "acbcc50710b86a3808d5c3dfb7bd5cae6fc178d9341caa9324aa2101d0c52fa3",
+        "input_sha256": "6be52cabb77db9d73d0438670608ee8734901d6e7ca21ce830bd51f6376fb2ab",
         "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Regraded the preserved previous-versus-revised identity conversations with the current assertions and judge. Previous replies direct the user elsewhere in two of three conversations. Revised replies identify the current chat in all three. These are fresh grading results on existing agent conversations, not new agent generations."
+        "note": "Regraded six preserved conversations with the current assertions and judge after fixing provider retries. With the identity clause, all three replies acknowledge the current chat. No new agent rollouts or judge request errors."
       }
     ],
     "comparison_mode": "ablation",
@@ -38,7 +38,7 @@
     "evidence": [
       {
         "case": "basics/01_lang_traditional_chinese.yaml",
-        "input_sha256": "71b22d2b8ed3514bb07ab4bbc6e327f905eeb72e15763b97d79a75d228a1bd30",
+        "input_sha256": "e6566356b1456fbfe9efee274b207a8e3917797e638a9638b9a6132d20e4f8e4",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -46,18 +46,18 @@
         "controls": [
           {
             "case": "basics/01_lang_simplified_chinese.yaml",
-            "input_sha256": "bb01e02792ec33419d16fa3ba6d80af4ef8db7aef73fbef6b61168f14f830bce",
+            "input_sha256": "64c2a8f8562e545a50cfbbc37909975f97ff19a6efb6aa6f5db3963ab4109152",
             "before": "3/3",
             "after": "3/3"
           },
           {
             "case": "basics/01_lang_english.yaml",
-            "input_sha256": "199564b1901912fec73dbb721fd60420742e65fd2b03d8411409c19d6fa11d96",
+            "input_sha256": "438fd9cd9af1f5fb9f9b194868a963382a752c0a72070f2fe7d093211248a857",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Regraded the preserved paired conversations with the current assertions and judge. The previous policy follows Simplified input. The revised policy defaults Chinese replies to Traditional unless another script is requested. English and explicit Simplified controls remain correct. Two preliminary Traditional regrading batches each had one empty judge response and remain excluded. A final paired Traditional recheck completed without judge errors. Counts use that clean recheck and the unchanged control batch."
+        "note": "Regraded six preserved conversations per case with the current assertions and judge after fixing provider retries. Traditional Chinese improves from 0/3 to 3/3. English and explicit Simplified Chinese controls remain 3/3 in both versions. No new agent rollouts or judge request errors."
       }
     ],
     "comparison_mode": "ablation"

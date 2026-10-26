@@ -44,6 +44,10 @@ def check_event(step: Step, events: list[dict], cursor: int) -> int:
     """Consume the next matching event, allowing unrelated events in between."""
     for index in range(cursor, len(events)):
         event = events[index]
+        if event["kind"] == "assistant" and (
+            event.get("stop_reason") in {"error", "aborted", "length"} or event.get("context_omitted")
+        ):
+            continue
         if step.kind == "tool":
             matched = (
                 event["kind"] == "tool" and event["name"] == step.value and _partial(step.options, event["arguments"])

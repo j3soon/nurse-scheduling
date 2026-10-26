@@ -19,14 +19,11 @@
 
 # This test is mostly AI generated.
 
-import asyncio
 import json
 from contextlib import aclosing
 from typing import Any
 
-from nurse_scheduling.ai.provider import ReasoningDelta, ResponseEnd, TextDelta, ToolCallRequest
-
-TIMEOUT_SECONDS = 120
+from nurse_scheduling.ai.provider import ProviderRetry, ReasoningDelta, ResponseEnd, TextDelta, ToolCallRequest
 
 SYSTEM = """You judge an AI assistant's replies against a human-written rubric.
 Assess the replies to the last user turn, using earlier turns only as context.
@@ -56,6 +53,10 @@ async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *,
                 }
                 for event in turn["events"]
                 if event["kind"] in {"assistant", "tool", "tool_result"}
+                and not (
+                    event["kind"] == "assistant"
+                    and (event.get("stop_reason") in {"error", "aborted", "length"} or event.get("context_omitted"))
+                )
             ],
         }
         for turn in trace
@@ -74,22 +75,29 @@ async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *,
         "passed": False,
         "reason": "",
         "error": None,
+        "retries": [],
     }
     ended = False
     try:
-        async with asyncio.timeout(TIMEOUT_SECONDS):
-            async with aclosing(provider.stream_events(messages)) as events:
-                async for event in events:
-                    if isinstance(event, TextDelta):
-                        record["response"] += event.text
-                    elif isinstance(event, ReasoningDelta):
-                        record["reasoning"] += event.text
-                    elif isinstance(event, ToolCallRequest):
-                        raise TypeError("judge requested a tool")
-                    elif isinstance(event, ResponseEnd):
-                        if event.finish_reason not in {None, "stop", "end"}:
-                            raise ValueError(f"judge response ended with {event.finish_reason}")
-                        ended = True
+        # The production provider owns request timeouts and bounded retries.
+        async with aclosing(provider.stream_events(messages)) as events:
+            async for event in events:
+                if isinstance(event, ProviderRetry):
+                    record["retries"].append(
+                        {"message": event.message, "response": record["response"], "reasoning": record["reasoning"]}
+                    )
+                    record["response"] = record["reasoning"] = ""
+                    ended = False
+                elif isinstance(event, TextDelta):
+                    record["response"] += event.text
+                elif isinstance(event, ReasoningDelta):
+                    record["reasoning"] += event.text
+                elif isinstance(event, ToolCallRequest):
+                    raise TypeError("judge requested a tool")
+                elif isinstance(event, ResponseEnd):
+                    if event.finish_reason not in {None, "stop", "end"}:
+                        raise ValueError(f"judge response ended with {event.finish_reason}")
+                    ended = True
         if not ended:
             raise ValueError("judge response did not complete")
         verdict = json.loads(record["response"])

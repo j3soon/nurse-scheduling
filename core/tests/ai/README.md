@@ -53,8 +53,17 @@ even if the second passes. It also judges the same conversation twice more
 when an assertion's first judge verdict fails or errors. Judge retries do not
 rerun the agent or include earlier verdicts in the judge request. Every verdict
 is saved with its attempt number. Any failure keeps the command failed, even
-when later judges pass. CI uses this option. Production
-provider retries still apply.
+when later judges pass. CI uses this option.
+
+Agent and judge requests use production provider retries, with at most five total
+HTTP attempts per request. Transient HTTP errors such as 429 and 5xx, network
+failures, and request timeouts use exponential backoff with jitter and bounded
+`Retry-After` delays. The provider allows up to two minutes for recovery after
+the first error. Authentication and quota errors fail immediately. A recovered
+request does not fail the testcase. Retries keep the same request and do not
+repeat completed tools or conversation turns. Interrupted drafts and retry
+notices remain in transcripts but do not count toward assertions or judging.
+
 Missing configuration fails the run. Failures include a case, turn, step, and
 observed evidence. Failed attempts print the full conversation to stdout,
 including reasoning, tool calls and results, and before/after schedule YAML.
@@ -119,8 +128,9 @@ input. Explicit language or script requests override this default. The Simplifie
 Chinese case checks that exception. The judge always runs for an
 executed turn, even when phrase matching or agent execution fails. It reads the
 conversation in a separate request with no tools and returns a boolean verdict
-and explanation. Invalid verdicts, request errors, and its two-minute timeout
-fail the attempt. All saved transcripts include the rubric, model, full judge
+and explanation. Invalid verdicts and exhausted provider retries fail the attempt.
+The judge uses the provider's configured request timeout and retry budget.
+All saved transcripts include the rubric, model, full judge
 request, raw response, verdict, and explanation. The judge uses the configured
 provider and model by default. `AI_TEST_JUDGE_MODEL` selects another model on
 the same provider. Other cases have no judge unless their assertion requests one.

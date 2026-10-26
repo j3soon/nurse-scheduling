@@ -66,6 +66,13 @@ def _transcript(record: dict) -> str:
                 lines.extend(["Rubric:\n", _block(event["rubric"]), "Explanation:\n", _block(event["reason"])])
                 if event["error"]:
                     lines.append(_block(event["error"]))
+                if event.get("retries"):
+                    lines.extend(
+                        [
+                            "Provider retries:\n",
+                            _block(json.dumps(event["retries"], ensure_ascii=False, indent=2), "json"),
+                        ]
+                    )
                 lines.extend(["Raw response:\n", _block(event["response"], "json")])
                 lines.extend(
                     ["Judge request:\n", _block(json.dumps(event["messages"], ensure_ascii=False, indent=2), "json")]

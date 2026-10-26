@@ -21,12 +21,21 @@
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime
 
+import httpx
 import pytest
 
 from nurse_scheduling.ai.config import AiSettings
-from nurse_scheduling.ai.provider import ResponseEnd, TextDelta, ToolCallRequest
+from nurse_scheduling.ai.provider import (
+    OpenAiCompatibleProvider,
+    ProviderRetry,
+    ReasoningDelta,
+    ResponseEnd,
+    TextDelta,
+    ToolCallRequest,
+)
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.transcript import ToolCall
@@ -887,25 +896,170 @@ def test_judge_still_runs_when_agent_execution_fails(capsys):
     assert len(judge.requests) == 1
 
 
-def test_judge_timeout_keeps_partial_reply_and_closes_stream(monkeypatch):
-    from tests.ai import judge
+def test_judge_cancellation_closes_stream():
+    async def run():
+        started = asyncio.Event()
 
-    monkeypatch.setattr(judge, "TIMEOUT_SECONDS", 0.01)
+        class Provider:
+            closed = False
 
-    class Provider:
-        closed = False
+            async def stream_events(self, messages):
+                try:
+                    yield TextDelta("partial verdict")
+                    started.set()
+                    await asyncio.Event().wait()
+                finally:
+                    self.closed = True
 
-        async def stream_events(self, messages):
-            try:
-                yield TextDelta("partial verdict")
-                await asyncio.Event().wait()
-            finally:
-                self.closed = True
+        provider = Provider()
+        task = asyncio.create_task(evaluate(provider, "Current chat.", [], "test"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert provider.closed
 
-    provider = Provider()
-    result = asyncio.run(evaluate(provider, "Current chat.", [], "test"))
-    assert result["passed"] is False and result["error"].startswith("TimeoutError:")
-    assert result["response"] == "partial verdict" and provider.closed
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("target", ["agent", "judge"])
+@pytest.mark.parametrize(
+    ("failure", "recover"),
+    [(failure, recover) for failure in [429, 503, "timeout", "connection"] for recover in [True, False]]
+    + [(401, False), ("quota", False)],
+    ids=lambda value: str(value),
+)
+def test_provider_retries_resume_requests_without_replaying_tools(tmp_path, monkeypatch, target, failure, recover):
+    from nurse_scheduling.ai import provider as provider_module
+    from tests.ai.judge import SYSTEM
+
+    case = definition(
+        tmp_path,
+        "steps: [{user: Read the schedule.}, {tool: read}, "
+        "{assistant: {contains_any: [Completed], judge: Reply in English.}}]",
+    )
+    requests = {"agent": [], "judge": []}
+    delays = []
+
+    def response(delta, finish):
+        chunks = [{"choices": [{"delta": delta, "finish_reason": finish}]}]
+        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    def handle(request):
+        payload = json.loads(request.content)
+        role = "judge" if payload["messages"][0]["content"] == SYSTEM else "agent"
+        requests[role].append(payload)
+        if role == "agent" and len(requests[role]) == 1:
+            call = {
+                "index": 0,
+                "id": "read-once",
+                "function": {"name": "read", "arguments": json.dumps({"path": WORKSPACE_SCHEDULE})},
+            }
+            return response({"tool_calls": [call]}, "tool_calls")
+        attempt = len(requests[role]) - (role == "agent")
+        if role == target and (not recover or attempt < 5):
+            if failure == "timeout":
+                raise httpx.ReadTimeout("request stalled", request=request)
+            if failure == "connection":
+                raise httpx.ConnectError("connection lost", request=request)
+            if failure == "quota":
+                return httpx.Response(429, text='{"code":"insufficient_quota"}')
+            return httpx.Response(failure, text="provider unavailable")
+        text = '{"passed": true, "reason": "Completed in English."}' if role == "judge" else "Completed."
+        return response({"content": text}, "stop")
+
+    async def pause(delay):
+        delays.append(delay)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        provider_module.httpx,
+        "AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs),
+    )
+    monkeypatch.setattr(provider_module.asyncio, "sleep", pause)
+    monkeypatch.setattr("nurse_scheduling.ai.provider_retry.random.random", lambda: 0)
+    provider = OpenAiCompatibleProvider(settings())
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
+    transcript = tmp_path / "conversation.md"
+    transient = failure not in {401, "quota"}
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), transcript_path=transcript)) is (
+        recover and transient
+    )
+    attempts = requests[target][1:] if target == "agent" else requests[target]
+    assert len(attempts) == (5 if transient else 1)
+    assert all(payload == attempts[0] for payload in attempts)
+    assert delays == ([2, 4, 8, 8] if transient else [])
+    saved = transcript.read_text(encoding="utf-8")
+    assert saved.count("### Tool\n") == 1
+    if transient:
+        assert "attempt 5 of 5" in saved
+
+
+def test_judge_retries_discard_partial_verdict_and_keep_evidence():
+    reply = '{"passed": true, "reason": "Complete verdict."}'
+    provider = ScriptedProvider(
+        [
+            [
+                TextDelta("partial JSON"),
+                ReasoningDelta("interrupted"),
+                ProviderRetry("Retrying"),
+                TextDelta(reply),
+                ReasoningDelta("completed"),
+                ResponseEnd("stop"),
+            ]
+        ]
+    )
+    result = asyncio.run(evaluate(provider, "Complete reply.", [], "test"))
+    assert result["passed"] is True and result["error"] is None
+    assert result["response"] == reply and result["reasoning"] == "completed"
+    assert result["retries"] == [{"message": "Retrying", "response": "partial JSON", "reasoning": "interrupted"}]
+
+
+@pytest.mark.parametrize("reply", ["Completed.", "Unrelated."], ids=["matches", "does-not-match"])
+def test_interrupted_agent_drafts_are_saved_but_never_asserted_or_judged(tmp_path, reply):
+    case = definition(
+        tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [Completed], judge: Reply in English.}}]"
+    )
+    provider = ScriptedProvider(
+        [
+            [
+                TextDelta("Completed in an interrupted draft."),
+                ProviderRetry("Retrying"),
+                TextDelta(reply),
+                ResponseEnd("stop"),
+            ]
+        ]
+    )
+    judge = ScriptedProvider([[TextDelta('{"passed": true, "reason": "English."}'), ResponseEnd("stop")]])
+    transcript = tmp_path / "conversation.md"
+    assert asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    ) is (reply == "Completed.")
+    assert "interrupted draft" in transcript.read_text(encoding="utf-8")
+    assert "interrupted draft" not in json.dumps(judge.requests)
+
+
+@pytest.mark.parametrize("max_attempts", [2, 5, 8])
+def test_cli_caps_provider_attempts_for_agent_and_judge(tmp_path, monkeypatch, max_attempts):
+    from tests.ai import runner
+
+    configured = []
+    provider = ScriptedProvider([[TextDelta("Hello."), ResponseEnd("stop")]])
+
+    def create_provider(settings, **kwargs):
+        configured.append(settings.provider_max_attempts)
+        return provider
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+    monkeypatch.setattr(AiSettings, "from_env", lambda: replace(settings(), provider_max_attempts=max_attempts))
+    monkeypatch.setattr(runner, "OpenAiCompatibleProvider", create_provider)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda *_: FakeSandboxFactory())
+    monkeypatch.setattr(runner, "TRANSCRIPTS", tmp_path / "transcripts")
+    assert main(["run", str(case.path)]) == 0
+    assert configured == [min(max_attempts, 5)] * 2
 
 
 def test_cli_run_saves_successful_conversation_by_default(tmp_path, monkeypatch, capsys):
