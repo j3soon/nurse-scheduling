@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import DEFAULT_MAX_HISTORY_CHARS, AiSettings
+from .config import MAX_DOWNLOAD_BYTES, MAX_HISTORY_CHARS, AiSettings
 from .provider import (
     ChatMessage,
     TokenUsage,
@@ -172,8 +172,8 @@ def build_provider_messages(
     question: str,
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
-    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS,
-    max_download_bytes: int = 50_000_000,
+    max_history_chars: int = MAX_HISTORY_CHARS,
+    max_download_bytes: int = MAX_DOWNLOAD_BYTES,
 ) -> list[ChatMessage]:
     """Build a provider prompt whose system message and history stay unchanged between requests.
 
@@ -268,6 +268,8 @@ def prepare_provider_request(
             continue
         flush_images()
         if isinstance(entry, AssistantMessage):
+            if entry.context_omitted:
+                continue
             if entry.tool_calls:
                 # A truncated response is an audit record of raw model output. The
                 # provider sees placeholder arguments so it can safely reissue calls.
@@ -287,6 +289,8 @@ def prepare_provider_request(
                     message.update(entry.native_reasoning)
             if entry.usage is not None:
                 message["_usage"] = entry.usage
+            if entry.reasoning:
+                message["_reasoning_text"] = entry.reasoning
             request.append(message)
         elif isinstance(entry, UserMessage | AppEventEntry):
             request.append(ChatMessage(role="user", content=entry.text))
@@ -301,9 +305,12 @@ def prepare_provider_request(
 SUMMARY_PREFIX = "[Conversation summary]"
 
 
-def summary_message(summary: str) -> ChatMessage:
+def summary_message(summary: str, *, read_files: Sequence[str] = (), modified_files: Sequence[str] = ()) -> ChatMessage:
     """Represent a compaction summary as conversation data."""
-    return ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}", _compaction_summary=True)
+    message = ChatMessage(role="user", content=f"{SUMMARY_PREFIX}\n{summary}", _compaction_summary=True)
+    if read_files or modified_files:
+        message["_compaction_files"] = {"read": list(read_files), "modified": list(modified_files)}
+    return message
 
 
 def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> list[tuple[bool, ChatMessage]]:
@@ -331,7 +338,11 @@ def apply_compaction(messages: Sequence[ChatMessage], entry: CompactionEntry) ->
         else:
             conversation.append((False, message))
     tail = [message for _, message in _recent_messages(conversation, entry.keep_messages)]
-    return [*system, summary_message(entry.summary), *tail]
+    return [
+        *system,
+        summary_message(entry.summary, read_files=entry.read_files, modified_files=entry.modified_files),
+        *tail,
+    ]
 
 
 def retained_entries(entries: Sequence[AgentMessage]) -> list[AgentMessage]:
@@ -354,6 +365,8 @@ def compatible_provider_messages(
         message.pop("_usage", None)
         message.pop("_tool_image", None)
         message.pop("_compaction_summary", None)
+        message.pop("_reasoning_text", None)
+        message.pop("_compaction_files", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:
             for name in (
@@ -435,10 +448,14 @@ def _projected_messages(
             if entry.valid:
                 close_answer()
                 tail = _recent_messages(projected, entry.keep_messages)
-                message = summary_message(entry.summary)
+                message = summary_message(
+                    entry.summary, read_files=entry.read_files, modified_files=entry.modified_files
+                )
                 if with_sources:
                     message["_source_index"] = index
                 projected[:] = [(True, message), *tail]
+        elif isinstance(entry, AssistantMessage) and entry.context_omitted:
+            close_answer()
         elif isinstance(entry, UserMessage | AppEventEntry):
             close_answer()
             message = ChatMessage(role="user", content=entry.text)
@@ -468,12 +485,14 @@ class HistoryContext:
     source_indices: list[int]
 
 
-def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT_MAX_HISTORY_CHARS) -> HistoryContext:
+def project_history(transcript: Sequence[AgentMessage], max_chars: int | None = MAX_HISTORY_CHARS) -> HistoryContext:
     """Project the newest transcript messages that fit the prompt budget, oldest first.
 
     Retention bounds how much of a conversation the session holds, not how much a
     provider can accept. A long session would otherwise grow every later prompt past
     the model context window and fail the request outright.
+    Manual compaction passes no character budget so it can reduce oversized history
+    without omitting older exchanges from the summary input.
     """
     projected = _projected_messages(transcript, with_sources=True)
     kept: list[tuple[bool, ChatMessage, int, int]] = []
@@ -481,9 +500,10 @@ def project_history(transcript: Sequence[AgentMessage], max_chars: int = DEFAULT
     for prompt, message in reversed(projected):
         source_index = message.pop("_source_index")
         size = len(json.dumps(message, ensure_ascii=False))
-        remaining -= size
-        if remaining < 0:
-            break
+        if remaining is not None:
+            remaining -= size
+            if remaining < 0:
+                break
         kept.append((prompt, message, size, source_index))
     # Start at a prompt or app event. An answer whose prompt did not fit refers to
     # an exchange the model can no longer see.
@@ -531,7 +551,11 @@ def interrupted_entries(entries: Sequence[AgentMessage], reason) -> list[AgentMe
                 ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values()
             )
             pending.clear()
-            if isinstance(entry, AssistantMessage) and entry.stop_reason not in {"aborted", "error"}:
+            if (
+                isinstance(entry, AssistantMessage)
+                and not entry.context_omitted
+                and entry.stop_reason not in {"aborted", "error"}
+            ):
                 pending.update((call.id, call) for call in entry.tool_calls)
         result.append(replace(entry, valid=False) if isinstance(entry, CompactionEntry) else entry)
     result.extend(ToolResultMessage(call.id, call.name, INTERRUPTED_TOOL_RESULT, False) for call in pending.values())

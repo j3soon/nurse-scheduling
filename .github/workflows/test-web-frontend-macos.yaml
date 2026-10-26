@@ -49,6 +49,13 @@ jobs:
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: core/requirements.txt
+      - name: Install core runtime for the export comparison
+        run: python -m pip install -r core/requirements.txt
       - name: Install Playwright Chromium
         working-directory: web-frontend
         run: bunx playwright install chromium
@@ -76,4 +83,5 @@ jobs:
           path: |
             web-frontend/playwright-report
             web-frontend/test-results
+            artifacts/chat-rendering
           if-no-files-found: ignore

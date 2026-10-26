@@ -160,3 +160,35 @@ def test_usage_updates_are_coalesced_with_their_text_batch():
         assert published[-1]["type"] == "done"
 
     asyncio.run(scenario())
+
+
+def test_length_recovery_labels_the_omitted_attempt_in_saved_chats():
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd, AgentText
+    from nurse_scheduling.ai.chat_projection import project_saved_chat
+    from nurse_scheduling.ai.transcript import AssistantMessage
+
+    from .test_ai_chat_export import saved_case
+
+    output = RunOutput()
+    events = (
+        AgentText("Partial plan"),
+        AgentMessageEnd(AssistantMessage("Partial plan", "length", context_omitted=True)),
+        AgentText("Recovered answer"),
+        AgentMessageEnd(AssistantMessage("Recovered answer")),
+    )
+    published = [event for event in map(output.consume, events) if event is not None]
+    assert published[1] == {"type": "response_end", "stop_reason": "length", "context_omitted": True}
+
+    snapshot = saved_case("saved-rich")
+    run = snapshot["runs"][0]
+    snapshot["runs"] = [run]
+    snapshot["events"] = [
+        {"type": event.pop("type"), "data": {"run_id": run["id"], **event}, "occurred_at": snapshot["snapshot_at"]}
+        for event in [*published, {"type": "done"}]
+    ]
+    messages, _ = project_saved_chat(snapshot)
+    responses = [entry for entry in messages[-1]["activity"] if entry["kind"] == "response"]
+    assert [(entry["text"], entry.get("context")) for entry in responses] == [
+        ("Partial plan", "omitted"),
+        ("Recovered answer", None),
+    ]

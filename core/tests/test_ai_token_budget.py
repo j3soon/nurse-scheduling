@@ -69,36 +69,44 @@ def test_budget_counts_tool_definitions_and_leaves_context_room(monkeypatch):
     assert 1 < payload["max_tokens"] < 6000
 
 
-@pytest.mark.parametrize("window", [1024, 4096, 8192, 32000])
-def test_short_requests_leave_response_room_in_small_context_windows(monkeypatch, window):
+@pytest.mark.parametrize("window", [6000, 8192, 32000])
+def test_short_requests_leave_the_fixed_pi_context_margin(monkeypatch, window):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = window
     messages = [{"role": "user", "content": "Hello"}]
     asyncio.run(_collect(provider.stream_events(messages)))
     payload = json.loads(requests[0].content)
-    assert payload["max_tokens"] == window - estimate_context_tokens(messages, []) - min(4096, window // 2)
+    assert payload["max_tokens"] == window - estimate_context_tokens(messages, []) - 4096
     assert payload["max_tokens"] > 1
 
 
+@pytest.mark.parametrize("window", [1024, 4096])
+def test_small_windows_use_pi_minimum_output_budget(monkeypatch, window):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = window
+    asyncio.run(_collect(provider.stream_events([{"role": "user", "content": "Hello"}])))
+    assert json.loads(requests[0].content)["max_tokens"] == 1
+
+
 @pytest.mark.parametrize("window", [4096, 8192])
-def test_small_context_compaction_leaves_response_room(monkeypatch, window):
+def test_provider_decides_whether_an_estimated_oversized_summary_fits(monkeypatch, window):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = window
     messages = [
         {"role": "system", "content": "Scheduling assistant"},
-        {"role": "user", "content": "Keep nights. " + "x" * 20000},
-        {"role": "assistant", "content": "Earlier answer " + "y" * (window * 2)},
+        {"role": "user", "content": "Earlier task " + "x" * 100000},
+        {"role": "assistant", "content": "Recent work " + "y" * 100000},
         {"role": "user", "content": "Inspect P1"},
     ]
+    before = json.dumps(messages)
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
     assert any(isinstance(event, AgentCompaction) for event in events)
-    for request in requests:
-        payload = json.loads(request.content)
-        assert estimate_context_tokens(payload["messages"], []) + payload["max_tokens"] <= window - min(
-            4096, window // 2
-        )
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["max_tokens"] == 1
+    assert json.dumps(messages) == before
 
 
 def test_actual_context_usage_limits_output_when_wire_estimate_is_smaller(monkeypatch):
@@ -108,6 +116,35 @@ def test_actual_context_usage_limits_output_when_wire_estimate_is_smaller(monkey
     bound = provider.with_output_limit(None, context_used_tokens=7000)
     asyncio.run(_collect(bound.stream_events([{"role": "user", "content": "Hello"}])))
     assert json.loads(requests[0].content)["max_tokens"] == 4904
+
+
+def test_actual_context_usage_replaces_a_larger_wire_estimate(monkeypatch):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = 16000
+    bound = provider.with_output_limit(None, context_used_tokens=7000)
+    asyncio.run(_collect(bound.stream_events([{"role": "user", "content": "x" * 100000}])))
+    assert json.loads(requests[0].content)["max_tokens"] == 4904
+
+
+def test_provider_rejection_of_oversized_summary_preserves_context(monkeypatch):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(400, json={"error": {"code": "context_length_exceeded"}})
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider.context_tokens = 16000
+    messages = [
+        {"role": "user", "content": "Earlier task " + "x" * 200000},
+        {"role": "assistant", "content": "Recent answer " + "y" * 80000},
+    ]
+    original = json.dumps(messages)
+    events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert len(requests) == 1
+    assert not any(isinstance(event, AgentCompaction) for event in events)
+    assert json.dumps(messages) == original
 
 
 def test_numeric_reasoning_budget_leaves_answer_room_and_preserves_parameters(monkeypatch):
@@ -122,14 +159,13 @@ def test_numeric_reasoning_budget_leaves_answer_room_and_preserves_parameters(mo
 
 
 @pytest.mark.parametrize("remaining", [0, -100])
-def test_exhausted_context_fails_before_sending_a_completion(monkeypatch, remaining):
+def test_exhausted_context_uses_pi_minimum_output_budget(monkeypatch, remaining):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = 16000
     bound = provider.with_output_limit(None, context_used_tokens=16000 - 4096 - remaining)
-    with pytest.raises(ProviderContextOverflowError, match="no room for a response"):
-        asyncio.run(_collect(bound.stream_events([])))
-    assert requests == []
+    asyncio.run(_collect(bound.stream_events([])))
+    assert json.loads(requests[0].content)["max_tokens"] == 1
 
 
 @pytest.mark.parametrize("limit_source", ["max_tokens", "max_completion_tokens", "model"])
@@ -188,7 +224,8 @@ def test_context_limited_reasoning_can_compact_or_keep_the_minimum_budget(monkey
         assert payload["thinking"]["budget_tokens"] == 1024
 
 
-def test_summary_has_its_own_provider_output_budget(monkeypatch):
+@pytest.mark.parametrize("initial_prompt,expected", [("context-compaction", 10000), ("compaction-turn-prefix", 8192)])
+def test_summary_has_pi_history_and_turn_prefix_output_budgets(monkeypatch, initial_prompt, expected):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = 16000
@@ -196,41 +233,33 @@ def test_summary_has_its_own_provider_output_budget(monkeypatch):
     compactor = ContextCompactor(provider)
     entries = load_system_prompt_entries(COMPACTION_MANIFEST)
     prompts = dict(zip((e["id"] for e in entries), load_system_prompt_sections(entries), strict=True))
-    asyncio.run(_collect(compactor._summarize([{"role": "user", "content": "Keep P1 nights"}], prompts, 20000, 10000)))
-    assert json.loads(requests[0].content)["max_tokens"] == 3200
+    asyncio.run(
+        _collect(
+            compactor._summarize(
+                [{"role": "user", "content": "Keep P1 nights"}], prompts, initial_prompt=initial_prompt
+            )
+        )
+    )
+    assert json.loads(requests[0].content)["max_tokens"] == expected
     assert provider._max_output_tokens is None
 
 
 @pytest.mark.parametrize("previous_chars", [0, 14000])
-def test_chunked_compaction_leaves_output_room_after_the_context_safety_margin(monkeypatch, previous_chars):
+def test_large_summary_input_is_not_silently_chunked(monkeypatch, previous_chars):
     requests = []
-    summary = "Goal: preserve nights. " + "s" * 7900
-
-    def handle(request):
-        payload = json.loads(request.content)
-        requests.append(payload)
-        required = (len(summary) + 3) // 4
-        finish = "stop" if payload["max_tokens"] >= required else "length"
-        return httpx.Response(
-            200,
-            text=_sse_body({"choices": [{"delta": {"content": summary}, "finish_reason": finish}]}),
-        )
-
-    provider = _transport_provider(monkeypatch, handle)
+    provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = 16000
     messages = [
         {"role": "system", "content": "Scheduling assistant"},
         *([summary_message("s" * previous_chars)] if previous_chars else []),
-        {"role": "user", "content": "Keep nights. " + "x" * 100000},
-        {"role": "assistant", "content": "Earlier answer " + "y" * 24000},
+        {"role": "user", "content": "Earlier task " + "x" * 100000},
+        {"role": "assistant", "content": "Recent work " + "y" * 100000},
         {"role": "user", "content": "Inspect P1"},
     ]
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
     assert any(isinstance(event, AgentCompaction) for event in events)
-    assert len(requests) > 1
-    for payload in requests:
-        assert payload["max_tokens"] == 3200
-        assert estimate_context_tokens(payload["messages"], []) + payload["max_tokens"] <= 16000 - 4096
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["max_tokens"] == 1
 
 
 @pytest.mark.parametrize(
@@ -278,12 +307,13 @@ def test_gateway_metadata_drives_output_limit_and_parameter(monkeypatch, support
     assert ({"max_tokens", "max_completion_tokens"} - {parameter}).isdisjoint(payload)
 
 
-def test_unknown_limits_preserve_provider_defaults(monkeypatch):
+def test_unknown_limits_refuse_generation(monkeypatch):
     requests = []
     provider = wire_provider(monkeypatch, requests)
-    asyncio.run(_collect(provider.stream_events([])))
-    payload = json.loads(requests[0].content)
-    assert "max_tokens" not in payload and "max_completion_tokens" not in payload
+    provider.context_tokens = None
+    with pytest.raises(ProviderError, match="no valid context window"):
+        asyncio.run(_collect(provider.stream_events([])))
+    assert requests == []
 
 
 @pytest.mark.parametrize("field", ["max_input_tokens", "max_model_len", "context_length", "max_tokens"])
@@ -298,6 +328,8 @@ def test_direct_discovery_keeps_input_room_when_output_can_fill_the_window(monke
 
     provider = _transport_provider(monkeypatch, handle)
     provider._include_usage = True
+    provider.context_tokens = None
+    provider._context_tokens_loaded = False
     messages = [{"role": "user", "content": "Inspect the current schedule."}]
     asyncio.run(_collect(provider.stream_events(messages)))
     assert provider.context_tokens == 32000

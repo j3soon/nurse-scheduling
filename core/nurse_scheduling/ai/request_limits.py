@@ -32,6 +32,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..server.request_limits import MULTIPART_OVERHEAD_BYTES
 from .config import AiSettings
 
+JSON_MAX_BYTES = 64 * 1024 * 1024
 BODY_TOO_LARGE_MESSAGE = "AI request body is too large."
 
 
@@ -41,11 +42,7 @@ class AiRequestLimitsMiddleware:
     def __init__(self, app: ASGIApp, *, settings: AiSettings, require_auth: Callable[[Request], None]) -> None:
         self._app = app
         self._require_auth = require_auth
-        # JSON can escape one UTF-8 schedule byte as six ASCII bytes, or one
-        # message character as a twelve-byte surrogate pair. Leave room for metadata.
-        self._json_max_bytes = (
-            6 * settings.max_schedule_bytes + 12 * settings.max_message_chars + MULTIPART_OVERHEAD_BYTES
-        )
+        self._json_max_bytes = JSON_MAX_BYTES
         # The browser uploads one file per request.
         self._upload_max_bytes = settings.max_attachment_bytes + MULTIPART_OVERHEAD_BYTES
 

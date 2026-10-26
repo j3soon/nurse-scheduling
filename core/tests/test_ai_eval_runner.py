@@ -1213,7 +1213,15 @@ def test_provider_timeout_case_checks_the_retried_request_and_complete_answer(mo
 
     def handle(request):
         if request.method == "GET":
-            return httpx.Response(200, json={"data": []})
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "eval-model", "context_length": 262144},
+                        {"id": "test-model", "context_length": 262144},
+                    ]
+                },
+            )
         requests.append(json.loads(request.content))
         return httpx.Response(200, text=_sse_body(_delta_chunk({"content": continuation})))
 

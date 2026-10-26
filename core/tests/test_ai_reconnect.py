@@ -97,7 +97,7 @@ def test_message_receipts_refuse_new_execution_when_the_text_budget_is_full():
         from .test_ai_history import serving
 
         provider = basic.FakeProvider([["A1"], ["A2"]])
-        settings = basic.make_settings(max_session_bytes=155, max_history_messages=2)
+        settings = basic.make_settings(max_session_bytes=155, max_history_messages=1000)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
             session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]

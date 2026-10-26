@@ -243,7 +243,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if state == "completed"
                 else "Summarization stopped. The original context was kept."
                 if state == "interrupted"
-                else "Compaction would not reduce context. The original context was kept."
+                else "Nothing to compact. The original context was kept."
                 if state == "skipped"
                 else "Summarization failed. The original context was kept.",
             }
@@ -348,14 +348,20 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 activity.append({"kind": entry_kind, "text": text})
             turn["has_output"] |= bool(text)
         elif kind == "response_end":
+            # A new model response follows the latest tool result, which ends its tool round.
+            if tools := [entry for entry in activity if entry["kind"] == "tool" and entry.get("state") != "preparing"]:
+                tools[-1]["endsRound"] = True
             for entry in activity:
                 if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
-                    entry["context"] = "omitted" if data["stop_reason"] in {"error", "aborted"} else "complete"
+                    omitted = data["stop_reason"] in {"error", "aborted"} or data.get("context_omitted")
+                    entry["context"] = "omitted" if omitted else "complete"
             if data.get("context_note"):
                 _invalidate_summaries(turn)
                 activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})
             if data["stop_reason"] == "length":
                 assistant["truncated"] = True
+        elif kind == "truncated":
+            assistant["truncated"] = True
         elif kind in {"tool_start", "tool"}:
             entry = {
                 "kind": "tool",
@@ -410,7 +416,12 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             activity.append({"kind": "notice", "text": data["message"]})
         elif kind == "schedule_applied":
             activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]
-            activity.append({"kind": "schedule-applied", "text": data["diff"], "runId": run_id})
+            entry = {"kind": "schedule-applied", "text": data["diff"], "runId": run_id}
+            if data.get("replaced_queued_schedule"):
+                entry["notice"] = (
+                    "The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule."
+                )
+            activity.append(entry)
         elif kind in {"done", "stopped", "error", "stale"}:
             if kind != "done":
                 _invalidate_summaries(turn)

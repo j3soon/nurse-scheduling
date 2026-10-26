@@ -52,6 +52,7 @@ nav = [
         { "Backend Server" = "developer-guide/backend-server.md" },
         { "Backend Containers and Networks" = "developer-guide/containers.md" },
         { "AI Assistant Backend" = "developer-guide/ai-assistant.md" },
+        { "AI Runtime Limits" = "developer-guide/ai-limits.md" },
         { "Solvers" = "developer-guide/solvers.md" },
         { "Design Rationale" = "developer-guide/design-rationale.md" },
       ] },

@@ -65,6 +65,10 @@ it('decodes response boundaries and rejects malformed omission notes', () => {
   ]);
   expect(() => decodeEvent('response_end', { stop_reason: 'other' })).toThrow('invalid response boundary');
   expect(() => decodeEvent('response_end', { stop_reason: 'stop', context_note: 3 })).toThrow('invalid response boundary');
+  expect(decodeEvent('response_end', { stop_reason: 'length', context_omitted: true })).toEqual([
+    { type: 'response_end', stopReason: 'length', contextOmitted: true },
+  ]);
+  expect(() => decodeEvent('response_end', { stop_reason: 'length', context_omitted: false })).toThrow('invalid response boundary');
 });
 
 it('decodes compaction status and rejects malformed estimates', () => {
@@ -231,6 +235,7 @@ describe('AI client', () => {
   it('reads the advertised AI authentication requirement', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       auth: { required: true, scheme: 'Bearer' },
+
       file_attachments: {
         enabled: true,
         max_files: 1,

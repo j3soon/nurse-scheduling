@@ -68,6 +68,7 @@ class AssistantMessage:
     native_reasoning: dict[str, Any] = field(default_factory=dict)
     provider: ProviderIdentity | None = None
     usage: dict[str, int | None] | None = None
+    context_omitted: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,8 @@ class CompactionEntry:
     keep_messages: int
     tokens_before: int
     valid: bool = True
+    read_files: tuple[str, ...] = ()
+    modified_files: tuple[str, ...] = ()
 
 
 AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry | CompactionEntry
@@ -134,6 +137,12 @@ def entry_record(entry: AgentMessage) -> tuple[str, dict[str, Any]]:
     payload = asdict(replace(entry, image=None) if isinstance(entry, ToolResultMessage) else entry)
     if isinstance(entry, ToolResultMessage):
         payload.pop("image")
+    if isinstance(entry, AssistantMessage) and not entry.context_omitted:
+        payload.pop("context_omitted")
+    if isinstance(entry, CompactionEntry):
+        for field in ("read_files", "modified_files"):
+            if not payload[field]:
+                payload.pop(field)
     return ENTRY_TYPES[type(entry)], payload
 
 
@@ -148,9 +157,16 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
             payload.get("native_reasoning", {}),
             ProviderIdentity(**payload["provider"]) if payload.get("provider") else None,
             payload.get("usage"),
+            payload.get("context_omitted", False),
         )
     if entry_type == "proposal_decision":
         return AppEventEntry(_LEGACY_DECISION_EVENTS[payload["decision"]])
+    if entry_type == "compaction":
+        payload = {
+            **payload,
+            "read_files": tuple(payload.get("read_files", ())),
+            "modified_files": tuple(payload.get("modified_files", ())),
+        }
     types = {
         "user": UserMessage,
         "tool_result": ToolResultMessage,

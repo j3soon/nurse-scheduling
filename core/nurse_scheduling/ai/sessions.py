@@ -33,11 +33,11 @@ from fastapi import HTTPException
 
 from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_revision
 from .config import AiSettings
-from .context import compaction_safe_drop_end, history_chars, project_history, projected_history, upload_event
+from .context import history_chars, project_history, projected_history, upload_event
 from .history import EntryRow
 from .lifecycle import RunSnapshot
 from .session_event_stream import SessionEventStream
-from .transcript import AgentMessage, entry_text, starts_exchange
+from .transcript import AgentMessage, entry_text
 from .workspace import SandboxAttachment, attachment_path
 
 __all__ = ["SessionStore", "schedule_revision"]
@@ -188,8 +188,8 @@ class SessionStore:
         """Refuse content that would push retained session state past the configured budget.
 
         Checked where a client pushes new text or files. A completed run is never refused here,
-        because its answer has already streamed to the user; `_trim_history_to_budget`
-        reclaims the space instead.
+        because its answer has already streamed to the user. Further input is
+        refused while the service exceeds its retained-byte budget.
 
         Raises:
             HTTPException: With status 429 when the budget is exhausted.
@@ -203,59 +203,17 @@ class SessionStore:
         if self._retained_bytes + additional_bytes > self._settings.max_session_bytes:
             raise HTTPException(status_code=429, detail=SESSION_RETENTION_LIMIT_MESSAGE)
 
-    def _trim_history_to_budget(self, session: AgentSession, protected_messages: int) -> None:
-        """Drop this session's oldest context until retained text fits the budget.
-
-        A run adds output without another capacity check. Initially small sessions
-        would otherwise accumulate answers far past the budget and
-        hold them until they expire. Older context is the part a later run needs least,
-        and the message cap already truncates from the same end.
-
-        Keep the entire completed run so its answer still has the question and any
-        steering that produced it. Retained text therefore settles at the budget plus
-        one run per session.
-        """
-        while self._retained_bytes > self._settings.max_session_bytes:
-            removed = self._drop_oldest_exchange(session, protected_messages)
-            if not removed:
-                break
-            self._charge(session, -sum(_text_bytes(entry_text(entry)) for entry in removed))
-
-    @staticmethod
-    def _drop_oldest_exchange(session: AgentSession, keep_entries: int = 0) -> list[AgentMessage]:
-        """Drop the oldest prompt or app event with everything that answers or decides on it.
-
-        The newest exchange and the newest `keep_entries` entries always stay, and the
-        transcript still starts at a prompt or app event, so no answer or decision is left orphaned.
-        """
-        transcript = session.transcript
-        end = next((index for index in range(1, len(transcript)) if starts_exchange(transcript[index])), None)
-        end = compaction_safe_drop_end(transcript, end)
-        if end is None or len(transcript) - end < keep_entries:
-            return []
-        removed = transcript[:end]
-        del transcript[:end]
-        session.dropped_entries += end
-        session.dropped_history_messages += len(projected_history(removed))
-        return removed
-
-    def _cap_history(self, session: AgentSession) -> None:
-        """Limit retained history to the configured message count, one whole exchange at a time.
-
-        Past the prompt history budget, drop the oldest exchanges until half the budget remains.
-        Cutting in large steps keeps the prompt prefix unchanged for many runs, so the provider
-        can reuse its cache. Cutting one exchange per run would change the prefix every time.
-        """
-        limit = max(2, self._settings.max_history_messages)
-        while len(projected_history(session.transcript)) > limit and self._drop_oldest_exchange(session):
-            pass
-        max_chars = self._settings.max_history_chars
-        if history_chars(projected_history(session.transcript)) > max_chars:
-            # The newest exchange always stays. Per-request projection covers what still overflows.
-            while history_chars(projected_history(session.transcript)) > max_chars // 2 and self._drop_oldest_exchange(
-                session
-            ):
-                pass
+    def _check_history_capacity(self, session: AgentSession) -> None:
+        """Reject new work at the defensive bound without dropping saved exchanges."""
+        messages = projected_history(session.transcript)
+        if (
+            len(messages) >= self._settings.max_history_messages
+            or history_chars(messages) >= self._settings.max_history_chars
+        ):
+            raise HTTPException(
+                429,
+                "This chat reached its defensive history limit. Compact the context, or export it and start a new chat.",
+            )
 
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
@@ -324,8 +282,7 @@ class SessionStore:
         self._require_capacity(_session_bytes(session))
         self._sessions[session_id] = session
         # The restart ended the run that held a queued schedule update.
-        if session.apply_queued_schedule():
-            self._cap_history(session)
+        session.apply_queued_schedule()
         self._recount(session)
         return session
 
@@ -334,19 +291,30 @@ class SessionStore:
         if session_id in self._sessions:
             self._retire(session_id)
 
-    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot:
+    def begin(
+        self, session_id: str, owner_token: str | None, *, run_id: str | None = None, compact_only: bool = False
+    ) -> RunSnapshot:
         """Reserve the current conversation version for one foreground run."""
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
+        if not compact_only:
+            self._check_history_capacity(session)
+        self._require_capacity(0)
         return self._reserve(session, run_id=run_id)
 
     def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None:
+        """Reserve an optimizer review. Its preparation checks capacity, so a refusal is a visible failed review."""
         self._prune_expired()
         session = self._sessions.get(session_id)
         if session is None or session.active:
             return None
         return self._reserve(session, run_id=run_id)
+
+    def check_capacity(self, session: AgentSession) -> None:
+        """Refuse an optimizer review at the same bounds as a new question."""
+        self._check_history_capacity(session)
+        self._require_capacity(0)
 
     def _reserve(self, session: AgentSession, *, run_id: str | None) -> RunSnapshot:
         snapshot = session.begin_run(run_id=run_id)
@@ -383,15 +351,16 @@ class SessionStore:
             return RunCompletion(False, False)
         completion = session.finish_run(snapshot, entries, schedule_yaml)
         if completion.run_saved:
-            self._cap_history(session)
             projected_bytes = self._retained_bytes - self._session_bytes[session.id] + _session_bytes(session)
             if projected_bytes > self._settings.max_session_bytes:
                 session.analysis = None
         self._recount(session)
         if not completion.run_saved:
             return completion
-        self._trim_history_to_budget(session, min(len(entries), len(session.transcript)))
-        history = project_history(session.transcript, self._settings.max_history_chars)
+        history = project_history(
+            session.transcript,
+            max(self._settings.max_history_chars, history_chars(projected_history(session.transcript))),
+        )
         return replace(
             completion,
             # Count retained-history and prompt-budget omissions together, in messages.
@@ -448,7 +417,6 @@ class SessionStore:
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
         session.update_schedule(schedule_yaml, compared)
-        self._cap_history(session)
         self._recount(session)
 
     def retain_uploads(
@@ -502,7 +470,6 @@ class SessionStore:
         self._require_capacity(sum(len(upload.data or b"") for upload in retained) + _text_bytes(event))
         session.add_uploads(retained, event)
         session.archive_bytes += new_bytes
-        self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         return tuple(retained)
@@ -538,7 +505,6 @@ class SessionStore:
             }
         elif not self._settings.history_postgres_url:
             session.pending_upload_removals.clear()
-        self._cap_history(session)
         self._recount(session)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
@@ -629,7 +595,6 @@ class SessionStore:
         """Apply a schedule update that arrived during the session's finished run."""
         session = self._sessions.get(session_id)
         if session is not None and session.apply_queued_schedule():
-            self._cap_history(session)
             self._recount(session)
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:

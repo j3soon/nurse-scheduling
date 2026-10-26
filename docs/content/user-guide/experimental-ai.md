@@ -157,7 +157,7 @@ same current LLM context. X includes system instructions, tools, conversation
 messages, and streamed output. N is the model context limit reported by the
 provider. The percentage is X divided by N.
 
-The app labels estimates with **(est.)** while streaming and after summarization.
+The app prefixes estimates with **~** while streaming and after summarization.
 Provider-reported token usage replaces estimates when available. If the model
 limit is unknown, the token count remains visible and the percentage shows
 **unavailable**. Hover over either value for its description. **Est. cost** is
@@ -166,8 +166,8 @@ separate from context usage.
 Select **Compact context** below the message box while the assistant is idle to
 summarize older conversation context. This action does not generate an answer.
 The chat records **You requested context compaction**. **No compaction needed**
-means that the conversation is short enough to keep unchanged, or a generated
-summary would not make the context smaller. Recent messages stay unchanged after
+means that no older conversation context remains to summarize, or the context
+was just summarized. Recent messages stay unchanged after
 the summary when older conversation context is compacted.
 Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
 context.

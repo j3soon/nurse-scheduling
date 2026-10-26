@@ -239,6 +239,7 @@ interface SsePayload {
   replay_arguments?: unknown;
   stop_reason?: unknown;
   context_note?: unknown;
+  context_omitted?: unknown;
   reason?: unknown;
   tokens_before?: unknown;
   success?: unknown;
@@ -636,11 +637,12 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'reasoning', text: payload.text });
   } else if (eventType === 'response_end') {
     if (!['stop', 'tool_use', 'length', 'error', 'aborted'].includes(payload.stop_reason as string)
-      || (payload.context_note !== undefined && typeof payload.context_note !== 'string')) {
+      || (payload.context_note !== undefined && typeof payload.context_note !== 'string')
+      || (payload.context_omitted !== undefined && payload.context_omitted !== true)) {
       throw new Error('The AI backend returned an invalid response boundary.');
     }
     emit({ type: 'response_end', stopReason: payload.stop_reason as 'stop' | 'tool_use' | 'length' | 'error' | 'aborted',
-      contextNote: payload.context_note as string | undefined });
+      contextNote: payload.context_note as string | undefined, contextOmitted: payload.context_omitted as true | undefined });
   } else if (eventType === 'truncated') {
     emit({ type: 'truncated' });
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {

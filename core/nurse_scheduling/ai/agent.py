@@ -34,6 +34,7 @@ from .agent_types import (
     ToolBatchObserver,
     ToolBatchScope,
 )
+from .config import MAX_HISTORY_CHARS
 from .provider import ChatMessage, ToolCapableChatProvider
 from .transcript import AgentMessage, AssistantMessage, CompactionEntry
 
@@ -116,8 +117,10 @@ class Agent:
         take_steering: SteeringSource | None = None,
         max_tool_rounds: int | None = None,
         max_tool_calls: int | None = None,
-        history_limit: int = 200_000,
-        message_limit: int = 1000,
+        max_parallel_tools: int = 16,
+        history_limit: int = MAX_HISTORY_CHARS,
+        reserve_tokens: int = 16384,
+        keep_recent_tokens: int = 20000,
     ) -> AsyncIterator[AgentEvent]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
@@ -132,9 +135,11 @@ class Agent:
             take_steering=take_steering,
             max_tool_rounds=max_tool_rounds,
             max_tool_calls=max_tool_calls,
+            max_parallel_tools=max_parallel_tools,
             run_messages=self.state.messages,
             history_limit=history_limit,
-            message_limit=message_limit,
+            reserve_tokens=reserve_tokens,
+            keep_recent_tokens=keep_recent_tokens,
         )
         try:
             async with aclosing(events):

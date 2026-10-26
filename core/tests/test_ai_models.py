@@ -46,7 +46,7 @@ def gateway(monkeypatch, *, parameters=None, options=None, metadata_status=200, 
         key = request.headers.get("Authorization")
         if request.url.path.endswith("/models"):
             ids = ["fast", "deep"] if key != "Bearer key-b" else ["fast"]
-            return httpx.Response(200, json={"data": [{"id": name} for name in ids]})
+            return httpx.Response(200, json={"data": [{"id": name, "context_length": 32000} for name in ids]})
         if request.url.path.endswith("/model/info"):
             if metadata_status != 200:
                 return httpx.Response(metadata_status)
@@ -205,7 +205,7 @@ def test_slow_discovery_only_blocks_the_same_credential(monkeypatch, cached):
             if key == "Bearer key-a":
                 started.set()
                 await release.wait()
-            return httpx.Response(200, json={"data": [{"id": "fast"}]})
+            return httpx.Response(200, json={"data": [{"id": "fast", "context_length": 32000}]})
 
         monkeypatch.setattr(
             httpx, "AsyncClient", lambda **kwargs: client_type(**{**kwargs, "transport": httpx.MockTransport(respond)})
@@ -647,7 +647,7 @@ def test_discovery_logs_gateway_failures_without_exposing_details(monkeypatch, c
     def respond(request):
         if request.url.path.endswith(path):
             raise httpx.ReadTimeout("private-gateway-detail")
-        return httpx.Response(200, json={"data": [{"id": "fast"}]})
+        return httpx.Response(200, json={"data": [{"id": "fast", "context_length": 32000}]})
 
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda **kwargs: client_type(**{**kwargs, "transport": httpx.MockTransport(respond)})
@@ -723,3 +723,23 @@ def test_nested_qwen_default_and_explicit_choice_reach_provider(monkeypatch):
         {"enable_thinking": True, "reasoning_effort": "low"},
         {"enable_thinking": False},
     ]
+
+
+@pytest.mark.parametrize("window", [None, 0, -1, True])
+def test_model_without_valid_context_window_is_rejected_before_generation(monkeypatch, window):
+    original = httpx.AsyncClient
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": window}]})
+        return httpx.Response(404)
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(respond)})
+    )
+    with pytest.raises(HTTPException, match="no valid context window") as error:
+        asyncio.run(ModelCatalog(basic.make_settings()).resolve(None, ModelSelection(model="test-model")))
+    assert error.value.status_code == 422
+    assert all(request.method == "GET" for request in requests)

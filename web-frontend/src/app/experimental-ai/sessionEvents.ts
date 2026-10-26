@@ -42,7 +42,8 @@ export type SessionEvent = (
   | { type: 'cost_summary'; conversation: CostSummary; run?: CostSummary }
   | { type: 'delta' | 'reasoning'; text: string }
   | { type: 'truncated' }
-  | { type: 'response_end'; stopReason: 'stop' | 'tool_use' | 'length' | 'error' | 'aborted'; contextNote?: string }
+  | { type: 'response_end'; stopReason: 'stop' | 'tool_use' | 'length' | 'error' | 'aborted'; contextNote?: string;
+    contextOmitted?: true }
   | { type: 'compaction_start'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number }
   | { type: 'compaction_end'; reason: 'threshold' | 'overflow' | 'manual'; tokensBefore: number; success: boolean; aborted: boolean; skipped?: boolean; estimatedTokensAfter?: number; summary?: string; keepMessages?: number; characters?: number; step?: number }
   | { type: 'generation_progress'; kind: 'compaction' | 'tool_calls'; characters: number; step: number }

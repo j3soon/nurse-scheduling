@@ -213,6 +213,7 @@ async function mockAiBackend(
         body: JSON.stringify({
           model_selection: modelCatalog !== undefined,
           ...(requiredAuthToken ? { auth: { required: true, scheme: 'bearer' } } : {}),
+
           file_attachments: {
             enabled: true,
             max_files: 8,
@@ -360,6 +361,28 @@ async function mockAiBackend(
   });
 }
 
+test('submits a long question without a character limit', async ({ page }) => {
+  const captured = await mockAiBackend(page, ['Long question received.']);
+  await page.route('**/capabilities', route => route.fulfill({ json: {
+    app_version: 'v0.4.3',
+    auth: { required: false, scheme: 'bearer' },
+    session_retention_seconds: 2592000,
+    file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
+  } }));
+  await page.goto('/experimental-ai');
+  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  await expect(input).toBeEnabled();
+  await expect(input).not.toHaveAttribute('maxlength');
+  const question = 'x'.repeat(300000);
+  await input.fill(question);
+  await expect(input).toHaveValue(question);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Long question received.', { exact: true })).toBeVisible();
+  expect(JSON.parse(captured.messageBody).message).toBe(question);
+  await page.getByText('Long question received.', { exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '../artifacts/ai-long-message.png' });
+});
+
 test('converts rich clipboard text to Markdown before sending', async ({ page, context }) => {
   const captured = await mockAiBackend(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -496,6 +519,64 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await expect(page).toHaveURL(/\/dates$/);
 });
 
+for (const submission of ['Enter', 'button'] as const) {
+  test(`keeps draft focus after ${submission} submission while session models reload`, async ({ page }) => {
+    const captured = await mockAiBackend(page, ['Answer in progress.'], false, undefined, [], true, [], {
+      default_model: 'fast', models: [
+        { id: 'fast', name: 'Fast', context_tokens: 32000, default_reasoning: 'default',
+          reasoning_options: [{ id: 'default', label: 'Default' }, { id: 'high', label: 'High' }] },
+      ],
+    });
+    captured.holdNextTurn();
+    let allowSelectionRead!: () => void;
+    const selectionReady = new Promise<void>(resolve => { allowSelectionRead = resolve; });
+    let selectionReadStarted = false;
+    await page.route('**/sessions/browser-session/model-selection', async route => {
+      selectionReadStarted = true;
+      await selectionReady;
+      await route.fallback();
+    });
+    await page.goto('/experimental-ai');
+    await expect(page.getByLabel('AI model')).toBeEnabled();
+    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await input.fill('First question');
+    if (submission === 'Enter') await page.keyboard.press('Enter');
+    else await page.getByRole('button', { name: 'Send', exact: true }).click();
+
+    await expect.poll(() => selectionReadStarted).toBe(true);
+    await expect(page.getByText('Answer in progress.', { exact: true })).toBeVisible();
+    await expect(input).toBeEnabled();
+    await expect(input).toBeFocused();
+    await page.keyboard.type('Next question');
+    await expect(input).toHaveValue('Next question');
+    const queue = page.getByRole('button', { name: 'Queue message', exact: true });
+    await expect(queue).toBeDisabled();
+    await page.keyboard.press('Enter');
+    await expect(input).toHaveValue('Next question');
+    await expect(page.getByText('Queued for steering', { exact: true })).toBeHidden();
+
+    allowSelectionRead();
+    await expect(queue).toBeEnabled();
+    if (submission === 'Enter') await page.keyboard.press('Enter');
+    else await queue.click();
+    await expect(input).toHaveValue('');
+    await expect(input).toBeFocused();
+    await expect(page.getByText('Queued for steering', { exact: true })).toBeVisible();
+    await page.keyboard.type('Draft for later');
+    await expect(input).toHaveValue('Draft for later');
+    await page.screenshot({ path: `../artifacts/chat-draft-focus-${submission}.png` });
+
+    // Completion and automatic queue dispatch must leave another control focused.
+    const reasoning = page.getByLabel('Reasoning', { exact: true });
+    await reasoning.focus();
+    captured.finishTurn();
+    await expect.poll(() => captured.messageBodies.length).toBe(2);
+    await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
+    await expect(reasoning).toBeFocused();
+    await expect(input).toHaveValue('Draft for later');
+  });
+}
+
 test('updates Context, Tokens, and estimated cost while the answer is still streaming', async ({ page }) => {
   const captured = await mockAiBackend(page, []);
   captured.holdNextTurn();
@@ -513,9 +594,10 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
     captured.publishEvent('cost_summary', {
       run_id: 'answer-1', conversation: { usd: index ? '0.02' : '0.01', calls: 1, pending: 1, unavailable: 0, version: 100 + index },
     });
-    await expect(footer).toContainText(index ? 'Context 3.8% used (est.)' : 'Context 3.1% used (est.)');
-    await expect(footer).toContainText(index ? 'Tokens (est.): 1,200 / 32,000' : 'Tokens (est.): 1,000 / 32,000');
+    await expect(footer).toContainText(index ? 'Context ~3.8% used' : 'Context ~3.1% used');
+    await expect(footer).toContainText(index ? 'Tokens: ~1,200 / 32,000' : 'Tokens: ~1,000 / 32,000');
     await expect(footer).toContainText(index ? 'Est. cost: $0.0200' : 'Est. cost: $0.0100');
+    await expect(footer).not.toContainText('1 pending');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   }
   await expect(page.getByText('First part. Second part.', { exact: true })).toBeVisible();
@@ -534,7 +616,13 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.getByRole('button', { name: 'Compact context', exact: true }).click();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
-  await expect(input).toBeDisabled();
+  await expect(input).toBeEnabled();
+  await input.fill('Draft during compaction');
+  await expect(page.getByRole('button', { name: 'Queue message', exact: true })).toBeDisabled();
+  await input.press('Enter');
+  await expect(input).toHaveValue('Draft during compaction');
+  expect(captured.messageBodies).toHaveLength(1);
+  await input.fill('');
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   captured.publishEvent('generation_progress', { run_id: 'manual-summary', kind: 'compaction', characters: 1200, step: 1 });
@@ -553,8 +641,8 @@ test('compacts context on demand and restores the summary after reload', async (
   captured.publishEvent('cost_summary', { run_id: 'manual-summary', conversation: costSummary, run: costSummary });
   captured.publishEvent('done', { run_id: 'manual-summary' });
   await expect(input).toBeEnabled();
-  await expect(page.getByText('Context 3.1% used (est.)')).toBeVisible();
-  await expect(page.getByText('Tokens (est.): 1,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context ~3.1% used')).toBeVisible();
+  await expect(page.getByText('Tokens: ~1,000 / 32,000')).toBeVisible();
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
   const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
@@ -596,8 +684,8 @@ test('shows character progress while preparing tools and preserves completed cou
   await expect(page.getByText('Preparing tool calls · 2 characters', { exact: true })).toBeHidden();
   captured.publishEvent('tool', { ...tool, result: '新😀', ok: true });
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByLabel('Tool arguments').getByText('17 characters', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool arguments').getByRole('heading', { name: 'Command · 17 characters' })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'Done😀' });
   await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
   captured.finishTurn();
@@ -607,7 +695,7 @@ test('shows character progress while preparing tools and preserves completed cou
   await expect(page.getByText('Reasoning · 2 characters', { exact: true })).toBeVisible();
   await expect(page.getByText('5 characters', { exact: true })).toBeVisible();
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByLabel('Tool result').getByText('2 characters', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Tool result').getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
 });
 
 test('can stop manual compaction while admission waits before run_start', async ({ page }) => {
@@ -633,7 +721,7 @@ test('can stop manual compaction while admission waits before run_start', async 
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Compact context', exact: true }).click();
-  await expect(input).toBeDisabled();
+  await expect(input).toBeEnabled();
   await expect.poll(() => compactionMessageId).toBeTruthy();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-admission-stop.png', fullPage: true });
@@ -662,7 +750,7 @@ test('keeps short context with a manual request notice instead of a compaction f
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeEnabled();
   await expect(page.getByText('Summarization failed', { exact: true })).toBeHidden();
   await page.getByText('No compaction needed', { exact: true }).click();
-  await expect(page.getByText('Compaction would not reduce context. The original context was kept.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Nothing to compact. The original context was kept.', { exact: true })).toBeVisible();
   expect(captured.messageBodies).toHaveLength(1);
   await page.screenshot({ path: '../artifacts/manual-compaction-skipped.png', fullPage: true });
   await page.reload();
@@ -731,7 +819,7 @@ test('shows compaction status and the reduced context before an answer', async (
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
-  await expect(page.getByText('Context 78.1% used (est.)')).toBeVisible();
+  await expect(page.getByText('Context ~78.1% used')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-running.png', fullPage: true });
   captured.publishEvent('compaction_end', {
     run_id: 'answer-1', reason: 'threshold', tokens_before: 25000,
@@ -742,8 +830,8 @@ test('shows compaction status and the reduced context before an answer', async (
     run_id: 'answer-1', used_chars: 400, max_chars: 2000, used_tokens: 4000, max_tokens: 32000,
   });
   await expect(page.getByText('Conversation summarized', { exact: true })).toBeVisible();
-  await expect(page.getByText('Context 12.5% used (est.)')).toBeVisible();
-  await expect(page.getByText('Tokens (est.): 4,000 / 32,000')).toBeVisible();
+  await expect(page.getByText('Context ~12.5% used')).toBeVisible();
+  await expect(page.getByText('Tokens: ~4,000 / 32,000')).toBeVisible();
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
@@ -800,7 +888,13 @@ test('authenticates AI session requests with an explicitly remembered token', as
 
   await page.goto('/experimental-ai');
   const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
-  await expect(composer).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Enter token for AI assistant' })).toBeVisible();
+  await expect(composer).toBeEnabled();
+  await composer.fill('Draft before authentication');
+  await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  await composer.press('Enter');
+  await expect(composer).toHaveValue('Draft before authentication');
+  expect(captured.messageBodies).toHaveLength(0);
   await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
   await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
   await page.getByRole('checkbox', { name: /remember on this device/i }).check();

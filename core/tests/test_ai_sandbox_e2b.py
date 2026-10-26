@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
@@ -36,15 +37,23 @@ from nurse_scheduling.ai.agent_types import AgentToolOutcome, AgentToolUse
 from nurse_scheduling.ai.provider import ChatMessage, TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFileNotFoundError, SandboxFileSizeError, managed_sandbox
 from nurse_scheduling.ai.sandbox import e2b as e2b_module
+from nurse_scheduling.ai.sandbox.command_output import OutputAccumulator
 from nurse_scheduling.ai.sandbox.e2b import (
     COMMAND_TIMEOUT_EXIT_CODE,
     E2BSandboxBackend,
     E2BSandboxFactory,
     E2BSandboxState,
 )
-from nurse_scheduling.ai.sandbox.e2b_commands import isolated_command
+from nurse_scheduling.ai.sandbox_tools import SandboxPiTools
 
 from .ai_test_helper import bind_agent_tools
+
+
+def output_report(text):
+    output = OutputAccumulator()
+    output.append(text.encode())
+    output.finish()
+    return json.dumps(output.report())
 
 
 class FakeFileStream:
@@ -72,7 +81,7 @@ class FakeE2BSandbox:
             stdout="ok\n",
             stderr="",
             exit_code=0,
-            wait=AsyncMock(return_value=SimpleNamespace(stdout="ok\n", stderr="", exit_code=0)),
+            wait=AsyncMock(return_value=SimpleNamespace(stdout=output_report("ok\n"), stderr="", exit_code=0)),
             disconnect=AsyncMock(),
         )
         self.commands = SimpleNamespace(run=AsyncMock(return_value=self.handle))
@@ -223,7 +232,7 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     sandbox.files.write.assert_awaited_once_with("/workspace/schedule.yaml", b"schedule", user="user")
     sandbox.files.read.assert_awaited_once_with("/workspace/schedule.yaml", format="stream", user="user")
     sandbox.commands.run.assert_awaited_once_with(
-        isolated_command("rg P1 schedule.yaml"),
+        ANY,
         background=True,
         user="user",
         cwd="/workspace",
@@ -232,8 +241,31 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
         on_stdout=ANY,
         on_stderr=ANY,
     )
+    launched = sandbox.commands.run.call_args.args[0]
+    assert "rg P1 schedule.yaml" in launched
+    assert launched.startswith("exec python3 -c ")
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
+
+
+def test_bash_uses_the_existing_sandbox_log_and_complete_line_counts():
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        content = "".join(f"line-{line}\n" for line in range(30000))
+        sandbox.handle.wait.return_value.stdout = output_report(content)
+        backend = make_backend(sandbox)
+        try:
+            outcome = await SandboxPiTools(backend, 3).execute("bash", '{"command":"generate a long log"}')
+            assert outcome.ok
+            assert "Showing lines 28001-30000 of 30000" in outcome.text
+            assert "Full output: /tmp/pi-bash-" in outcome.text
+            assert "line-29999" in outcome.text
+            sandbox.files.write.assert_not_awaited()
+            assert sandbox.commands.run.await_count == 1
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
 
 
 def test_backend_uploads_a_file_set_in_one_request_holding_one_mutation_slot():
@@ -795,7 +827,7 @@ def test_nonzero_command_exit_is_returned_instead_of_raised(exit_code):
     async def exercise():
         sandbox = FakeE2BSandbox()
         sandbox.handle.wait.side_effect = CommandExitException(
-            stderr="not found\n", stdout="", exit_code=exit_code, error=None
+            stderr="", stdout=output_report("not found\n"), exit_code=exit_code, error=None
         )
         e2b_backend = make_backend(sandbox)
         result = await e2b_backend.run("rg missing schedule.yaml")
@@ -804,7 +836,8 @@ def test_nonzero_command_exit_is_returned_instead_of_raised(exit_code):
 
     result = asyncio.run(exercise())
     assert result.exit_code == exit_code
-    assert result.stderr == "not found\n"
+    assert result.stdout == "not found\n"
+    assert result.stderr == ""
     assert not result.timed_out
 
 
@@ -827,6 +860,8 @@ def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(clea
         async def run(_command, **kwargs):
             if kwargs.get("background"):
                 return sandbox.handle
+            if "snapshot" in _command:
+                return SimpleNamespace(stdout=output_report("partial\nnote\n"), stderr="", exit_code=0)
             if cleanup == "hung":
                 await asyncio.Event().wait()
             if cleanup == "error":
@@ -848,7 +883,7 @@ def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(clea
             sandbox.kill.assert_awaited_once_with(request_timeout=0.05)
         sandbox.handle.disconnect.assert_awaited_once()
         sandbox.handle.wait.assert_awaited_once()
-        assert sandbox.commands.run.await_count == 2  # Original launch plus cleanup, never replay.
+        assert sandbox.commands.run.await_count == (3 if cleanup == "ok" else 2)  # Snapshot only after cleanup.
         await backend.close()
         await asyncio.sleep(0)
         assert not loop_errors, f"Unexpected event-loop exception: {loop_errors}"
@@ -858,8 +893,95 @@ def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(clea
     assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
     assert result.timed_out
     assert result.sandbox_terminated == (cleanup != "ok")
-    assert result.stdout == "partial\n"
-    assert result.stderr == "note\n"
+    assert result.stdout == ("partial\nnote\n" if cleanup == "ok" else "")
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("report", ["", output_report("partial\n")])
+def test_failed_timeout_snapshot_is_an_infrastructure_error(report):
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        stopped = asyncio.Event()
+
+        async def wait():
+            await stopped.wait()
+            raise CommandExitException(stdout="", stderr="", exit_code=137, error=None)
+
+        sandbox.handle.wait.side_effect = wait
+
+        async def run(command, **kwargs):
+            if kwargs.get("background"):
+                return sandbox.handle
+            if "snapshot" in command:
+                raise CommandExitException(stdout=report, stderr="snapshot failed", exit_code=13, error=None)
+            stopped.set()
+            return SimpleNamespace(exit_code=0)
+
+        sandbox.commands.run.side_effect = run
+        backend = make_backend(sandbox)
+        try:
+            with pytest.raises(SandboxError, match="could not recover sandbox command output"):
+                await backend.run("sleep 99", timeout_seconds=0.001)
+            assert backend.lifecycle_state is E2BSandboxState.CLOSED
+            sandbox.kill.assert_awaited_once()
+        finally:
+            await backend.close()
+
+    asyncio.run(exercise())
+
+
+def timed_out_command_sandbox(snapshot_error: Exception) -> FakeE2BSandbox:
+    """Stop a timed-out command group, then fail its output snapshot."""
+    sandbox = FakeE2BSandbox()
+    stopped = asyncio.Event()
+
+    async def wait():
+        await stopped.wait()
+        raise CommandExitException(stdout="", stderr="", exit_code=137, error=None)
+
+    sandbox.handle.wait.side_effect = wait
+
+    async def run(command, **kwargs):
+        if kwargs.get("background"):
+            return sandbox.handle
+        if "snapshot" in command:
+            raise snapshot_error
+        stopped.set()
+        return SimpleNamespace(exit_code=0)
+
+    sandbox.commands.run.side_effect = run
+    return sandbox
+
+
+def test_slow_timeout_snapshot_keeps_the_stopped_sandbox():
+    async def exercise():
+        sandbox = timed_out_command_sandbox(TimeoutError())
+        backend = make_backend(sandbox)
+        try:
+            result = await backend.run("yes", timeout_seconds=0.001)
+            assert await backend.read_file("/workspace/schedule.yaml") == b"schedule"
+            sandbox.kill.assert_not_awaited()
+        finally:
+            await backend.close()
+        return result
+
+    result = asyncio.run(exercise())
+    assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
+    assert result.timed_out
+    assert not result.sandbox_terminated
+    assert result.stdout == ""
+
+
+def test_sdk_timeout_during_the_output_snapshot_discards_the_sandbox():
+    async def exercise():
+        # The SDK raises this type when the sandbox times out during a request.
+        sandbox = timed_out_command_sandbox(TimeoutException("This error is likely due to sandbox timeout."))
+        backend = make_backend(sandbox)
+        with pytest.raises(SandboxError, match="could not run"):
+            await backend.run("yes", timeout_seconds=0.001)
+        sandbox.kill.assert_awaited_once()
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("exception", [TimeoutException, TimeoutError])
@@ -1088,8 +1210,8 @@ def test_default_file_read_stops_before_buffering_the_rest(monkeypatch):
 
 
 @pytest.mark.parametrize("cleanup", [False, True])
-def test_command_output_limit_stops_sdk_streams(monkeypatch, cleanup):
-    monkeypatch.setattr(e2b_module, "MAX_COMMAND_OUTPUT_BYTES", 4, raising=False)
+def test_invalid_oversized_command_reports_stop_sdk_streams(monkeypatch, cleanup):
+    monkeypatch.setattr(e2b_module, "MAX_COMMAND_REPORT_BYTES", 4)
 
     async def exercise():
         sandbox = FakeE2BSandbox()
@@ -1103,7 +1225,7 @@ def test_command_output_limit_stops_sdk_streams(monkeypatch, cleanup):
                             event=Oneof(field="data", value=SimpleNamespace(output=Oneof(field=channel, value=chunk)))
                         )
                     )
-                pytest.fail("The SDK kept buffering after the combined UTF-8 byte limit")
+                pytest.fail("The SDK kept buffering after the command report transport limit")
             finally:
                 closed.set()
 
@@ -1129,7 +1251,7 @@ def test_command_output_limit_stops_sdk_streams(monkeypatch, cleanup):
                 assert not await backend._stop_command_group(42)
                 sandbox.kill.assert_not_awaited()
             else:
-                with pytest.raises(SandboxError, match="output.*limit"):
+                with pytest.raises(SandboxError, match="report.*limit"):
                     await backend.run("generate output")
                 sandbox.kill.assert_awaited_once()
             assert closed.is_set()

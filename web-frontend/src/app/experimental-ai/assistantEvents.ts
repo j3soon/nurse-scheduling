@@ -104,12 +104,15 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'response_end': {
-      const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
-      const ended = activity.map(entry => (
+      const context = event.stopReason === 'error' || event.stopReason === 'aborted' || event.contextOmitted
+        ? 'omitted' : 'complete';
+      // A new model response follows the latest tool result, which ends its tool round.
+      const roundEnd = activity.findLastIndex(entry => entry.kind === 'tool' && entry.state !== 'preparing');
+      const ended = activity.map((entry, index) => (
         event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
           ? { ...entry, invalidated: true }
           : (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
-          ? { ...entry, context } : entry
+          ? { ...entry, context } : index === roundEnd ? { ...entry, endsRound: true } : entry
       )) as ActivityEntry[];
       if (event.contextNote) {
         ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
@@ -154,7 +157,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
         ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
           ? 'Summarization stopped. The original context was kept.' : event.skipped
-            ? 'Compaction would not reduce context. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+            ? 'Nothing to compact. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
       const progress = index < 0 ? undefined : activity[index] as Extract<ActivityEntry, { kind: 'compaction' }>;
       const characters = event.characters ?? progress?.characters;

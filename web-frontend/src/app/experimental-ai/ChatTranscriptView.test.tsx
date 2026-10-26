@@ -23,7 +23,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { ChatTranscriptView } from './ChatTranscriptView';
-import { failResponse } from './assistantEvents';
+import { failResponse, staleResponse } from './assistantEvents';
 import type { ChatMessage } from './chatTranscript';
 import type { ActivityEntry } from './AssistantActivity';
 
@@ -91,8 +91,92 @@ it('distinguishes model input from app notices with alignment and labels', () =>
   expect(screen.getByText('User · Optimizer').closest('article')).toHaveClass('ml-auto');
   expect(screen.getByText('Optimizer').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Assistant').closest('article')).toHaveClass('mr-auto');
-  expect(screen.getAllByText('Sent to AI.')).toHaveLength(2);
-  expect(screen.getByText('App notice. Not sent to AI.')).toBeVisible();
+  expect(screen.queryByText('Sent to AI.')).not.toBeInTheDocument();
+  expect(screen.getByText('Not sent to AI.')).toBeVisible();
+});
+
+it('marks messages before the retained compaction tail as compacted out of context', () => {
+  renderTranscript([
+    { id: 'system', role: 'system', content: 'Instructions' },
+    { id: 'q1', role: 'user', content: 'First question' },
+    { id: 'a1', role: 'assistant', content: 'First answer', activity: [
+      { kind: 'tool', name: 'read', arguments: '{}', result: 'Read output', ok: true },
+      { kind: 'response', text: 'First answer' },
+    ] },
+    { id: 'q2', role: 'user', content: 'Second question' },
+    { id: 'a2', role: 'assistant', content: 'Second answer', activity: [
+      { kind: 'response', text: 'Second answer' },
+    ] },
+    { id: 'compact', role: 'assistant', content: '', activity: [
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
+        summary: 'Summary text.', keepMessages: 2 },
+    ] },
+  ]);
+  expect(screen.getByText('First question').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('First answer').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Second question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Second answer').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('System').closest('article')).not.toHaveTextContent('Compacted out of context.');
+});
+
+it('keeps the newest messages in order across summaries and replaces the earlier summary', () => {
+  const answer = (id: string, text: string) => (
+    { id, role: 'assistant' as const, content: text, activity: [{ kind: 'response' as const, text }] });
+  const compaction = (id: string, keepMessages: number) => ({ id, role: 'assistant' as const, content: '', activity: [
+    { kind: 'compaction' as const, reason: 'manual' as const, state: 'completed' as const,
+      text: 'The conversation was summarized.', summary: `Summary ${id}.`, keepMessages },
+  ] });
+  renderTranscript([
+    { id: 'q1', role: 'user', content: 'First question' }, answer('a1', 'First answer'),
+    { id: 'q2', role: 'user', content: 'Second question' }, answer('a2', 'Second answer'),
+    compaction('first', 2),
+    { id: 'q3', role: 'user', content: 'Third question' }, answer('a3', 'Third answer'),
+    { id: 'q4', role: 'user', content: 'Fourth question' }, answer('a4', 'Fourth answer'),
+    // The earlier summary is folded into the new one, so only conversation messages count.
+    compaction('second', 5),
+  ]);
+  const status = (text: string) => screen.getByText(text).closest('article');
+  for (const text of ['First question', 'First answer', 'Second question']) {
+    expect(status(text)).toHaveTextContent('Compacted out of context.');
+  }
+  for (const text of ['Second answer', 'Third question', 'Third answer', 'Fourth question', 'Fourth answer']) {
+    expect(status(text)).not.toHaveTextContent('Compacted out of context.');
+  }
+  const summaries = screen.getAllByText('User · Conversation summary').map(label => label.closest('article'));
+  expect(summaries[0]).toHaveTextContent('Compacted out of context.');
+  expect(summaries[1]).not.toHaveTextContent('Compacted out of context.');
+});
+
+it('counts parallel tool calls as one step and ignores uncommitted turns when marking compacted messages', () => {
+  renderTranscript([
+    { id: 'q1', role: 'user', content: 'Compacted question' },
+    { id: 'a1', role: 'assistant', content: 'Compacted answer', activity: [
+      { kind: 'response', text: 'Compacted answer' },
+    ] },
+    { id: 'q2', role: 'user', content: 'Retained question' },
+    { id: 'a2', role: 'assistant', content: 'Retained answer', activity: [
+      { kind: 'reasoning', text: 'Checking both files.' },
+      { kind: 'tool', name: 'read', arguments: '{"path":"a"}', result: 'A', ok: true },
+      { kind: 'tool', name: 'read', arguments: '{"path":"b"}', result: 'B', ok: true },
+      { kind: 'response', text: 'Retained answer' },
+    ] },
+    { id: 'q-stale', role: 'user', content: 'Stale question' },
+    staleResponse({ id: 'a-stale', role: 'assistant', content: '' }, 'This response was not saved.'),
+    { id: 'q-unsent', role: 'user', content: 'Unsent question' },
+    failResponse({ id: 'a-unsent', role: 'assistant', content: '', unsentFiles: ['ward.xlsx'] }, 'Upload failed.'),
+    { id: 'compact', role: 'assistant', content: '', activity: [
+      { kind: 'notice', text: 'You requested context compaction.' },
+      { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
+        summary: 'Summary text.', keepMessages: 5 },
+    ] },
+  ]);
+  expect(screen.getByText('Compacted question').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Compacted answer').closest('article')).toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Retained question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Retained answer').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Stale question').closest('article')).not.toHaveTextContent('Compacted out of context.');
+  expect(screen.getByText('Unsent question').closest('article')).not.toHaveTextContent('Compacted out of context.');
 });
 
 it.each([0, 4])('separates compaction notices, summary, and assistant activity with %s retained messages', async keepMessages => {
@@ -174,6 +258,23 @@ it('keeps failed-summary details and context notices separate from the assistant
   expect(screen.getByText('Discarded conversation summary').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Partial.').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('Failed.').closest('article')).toHaveClass('mr-auto');
+  expect(screen.getByText('[App event] Workspace discarded.').closest('article')).toHaveClass('ml-auto');
+});
+
+it('keeps a failed turn without model text on the assistant bubble before its context notice', () => {
+  const failed = failResponse({
+    id: 'answer',
+    role: 'assistant',
+    content: '',
+    activity: [
+      { kind: 'compaction', reason: 'threshold', state: 'completed', text: 'Summarized.', summary: 'Old summary.', invalidated: true },
+      { kind: 'notice', text: 'Sent in future model context: [App event] Workspace discarded.' },
+    ],
+  }, reason);
+  renderTranscript([failed]);
+  expect(screen.getAllByText(reason)).toHaveLength(1);
+  expect(screen.getByText(reason).closest('article')).toHaveClass('mr-auto');
+  expect(screen.queryByText(`${reason.length} characters`)).not.toBeInTheDocument();
   expect(screen.getByText('[App event] Workspace discarded.').closest('article')).toHaveClass('ml-auto');
 });
 

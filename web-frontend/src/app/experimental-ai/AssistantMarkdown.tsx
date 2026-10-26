@@ -55,8 +55,9 @@ function CodeBlock({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="relative mb-2 max-w-full last:mb-0">
+    <div className="code-container">
       <button
+        data-live-action="copy-code"
         type="button"
         onClick={copy}
         aria-label={copied ? 'Copied' : 'Copy code'}
@@ -67,7 +68,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
       </button>
       <pre
         ref={preRef}
-        className="max-w-full overflow-x-auto rounded-lg bg-gray-900 py-3 pl-3 pr-12 text-sm text-gray-100 [&_code]:bg-transparent [&_code]:p-0"
+        className="code-block"
       >
         {children}
       </pre>
@@ -76,20 +77,6 @@ function CodeBlock({ children }: { children: ReactNode }) {
 }
 
 const components: Components = {
-  h1: ({ children }) => <h1 className="mb-2 mt-4 text-xl font-semibold first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-semibold first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="mb-1.5 mt-3 font-semibold first:mt-0">{children}</h3>,
-  h4: ({ children }) => <h4 className="mb-1 mt-3 font-semibold first:mt-0">{children}</h4>,
-  h5: ({ children }) => <h5 className="mb-1 mt-3 font-semibold first:mt-0">{children}</h5>,
-  h6: ({ children }) => <h6 className="mb-1 mt-3 font-semibold first:mt-0">{children}</h6>,
-  p: ({ children }) => <p className="mb-2 whitespace-pre-wrap last:mb-0">{children}</p>,
-  ul: ({ children }) => <ul className="mb-2 ml-5 list-disc space-y-1 last:mb-0">{children}</ul>,
-  ol: ({ children }) => <ol className="mb-2 ml-5 list-decimal space-y-1 last:mb-0">{children}</ol>,
-  blockquote: ({ children }) => (
-    <blockquote className="mb-2 border-l-4 border-gray-300 pl-3 text-gray-600 last:mb-0">
-      {children}
-    </blockquote>
-  ),
   a: ({ children, href }) => {
     const external = href?.startsWith('http://') || href?.startsWith('https://');
     return (
@@ -97,7 +84,6 @@ const components: Components = {
         href={href}
         target={external ? '_blank' : undefined}
         rel={external ? 'noopener noreferrer' : undefined}
-        className="font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900"
       >
         {children}
       </a>
@@ -105,20 +91,17 @@ const components: Components = {
   },
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ children, className }) => (
-    <code className={`rounded bg-gray-100 px-1 py-0.5 font-mono text-[0.9em] ${className ?? ''}`}>
+    <code className={className}>
       {children}
     </code>
   ),
   table: ({ children }) => (
-    <div className="mb-2 max-w-full overflow-x-auto last:mb-0">
-      <table className="w-full border-collapse text-left text-sm">{children}</table>
+    <div className="table-container">
+      <table>{children}</table>
     </div>
   ),
-  th: ({ children }) => <th className="border border-gray-300 bg-gray-100 px-2 py-1.5 font-semibold">{children}</th>,
-  td: ({ children }) => <td className="border border-gray-300 px-2 py-1.5 align-top">{children}</td>,
-  hr: () => <hr className="my-3 border-gray-300" />,
   img: ({ alt }) => (
-    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-sm text-gray-600">
+    <span className="remote-image-omitted">
       [Remote image omitted{alt ? `: ${alt}` : ''}]
     </span>
   ),
@@ -126,7 +109,7 @@ const components: Components = {
 
 export default function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="min-w-0 [overflow-wrap:anywhere] leading-6">
+    <div className="content">
       <Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
         {content}
       </Markdown>

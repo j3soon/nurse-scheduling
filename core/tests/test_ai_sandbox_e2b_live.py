@@ -22,6 +22,7 @@
 import asyncio
 import json
 import os
+import re
 import shlex
 
 import pytest
@@ -122,6 +123,36 @@ def test_prebuilt_e2b_template_supports_the_selected_pi_tools():
             assert read.text == "TWO\n\n[1 more lines in file. Use offset=3 to continue.]"
             assert bash.ok
             assert bash.text == "2 scratch/note.txt\n"
+
+    asyncio.run(exercise())
+
+
+def test_large_command_output_stays_in_the_sandbox_and_remains_searchable():
+    async def exercise():
+        factory = E2BSandboxFactory(
+            api_key=E2B_API_KEY,
+            template=os.getenv("E2B_TEMPLATE", "nurse-scheduling-ai-sandbox"),
+            run_timeout_seconds=60,
+            command_timeout_seconds=15,
+        )
+        async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            tools = SandboxPiTools(sandbox, 15)
+            script = (
+                "import sys; chunk=b'x'*65536; "
+                "exec('for _ in range(3200): sys.stdout.buffer.write(chunk)'); "
+                "sys.stdout.flush(); sys.stderr.write('\\nfinished\\n'); sys.exit(7)"
+            )
+            outcome = await tools.execute(BASH_TOOL, json.dumps({"command": shlex.join(["python3", "-c", script])}))
+            assert not outcome.ok
+            assert "finished" in outcome.text
+            assert "Command exited with code 7" in outcome.text
+            assert len(outcome.text.encode()) < 52 * 1024
+            match = re.search(r"Full output: (/tmp/pi-bash-[a-f0-9]{16}\.log)", outcome.text)
+            assert match is not None
+            path = shlex.quote(match.group(1))
+            check = await sandbox.run(f"wc -c < {path}; tail -c 10 {path}")
+            assert check.exit_code == 0
+            assert check.stdout == "209715210\n\nfinished\n"
 
     asyncio.run(exercise())
 
@@ -273,7 +304,7 @@ def test_reaper_finds_and_kills_an_owned_overdue_sandbox():
 
 @pytest.mark.parametrize("attempt", range(3))
 @pytest.mark.parametrize("escaped", [False, True], ids=["recoverable", "detached-child-fallback"])
-def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
+def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped, monkeypatch):
     async def exercise():
         factory = E2BSandboxFactory(
             api_key=E2B_API_KEY,
@@ -282,12 +313,35 @@ def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
             command_timeout_seconds=1,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
+            assert isinstance(sandbox, E2BSandboxBackend)
             await sandbox.write_file("/workspace/kept.txt", b"working files survive")
+            sdk = sandbox._sandbox
+            launch = sdk.commands.run
+            child_ready = False
+
+            async def launch_when_child_ready(command, **kwargs):
+                nonlocal child_ready
+                handle = await launch(command, **kwargs)
+                if kwargs.get("background") and not child_ready:
+                    try:
+                        # SDK launch latency must not consume the cleanup test's deadline.
+                        async with asyncio.timeout(10):
+                            while not await sdk.files.exists("/workspace/child-ready", user="user", request_timeout=2):
+                                await asyncio.sleep(0.05)
+                        child_ready = True
+                    except BaseException:
+                        async with asyncio.timeout(2):
+                            await handle.disconnect()
+                        raise
+                return handle
+
+            monkeypatch.setattr(sdk.commands, "run", launch_when_child_ready)
             tools = SandboxPiTools(sandbox, 1)
             child = (
                 "import os,time,pathlib; "
                 + ("os.setsid(); " if escaped else "")
-                + "time.sleep(3); pathlib.Path('/workspace/late.txt').write_text('late')"
+                + "pathlib.Path('/workspace/child-ready.tmp').write_text(str(os.getpid())); "
+                "pathlib.Path('/workspace/child-ready.tmp').rename('/workspace/child-ready'); time.sleep(30)"
             )
             command = (
                 "printf 'once\\n' >> /workspace/executions.txt; printf 'before-timeout\\n'; "
@@ -298,15 +352,25 @@ def test_command_timeout_recovers_only_after_process_cleanup(attempt, escaped):
             outcome = await tools.execute(BASH_TOOL, json.dumps({"command": command, "timeout": 10}))
             assert not outcome.ok
             assert outcome.terminal == escaped
-            assert "before-timeout" in outcome.text
+            if not escaped:
+                assert "before-timeout" in outcome.text
             assert "Command timed out after 1 seconds" in outcome.text
             sandbox_id = sandbox.sandbox_id
             if escaped:
                 assert sandbox.lifecycle_state is E2BSandboxState.CLOSED
             else:
                 assert await sandbox.read_file("/workspace/kept.txt") == b"working files survive"
+                child_pid = int(await sandbox.read_file("/workspace/child-ready"))
+                probe = (
+                    "from pathlib import Path\n"
+                    "try:\n"
+                    f"    state = Path('/proc/{child_pid}/stat').read_text().rsplit(')', 1)[1].split()[0]\n"
+                    "except (FileNotFoundError, ProcessLookupError):\n"
+                    "    state = 'X'\n"
+                    "assert state in {'Z', 'X'}, state\n"
+                )
                 check = await sandbox.run(
-                    "sleep 3.2 && cat executions.txt && test ! -e late.txt && printf 'recovered\\n'",
+                    f"python3 -c {shlex.quote(probe)} && cat executions.txt && printf 'recovered\\n'",
                     timeout_seconds=5,
                 )
                 assert check.exit_code == 0

@@ -264,6 +264,8 @@ class ModelCatalog:
         model = next((item for item in models if item.id == selection.model), None)
         if model is None:
             raise HTTPException(422, "The selected model is not available to this AI key.")
+        if type(model.context_tokens) is not int or model.context_tokens <= 0:
+            raise HTTPException(422, "The selected model has no valid context window. Configure its model metadata.")
         if selection.reasoning == "default":
             selection = selection.model_copy(update={"reasoning": model.default_reasoning})
         parameters = {}

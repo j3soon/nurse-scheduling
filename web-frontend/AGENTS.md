@@ -82,6 +82,16 @@ by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
 Check saved transcript reconstruction against live message order as well as export
 byte parity. Include steering before output and optimizer events between replies.
+Run `experimental-ai-rendering.spec.ts` for transcript, activity, Markdown, cost,
+or shared-style changes. It compares the current page and Python exporter from
+one event scenario, including disclosure behavior and browser screenshots.
+Extend the scenario or its variants when adding a transcript activity kind.
+Use `core/nurse_scheduling/ai/chat_styles.css` for their shared appearance.
+The browser tests require the core Python runtime dependencies. Activate the
+core environment on a host, or set `AI_EXPORT_PYTHON` to its Python executable.
+Install them in every frontend E2E workflow, including macOS and Windows.
+Reuse an asynchronous Python helper across rendering comparisons. Repeated cold
+imports can exceed Windows deadlines, and synchronous helpers block mock HTTP servers.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
@@ -122,6 +132,9 @@ result, check that `fc-match system-ui` reports DejaVu Sans.
 Playwright `fullPage` screenshots under mobile emulation lose coarse-pointer
 styles, so touch-only controls disappear from the image. For a full-height phone
 screenshot, set the viewport height to the page height and take a normal capture.
+When a test compares screenshots of two pages, hide everything except the
+compared element on both pages. Otherwise the GPU renderer on macOS can
+antialias edges differently, depending on what else the page draws.
 
 E2E builds use the checkout's `git describe` version without `-dirty`. A build
 from uncommitted changes otherwise shows a dirty-version warning on every YAML
@@ -164,6 +177,9 @@ out of the context percentage.
 
 Experimental AI controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
+Keep the chat textarea editable while submission is unavailable. Guard Send and
+Queue separately. Restore draft focus when a user submits, without moving focus
+when an assistant reply finishes or a queued message starts automatically.
 Show the model lock that the backend saves for the session, and read it again
 when a run starts or ends. Also lock the model control while a message is in
 flight. A rejected message leaves it editable. Keep reasoning effort editable
@@ -217,6 +233,8 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+When checking saved event cursors, flush tab storage through `pagehide` first.
+A cursor-only event need not rerender the chat or restart its debounced save.
 When adding AI session events, update the SSE decoder, chat hook callback dispatch,
 assistant reducer, saved transcript projection, and exports together. Check the
 visible browser result because decoder and reducer tests do not cover dispatch.

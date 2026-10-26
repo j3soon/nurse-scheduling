@@ -115,7 +115,7 @@ def assert_complete_tool_pairs(messages):
 
 async def run_live_case(name, settings, controls, output):
     if name == "manual":
-        settings = replace(settings, max_history_chars=32000)
+        settings = replace(settings, compaction_reserve_tokens=16384)
     factory = TrackingFactory(settings)
     app = create_app(settings=settings, sandbox_factory=factory, optimizer_backend=FakeOptimizerBackend())
     report = {"case": name, "passed": False, "requests": [], "events": [], "sandboxes": factory.created}
@@ -297,9 +297,9 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
         auth_required=True,
         history_postgres_url="",
         provider_profiles_json="",
-        max_history_chars=24000,
+        compaction_keep_recent_tokens=1000,
+        max_history_chars=10_000_000,
         max_history_messages=1000,
-        max_message_chars=20000,
         request_log_enabled=False,
         cookie_secure=False,
         provider_timeout_seconds=60,
@@ -342,13 +342,14 @@ def test_real_chat_runs_preserve_context_through_compaction(monkeypatch):
         primary = settings.provider_model
         assert primary in models, f"Live compaction model is unavailable: {primary}"
         assert models[primary].context_tokens is not None, "Live compaction requires a reported context limit"
+        case_settings = replace(settings, compaction_reserve_tokens=max(16384, models[primary].context_tokens - 6000))
         reports = await asyncio.gather(
             *(
-                run_live_case(name, settings, controls, output)
+                run_live_case(name, case_settings, controls, output)
                 for name in ("threshold", "repeated", "model-lock", "cancellation")
             )
         )
-        reports.append(await run_live_case("manual", settings, controls, output))
+        reports.append(await run_live_case("manual", case_settings, controls, output))
         return reports
 
     reports = asyncio.run(exercise())

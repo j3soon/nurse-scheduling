@@ -234,7 +234,20 @@ describe('ExperimentalAiPage', () => {
     expect(mockSendMessage.mock.calls[0][1]).toBe('Keep **new** [link](https://example.com/) ending');
   });
 
-  it('caps formatted paste at the message limit and preserves plain text paste', async () => {
+  it('submits long messages without a character limit', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    await waitFor(() => expect(input).toBeEnabled());
+    expect(input).not.toHaveAttribute('maxlength');
+    input.focus();
+    await user.paste('x'.repeat(300000));
+    expect(input.value).toHaveLength(300000);
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(mockSendMessage.mock.calls[0][1]).toHaveLength(300000);
+  });
+
+  it('keeps complete formatted and plain text pastes', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
@@ -245,8 +258,7 @@ describe('ExperimentalAiPage', () => {
     fireEvent.change(input, { target: { value: 'x'.repeat(7998) } });
     input.setSelectionRange(7998, 7998);
     fireEvent.paste(input, { clipboardData: { getData: () => '<b>long paste</b>' } });
-    expect(input.value).toHaveLength(8000);
-    expect(input.value.endsWith('**')).toBe(true);
+    expect(input.value).toBe('x'.repeat(7998) + '**long paste**');
   });
 
   it('renews a reconnected background run with the current retention period', async () => {
@@ -524,9 +536,9 @@ describe('ExperimentalAiPage', () => {
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    const usage = await screen.findByText(maxTokens ? 'Context 3.3% used (est.)' : 'Context unavailable');
+    const usage = await screen.findByText(maxTokens ? 'Context ~3.3% used' : 'Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('current LLM context'));
-    const tokens = screen.getByText(`Tokens (est.): 4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
+    const tokens = screen.getByText(`Tokens: ~4,321 / ${maxTokens ? '131,072' : 'unavailable'}`);
     expect(tokens).toHaveAttribute('title', 'Estimated current LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.');
   });
 
@@ -547,7 +559,13 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'compaction_start', runId: 'compact-run', reason: 'manual', tokensBefore: 12000 });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Draft during compaction');
+    expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockQueueMessage).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Draft during compaction');
     expect(screen.getByText('You requested context compaction.')).toBeVisible();
     await act(async () => {
       stream.onEvent!({ type: 'compaction_end', runId: 'compact-run', reason: 'manual', tokensBefore: 12000,
@@ -557,8 +575,9 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'done', runId: 'compact-run' });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
-    expect(screen.getByText('Context 10.0% used (est.)')).toBeInTheDocument();
-    expect(screen.getByText('Tokens (est.): 1,000 / 10,000')).toBeInTheDocument();
+    expect(composer).toHaveValue('Draft during compaction');
+    expect(screen.getByText('Context ~10.0% used')).toBeInTheDocument();
+    expect(screen.getByText('Tokens: ~1,000 / 10,000')).toBeInTheDocument();
     await user.click(screen.getByText('Conversation summary', { exact: true }));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
   });
@@ -572,7 +591,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     const requestId = mockCompactSession.mock.calls[0][1] as string;
     expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
@@ -602,7 +621,8 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent({ type: 'done', runId: 'earlier-review' });
     });
     expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
     await act(async () => stream.onEvent({ type: 'done', runId: 'compact-run' }));
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
@@ -689,7 +709,26 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', renewedExpiration));
   });
 
+  it('ends a restored background reply when its chat has expired', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      syncedSchedule: 'description: old schedule\n',
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('reports an expired stored chat and requires a new conversation', async () => {
+    const user = userEvent.setup();
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'expired-session',
       endpoint: '/ai',
@@ -703,7 +742,13 @@ describe('ExperimentalAiPage', () => {
 
     expect(await screen.findByText('Old question')).toBeInTheDocument();
     expect(screen.getByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Draft for a new chat');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Draft for a new chat');
     expect(mockGetSessionStatus).not.toHaveBeenCalled();
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
   });
@@ -978,7 +1023,7 @@ describe('ExperimentalAiPage', () => {
 
     expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
     expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
@@ -1180,7 +1225,7 @@ describe('ExperimentalAiPage', () => {
       'Failed\nOutcome: injected\nBackend version: forged',
     );
     expect(screen.getByText('Final score:').tagName).toBe('DT');
-    expect(screen.getByText('Final score:')).toHaveClass('font-semibold');
+    expect(screen.getByText('Final score:')).toHaveClass('optimizer-label');
     expect(optimizerSummary.querySelector('time')).toHaveAttribute('title');
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
@@ -2584,14 +2629,19 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     const tokenButton = await screen.findByRole('button', { name: 'Enter token for AI assistant' });
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeDisabled();
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    expect(composer).toBeEnabled();
+    await user.type(composer, 'Who works?');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(composer).toHaveValue('Who works?');
     await user.click(tokenButton);
     await user.type(screen.getByLabelText('Token for AI assistant'), 'ai-session-token');
     await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
 
     expect(screen.getByText('Token set for this session')).toBeInTheDocument();
     expect(window.localStorage.getItem('nurse-scheduling-ai-auth')).toBeNull();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(

@@ -29,8 +29,19 @@ SandboxBackendName = Literal["none", "e2b"]
 AI_AUTH_TOKEN_ENV_NAME = "AI_AUTH_TOKEN"
 AI_AUTH_TOKENS_ENV_NAME = "AI_AUTH_TOKENS"
 AI_AUTH_REQUIRED_ENV_NAME = "AI_AUTH_REQUIRED"
-DEFAULT_MAX_HISTORY_CHARS = 200_000
-"""Prompt budget for retained history, well inside the context window of a supported model."""
+# Default safety bounds. Keep deployment capacity and normal token budgets separate.
+MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024
+MAX_HISTORY_MESSAGES = 100_000
+MAX_HISTORY_CHARS = 64_000_000
+MAX_SCHEDULE_BYTES = 16_000_000
+MAX_ATTACHMENT_FILES = 128
+MAX_ATTACHMENT_BYTES = 50_000_000
+MAX_ATTACHMENT_TOTAL_BYTES = 500_000_000
+MAX_DOWNLOAD_BYTES = 250_000_000
+MAX_OPTIMIZER_RUNS_PER_SESSION = 1000
+MAX_OPTIMIZER_RESULT_BYTES = 64_000_000
+MAX_AGENT_TOOL_ROUNDS = 2000
+MAX_AGENT_TOOL_CALLS = 6000
 
 
 def validate_ai_auth_credentials(
@@ -109,7 +120,7 @@ def _read_sandbox_backend() -> SandboxBackendName:
 
 @dataclass(frozen=True)
 class AiSettings:
-    """Runtime settings for one isolated AI backend process."""
+    """Runtime settings with code defaults and optional defensive overrides."""
 
     provider_base_url: str
     provider_api_key: str
@@ -120,6 +131,7 @@ class AiSettings:
     auth_tokens: tuple[AuthCredential, ...] = ()
     auth_required: bool = False
     provider_timeout_seconds: float = 180.0
+    provider_max_response_bytes: int = MAX_PROVIDER_RESPONSE_BYTES
     provider_max_attempts: int = 5
     provider_retry_backoff_seconds: float = 2.0
     optimizer_base_url: str = "http://localhost:8000"
@@ -127,9 +139,9 @@ class AiSettings:
     optimizer_poll_interval_seconds: float = 1.0
     optimizer_request_timeout_seconds: float = 30.0
     optimizer_default_timeout_seconds: int = 300
-    optimizer_max_runs_per_session: int = 50
-    optimizer_max_result_bytes: int = 10_000_000
-    optimizer_result_cache_bytes: int = 100_000_000
+    optimizer_max_runs_per_session: int = MAX_OPTIMIZER_RUNS_PER_SESSION
+    optimizer_max_result_bytes: int = MAX_OPTIMIZER_RESULT_BYTES
+    optimizer_result_cache_bytes: int = 256_000_000
     session_ttl_seconds: int = 30 * 24 * 60 * 60
     history_postgres_url: str = ""
     request_log_enabled: bool = True
@@ -138,28 +150,29 @@ class AiSettings:
     max_session_bytes: int = 1024 * 1024 * 1024
     """Text and file budget across live sessions, enforced when content is retained.
 
-    A completed turn is trimmed rather than refused, so retained text settles at this
-    budget plus the newest message of each live session. Size
-    the process above that floor, not at this value.
+    Completed turns remain available. When the budget is exhausted, new input
+    is refused. Allow headroom for output from every admitted run.
     """
-    max_history_messages: int = 1000
-    max_history_chars: int = DEFAULT_MAX_HISTORY_CHARS
-    max_message_chars: int = 8000
-    max_schedule_bytes: int = 1_000_000
+    compaction_reserve_tokens: int = 16384
+    compaction_keep_recent_tokens: int = 20000
+    max_history_messages: int = MAX_HISTORY_MESSAGES
+    max_history_chars: int = MAX_HISTORY_CHARS
+    max_schedule_bytes: int = MAX_SCHEDULE_BYTES
     max_concurrent_requests: int = 4
-    max_attachment_files: int = 32
-    max_attachment_bytes: int = 25_000_000
-    max_attachment_total_bytes: int = 200_000_000
-    max_archive_bytes: int = 1_000_000_000
+    max_attachment_files: int = MAX_ATTACHMENT_FILES
+    max_attachment_bytes: int = MAX_ATTACHMENT_BYTES
+    max_attachment_total_bytes: int = MAX_ATTACHMENT_TOTAL_BYTES
+    max_archive_bytes: int = 10_000_000_000
     """File bytes that recovery storage keeps per session, including removed files."""
-    max_download_bytes: int = 50_000_000
+    max_download_bytes: int = MAX_DOWNLOAD_BYTES
     sandbox_backend: SandboxBackendName = "none"
     e2b_api_key: str = ""
     e2b_template: str = "nurse-scheduling-ai-sandbox"
     sandbox_command_timeout_seconds: float = 60.0
     sandbox_turn_timeout_seconds: float = 21600.0
-    agent_max_tool_rounds: int = 2000
-    agent_max_tool_calls: int = 6000
+    agent_max_tool_rounds: int = MAX_AGENT_TOOL_ROUNDS
+    agent_max_tool_calls: int = MAX_AGENT_TOOL_CALLS
+    agent_max_parallel_tools: int = 16
     sandbox_cleanup_timeout_seconds: float = 10.0
     sandbox_max_attempts: int = 3
     sandbox_retry_backoff_seconds: float = 0.5
@@ -213,31 +226,22 @@ class AiSettings:
             optimizer_poll_interval_seconds=_read_positive_float("AI_OPTIMIZER_POLL_INTERVAL_SECONDS", 1.0),
             optimizer_request_timeout_seconds=_read_positive_float("AI_OPTIMIZER_REQUEST_TIMEOUT_SECONDS", 30.0),
             optimizer_default_timeout_seconds=_read_positive_int("AI_OPTIMIZER_DEFAULT_TIMEOUT_SECONDS", 300),
-            optimizer_max_runs_per_session=_read_positive_int("AI_OPTIMIZER_MAX_RUNS_PER_SESSION", 50),
-            optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", 10_000_000),
-            optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 100_000_000),
+            optimizer_result_cache_bytes=_read_positive_int("AI_OPTIMIZER_RESULT_CACHE_BYTES", 256_000_000),
             session_ttl_seconds=_read_positive_int("AI_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
             history_postgres_url=os.getenv("AI_HISTORY_POSTGRES_URL", "").strip(),
             request_log_enabled=_read_bool("AI_REQUEST_LOG_ENABLED", True),
             max_sessions=_read_positive_int("AI_MAX_SESSIONS", 1000),
             max_session_bytes=_read_positive_int("AI_MAX_SESSION_BYTES", 1024 * 1024 * 1024),
-            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", 1000),
-            max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", DEFAULT_MAX_HISTORY_CHARS),
-            max_message_chars=_read_positive_int("AI_MAX_MESSAGE_CHARS", 8000),
-            max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", 1_000_000),
+            compaction_reserve_tokens=_read_positive_int("AI_COMPACTION_RESERVE_TOKENS", 16384),
+            compaction_keep_recent_tokens=_read_positive_int("AI_COMPACTION_KEEP_RECENT_TOKENS", 20000),
             max_concurrent_requests=_read_positive_int("AI_MAX_CONCURRENT_REQUESTS", 4),
-            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", 32),
-            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", 25_000_000),
-            max_attachment_total_bytes=_read_positive_int("AI_MAX_ATTACHMENT_TOTAL_BYTES", 200_000_000),
-            max_archive_bytes=_read_positive_int("AI_MAX_ARCHIVE_BYTES", 1_000_000_000),
-            max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", 50_000_000),
+            max_archive_bytes=_read_positive_int("AI_MAX_ARCHIVE_BYTES", 10_000_000_000),
             sandbox_backend=sandbox_backend,
             e2b_api_key=e2b_api_key,
             e2b_template=e2b_template,
             sandbox_command_timeout_seconds=_read_positive_float("AI_SANDBOX_COMMAND_TIMEOUT_SECONDS", 60.0),
             sandbox_turn_timeout_seconds=_read_positive_float("AI_SANDBOX_TURN_TIMEOUT_SECONDS", 21600.0),
-            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", 2000),
-            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", 6000),
+            agent_max_parallel_tools=_read_positive_int("AI_AGENT_MAX_PARALLEL_TOOLS", 16),
             sandbox_cleanup_timeout_seconds=_read_positive_float("AI_SANDBOX_CLEANUP_TIMEOUT_SECONDS", 10.0),
             sandbox_max_attempts=_read_positive_int("AI_SANDBOX_MAX_ATTEMPTS", 3),
             sandbox_retry_backoff_seconds=_read_non_negative_float("AI_SANDBOX_RETRY_BACKOFF_SECONDS", 0.5),
@@ -246,5 +250,22 @@ class AiSettings:
                 "AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS", 2.0
             ),
             sandbox_reaper_interval_seconds=_read_positive_float("AI_SANDBOX_REAPER_INTERVAL_SECONDS", 30.0),
+            # Advanced safety overrides share the constructor defaults.
+            provider_max_response_bytes=_read_positive_int(
+                "AI_PROVIDER_MAX_RESPONSE_BYTES", MAX_PROVIDER_RESPONSE_BYTES
+            ),
+            max_history_messages=_read_positive_int("AI_MAX_HISTORY_MESSAGES", MAX_HISTORY_MESSAGES),
+            max_history_chars=_read_positive_int("AI_MAX_HISTORY_CHARS", MAX_HISTORY_CHARS),
+            max_schedule_bytes=_read_positive_int("AI_MAX_SCHEDULE_BYTES", MAX_SCHEDULE_BYTES),
+            max_attachment_files=_read_positive_int("AI_MAX_ATTACHMENT_FILES", MAX_ATTACHMENT_FILES),
+            max_attachment_bytes=_read_positive_int("AI_MAX_ATTACHMENT_BYTES", MAX_ATTACHMENT_BYTES),
+            max_attachment_total_bytes=_read_positive_int("AI_MAX_ATTACHMENT_TOTAL_BYTES", MAX_ATTACHMENT_TOTAL_BYTES),
+            max_download_bytes=_read_positive_int("AI_MAX_DOWNLOAD_BYTES", MAX_DOWNLOAD_BYTES),
+            optimizer_max_runs_per_session=_read_positive_int(
+                "AI_OPTIMIZER_MAX_RUNS_PER_SESSION", MAX_OPTIMIZER_RUNS_PER_SESSION
+            ),
+            optimizer_max_result_bytes=_read_positive_int("AI_OPTIMIZER_MAX_RESULT_BYTES", MAX_OPTIMIZER_RESULT_BYTES),
+            agent_max_tool_rounds=_read_positive_int("AI_AGENT_MAX_TOOL_ROUNDS", MAX_AGENT_TOOL_ROUNDS),
+            agent_max_tool_calls=_read_positive_int("AI_AGENT_MAX_TOOL_CALLS", MAX_AGENT_TOOL_CALLS),
             cookie_secure=_read_bool("AI_COOKIE_SECURE", True),
         )

@@ -309,7 +309,10 @@ export default function ExperimentalAiPage() {
         followPageBottomRef.current = true;
         setShowScrollToBottom(false);
       }
-      if (kind !== 'retry') setDraft('');
+      if (kind !== 'retry') {
+        setDraft('');
+        draftInputRef.current?.focus({ preventScroll: true });
+      }
       if (kind === 'send') {
         selectedAttachments.forEach(attachment => {
           if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
@@ -320,7 +323,7 @@ export default function ExperimentalAiPage() {
   });
   const send = async (event: FormEvent) => {
     event.preventDefault();
-    if (modelSelectionEnabled && !selection) return;
+    if (!isClientReady || composerUnavailable) return;
     await submitMessage(draft.trim(), selectedAttachments.map(attachment => attachment.file));
   };
   useEffect(() => {
@@ -1355,8 +1358,8 @@ export default function ExperimentalAiPage() {
               if (markdown === null) return;
               event.preventDefault();
               const input = event.currentTarget;
-              const { selectionStart: start, selectionEnd: end, value, maxLength } = input;
-              const pasted = markdown.slice(0, Math.max(0, maxLength - value.length + end - start));
+              const { selectionStart: start, selectionEnd: end, value } = input;
+              const pasted = markdown;
               // Keep converted paste in the browser's text undo history.
               if (typeof document.execCommand === 'function' && document.execCommand('insertText', false, pasted)) return;
               setDraft(value.slice(0, start) + pasted + value.slice(end));
@@ -1369,12 +1372,10 @@ export default function ExperimentalAiPage() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            disabled={!isClientReady || composerUnavailable}
             rows={1}
-            maxLength={8000}
             aria-label="Ask about the current schedule"
             placeholder="Ask anything…"
-            className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none disabled:text-gray-400"
+            className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none"
           />
           <div className="flex shrink-0 items-center gap-1">
             {isClientReady && firefoxVersion !== null && !speechSupported ? (
@@ -1433,7 +1434,7 @@ export default function ExperimentalAiPage() {
               <>
                 <button
                   type="submit"
-                  disabled={!draft.trim()}
+                  disabled={!isClientReady || composerUnavailable || !draft.trim()}
                   aria-label="Queue message"
                   title="Queue message"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
@@ -1468,13 +1469,13 @@ export default function ExperimentalAiPage() {
           <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
             {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
               Context {contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
-                ? `${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used${contextUsage.estimated !== false ? ' (est.)' : ''}`
+                ? `${contextUsage.estimated !== false ? '~' : ''}${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used`
                 : 'unavailable'}
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
               <span title={tokenDescription}>
-                Tokens{contextUsage.estimated !== false ? ' (est.)' : ''}: {contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+                Tokens: {contextUsage.estimated !== false ? '~' : ''}{contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
               </span>
             </>}
             {activeSessionId && <>
