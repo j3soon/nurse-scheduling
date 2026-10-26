@@ -709,6 +709,24 @@ describe('ExperimentalAiPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Chat expiration')).toHaveAttribute('dateTime', renewedExpiration));
   });
 
+  it('ends a restored background reply when its chat has expired', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'expired-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() - 1,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      syncedSchedule: 'description: old schedule\n',
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<ExperimentalAiPage />);
+
+    expect(await screen.findByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
   it('reports an expired stored chat and requires a new conversation', async () => {
     const user = userEvent.setup();
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({

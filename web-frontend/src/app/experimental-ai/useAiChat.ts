@@ -1136,14 +1136,15 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   };
 
   const restoreConversation = useCallback((storedConversation: StoredChatConversation) => {
+      const expired = storedConversation.expiresAt <= Date.now();
       // The server owns background work across reloads. Reconcile its later
       // events onto the saved pending message instead of declaring it failed.
-      if (storedConversation.backgroundAssistantId) {
-        lifecycle.begin('background', storedConversation.backgroundAssistantId);
-      }
+      // An expired chat receives no events, so its background reply fails.
+      const backgroundId = expired ? undefined : storedConversation.backgroundAssistantId;
+      if (backgroundId) lifecycle.begin('background', backgroundId);
       setMessages(storedConversation.messages.map(message => (
         message.status === 'pending' && !message.requestId
-          && (message.runId ?? message.id) !== storedConversation.backgroundAssistantId
+          && (message.runId ?? message.id) !== backgroundId
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
           : message
       )));
@@ -1159,7 +1160,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       appliedScheduleRunsRef.current = { ...storedConversation.appliedScheduleRuns };
       sessionEndpointRef.current = storedConversation.endpoint;
       setSessionEndpoint(storedConversation.endpoint);
-      if (storedConversation.expiresAt <= Date.now()) {
+      if (expired) {
         window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
         setConversationUnavailable(true);
         setSessionNotice(
