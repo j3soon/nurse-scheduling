@@ -203,12 +203,19 @@ async function replay(page: Page, snapshot: Snapshot, backend: Awaited<ReturnTyp
         await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill(run.prompt);
         await page.getByRole('button', { name: 'Send', exact: true }).click();
         await expect.poll(() => backend.accepted).toBe(++sent);
+        // Cover a slow first event that arrives after the accepted request was saved.
+        await page.waitForFunction(({ storageKey, runId }) => {
+          const stored = sessionStorage.getItem(storageKey);
+          return stored && JSON.parse(stored).messages.some((message: { runId?: string }) => message.runId === runId);
+        }, { storageKey, runId: run.id });
       }
       await expect.poll(() => backend.connected).toBe(true);
     }
     const id = backend.publish(event);
-    // This covers decoding, dispatch, reduction, and browser persistence.
+    // Cursor-only events need not rerender or schedule another debounced save.
+    // Flush through the real page-hide path before checking browser persistence.
     await page.waitForFunction(({ storageKey, id }) => {
+      window.dispatchEvent(new Event('pagehide'));
       const stored = sessionStorage.getItem(storageKey);
       return stored && JSON.parse(stored).sessionEventId === id;
     }, { storageKey, id }, { timeout: 5000 }).catch(error => {

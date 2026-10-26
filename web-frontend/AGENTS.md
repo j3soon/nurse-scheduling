@@ -231,6 +231,8 @@ offline emulation alone can leave an existing stream open. Assert that reconnect
 uses the same request ID and executes the accepted question only once. Mock
 `/capabilities` with the real authentication and attachment-limit contract so
 reload recovery follows the production path.
+When checking saved event cursors, flush tab storage through `pagehide` first.
+A cursor-only event need not rerender the chat or restart its debounced save.
 When adding AI session events, update the SSE decoder, chat hook callback dispatch,
 assistant reducer, saved transcript projection, and exports together. Check the
 visible browser result because decoder and reducer tests do not cover dispatch.
