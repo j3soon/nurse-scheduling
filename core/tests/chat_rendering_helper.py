@@ -25,38 +25,54 @@ import sys
 from pathlib import Path
 
 
+def compare_images(frontend_path: Path, export_path: Path, difference_path: Path) -> str:
+    from PIL import Image, ImageChops, ImageOps
+
+    with Image.open(frontend_path) as frontend, Image.open(export_path) as exported:
+        if frontend.size != exported.size:
+            return f"Different dimensions: {frontend.size} vs {exported.size}"
+        difference = ImageChops.difference(frontend.convert("RGB"), exported.convert("RGB"))
+        # Separate browser surfaces can round antialiased corners by one RGB level.
+        # The browser test also compares computed styles exactly.
+        if max(channel[1] for channel in difference.getextrema()) <= 1:
+            return "identical"
+        ImageOps.autocontrast(difference).save(difference_path)
+        return f"Different pixels in {difference.getbbox()}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
     subparsers.add_parser("render")
+    subparsers.add_parser("worker")
     compare = subparsers.add_parser("compare")
     compare.add_argument("frontend", type=Path)
     compare.add_argument("export", type=Path)
     compare.add_argument("difference", type=Path)
     args = parser.parse_args()
-    if args.action == "render":
+    if args.action in {"render", "worker"}:
         from nurse_scheduling.ai.chat_export import build_saved_chat_export
 
         # Windows pipes default to the legacy code page, but the browser test exchanges UTF-8.
         sys.stdin.reconfigure(encoding="utf-8")
         sys.stdout.reconfigure(encoding="utf-8")
+        if args.action == "worker":
+            # Load the production renderer once for the browser spec's requests.
+            print(json.dumps("ready"), flush=True)
+            for line in sys.stdin:
+                request = json.loads(line)
+                if request["action"] == "render":
+                    result = build_saved_chat_export(request["snapshot"], "html")
+                elif request["action"] == "compare":
+                    result = compare_images(*(Path(request[key]) for key in ("frontend", "export", "difference")))
+                else:
+                    raise ValueError(f"Unknown rendering action: {request['action']}")
+                print(json.dumps(result), flush=True)
+            return
         print(build_saved_chat_export(json.load(sys.stdin), "html"))
         return
 
-    from PIL import Image, ImageChops, ImageOps
-
-    with Image.open(args.frontend) as frontend, Image.open(args.export) as exported:
-        if frontend.size != exported.size:
-            print(f"Different dimensions: {frontend.size} vs {exported.size}")
-            return
-        difference = ImageChops.difference(frontend.convert("RGB"), exported.convert("RGB"))
-        # Separate browser surfaces can round antialiased corners by one RGB level.
-        # The browser test also compares computed styles exactly.
-        if max(channel[1] for channel in difference.getextrema()) <= 1:
-            print("identical")
-        else:
-            ImageOps.autocontrast(difference).save(args.difference)
-            print(f"Different pixels in {difference.getbbox()}")
+    print(compare_images(args.frontend, args.export, args.difference))
 
 
 if __name__ == "__main__":

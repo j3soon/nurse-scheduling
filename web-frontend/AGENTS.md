@@ -90,6 +90,8 @@ Use `core/nurse_scheduling/ai/chat_styles.css` for their shared appearance.
 The browser tests require the core Python runtime dependencies. Activate the
 core environment on a host, or set `AI_EXPORT_PYTHON` to its Python executable.
 Install them in every frontend E2E workflow, including macOS and Windows.
+Reuse an asynchronous Python helper across rendering comparisons. Repeated cold
+imports can exceed Windows deadlines, and synchronous helpers block mock HTTP servers.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to

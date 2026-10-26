@@ -20,11 +20,12 @@
 // This test is mostly AI generated.
 
 import { expect, test, type Page } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import fixture from '../../core/tests/ai_fixtures/chat-rendering.json';
 
 const root = path.resolve(__dirname, '../..');
@@ -35,6 +36,57 @@ type Snapshot = Omit<typeof fixture, 'events' | 'runs'> & { events: SavedEvent[]
 const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'final-truncated',
   'length-recovery', 'tool-rounds', 'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted',
   'manual-running'] as const;
+
+let renderer: ChildProcessWithoutNullStreams;
+let replies: AsyncIterator<string>;
+let rendererStderr = '';
+
+async function renderingReply(timeoutMs = 15_000): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      replies.next().then(({ value, done }) => {
+        if (done) throw new Error(`Python rendering helper exited: ${rendererStderr}`);
+        return JSON.parse(value) as string;
+      }),
+      new Promise<string>((_, reject) => {
+        timer = setTimeout(() => {
+          renderer.kill();
+          reject(new Error(`Python rendering helper timed out: ${rendererStderr}`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test.beforeAll(async () => {
+  test.setTimeout(60_000);
+  renderer = spawn(process.env.AI_EXPORT_PYTHON ?? 'python', ['-u', '-m', 'tests.chat_rendering_helper', 'worker'], {
+    cwd: path.join(root, 'core'), stdio: 'pipe',
+  });
+  renderer.stderr.on('data', chunk => { rendererStderr = (rendererStderr + chunk.toString()).slice(-8000); });
+  renderer.on('error', error => { rendererStderr += error.message; });
+  renderer.stdin.on('error', error => { rendererStderr += error.message; });
+  replies = createInterface({ input: renderer.stdout })[Symbol.asyncIterator]();
+  // Give the one cold import its own setup budget. Individual requests keep their deadline.
+  expect(await renderingReply(45_000)).toBe('ready');
+});
+
+test.afterAll(async () => {
+  if (!renderer || renderer.exitCode !== null || renderer.signalCode !== null) return;
+  const exited = new Promise<void>(resolve => renderer.once('exit', () => resolve()));
+  renderer.kill();
+  await exited;
+});
+
+async function renderingRequest(request: Record<string, unknown>, timeoutMs = 15_000): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    renderer.stdin.write(JSON.stringify(request) + '\n', error => error ? reject(error) : resolve());
+  });
+  return renderingReply(timeoutMs);
+}
 
 function scenario(variant: typeof variants[number]): Snapshot {
   const snapshot: Snapshot = structuredClone(fixture);
@@ -123,10 +175,8 @@ function scenario(variant: typeof variants[number]): Snapshot {
 }
 
 // Exercise the current production renderer, independently of frozen export bytes.
-function exportHtml(snapshot: Snapshot): string {
-  return execFileSync(process.env.AI_EXPORT_PYTHON ?? 'python', ['-m', 'tests.chat_rendering_helper', 'render'], {
-    cwd: path.join(root, 'core'), input: JSON.stringify(snapshot), encoding: 'utf8', timeout: 15_000,
-  });
+function exportHtml(snapshot: Snapshot): Promise<string> {
+  return renderingRequest({ action: 'render', snapshot });
 }
 
 async function startBackend(origin: string, snapshot: Snapshot) {
@@ -305,9 +355,8 @@ async function compareTranscript(page: Page, exported: Page, dir: string, state:
     ]);
     const prefix = path.join(dir, `${state}-${width}`);
     await Promise.all([writeFile(`${prefix}-frontend.png`, livePng), writeFile(`${prefix}-export.png`, exportPng)]);
-    const difference = execFileSync(process.env.AI_EXPORT_PYTHON ?? 'python', ['-m', 'tests.chat_rendering_helper', 'compare',
-      `${prefix}-frontend.png`, `${prefix}-export.png`, `${prefix}-diff.png`,
-    ], { cwd: path.join(root, 'core'), encoding: 'utf8', timeout: 10_000 }).trim();
+    const difference = await renderingRequest({ action: 'compare', frontend: `${prefix}-frontend.png`,
+      export: `${prefix}-export.png`, difference: `${prefix}-diff.png` }, 10_000);
     expect(difference, `${state}, ${width}px. Compare ${prefix}-*.png`).toBe('identical');
   }
 }
@@ -334,7 +383,7 @@ for (const variant of variants) test(`current Python export follows the live tra
     if (variant === 'rich') {
       await expect(page.getByRole('button', { name: 'Download files (ZIP)', exact: true })).toHaveCount(1);
     }
-    await exported.setContent(exportHtml(snapshot));
+    await exported.setContent(await exportHtml(snapshot));
     await expect(exported.locator('script')).toHaveCount(0);
     if (variant === 'length-recovery') {
       for (const current of [page, exported]) {
@@ -368,7 +417,7 @@ for (const variant of variants) test(`current Python export follows the live tra
     await compareTranscript(page, exported, dir, 'expanded');
     const articles = await page.locator('article').count();
     await page.reload();
-    await exported.setContent(exportHtml(snapshot));
+    await exported.setContent(await exportHtml(snapshot));
     await expect(page.locator('article')).toHaveCount(articles);
     await compareTranscript(page, exported, dir, 'reloaded');
     expect(externalRequests).toEqual([]);
