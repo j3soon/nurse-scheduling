@@ -768,6 +768,161 @@ def test_recoverable_length_compacts_once_without_replaying_partial_tools(repeat
     assert not any(isinstance(entry, ToolResultMessage) for entry in failed_run)
 
 
+@pytest.mark.parametrize("with_tools", [False, True], ids=["text", "partial-tool"])
+@pytest.mark.parametrize("recovery", ["skipped", "failed"])
+def test_length_reply_stays_in_context_when_compaction_cannot_replace_it(recovery, with_tools):
+    from nurse_scheduling.ai.agent_loop import TRUNCATED_TOOL_CALL_RESULT
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd
+
+    class Provider(CompactionProvider):
+        context_tokens = 16000
+        output_tokens = 4000
+
+        async def stream_events(self, messages, tools=None):
+            if messages[0]["content"].startswith("You are a context summarization assistant."):
+                async for event in super().stream_events(messages, tools):
+                    yield event
+                return
+            self.requests.append((messages, tools))
+            if len(self.requests) == 1:
+                yield TextDelta("Incomplete plan")
+                if with_tools:
+                    yield ToolCallRequest((ToolCall("partial-write", "write", '{"path":'),))
+                yield TokenUsage(4000, 100, 4100)
+                yield ResponseEnd("length")
+            else:
+                yield TextDelta("Final answer")
+                yield ResponseEnd("stop")
+
+    provider = Provider(fail_summary="error" if recovery == "failed" else None)
+    conversation = []
+    events = asyncio.run(
+        collect(
+            agent_loop(
+                provider,
+                history(8000),
+                [],
+                run_messages=conversation,
+                reserve_tokens=1500,
+                keep_recent_tokens=20000 if recovery == "skipped" else 1000,
+            )
+        )
+    )
+    assert len(provider.summaries) == (recovery == "failed")
+    assert not any(isinstance(event, AgentCompaction) for event in events)
+    replies = [event.message for event in events if isinstance(event, AgentMessageEnd)]
+    assert len(replies) == (2 if with_tools else 1)
+    reply = replies[0]
+    assert reply.text == "Incomplete plan" and reply.stop_reason == "length"
+    assert not reply.context_omitted
+    assert conversation[0] == reply
+    restored = entry_from_record(*entry_record(reply))
+    assert prepare_provider_request([], [restored])[0]["content"] == "Incomplete plan"
+    if with_tools:
+        assert isinstance(conversation[1], ToolResultMessage)
+        assert conversation[1].text == TRUNCATED_TOOL_CALL_RESULT
+        request = provider.requests[1][0]
+        assert request[-2]["content"] == "Incomplete plan"
+        assert request[-2]["tool_calls"][0]["function"]["arguments"] == "{}"
+        assert request[-1]["tool_call_id"] == "partial-write"
+        assert request[-1]["content"] == TRUNCATED_TOOL_CALL_RESULT
+    else:
+        assert len(provider.requests) == 1
+
+
+def test_length_stop_without_usage_does_not_trigger_recovery():
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd
+
+    class Provider(CompactionProvider):
+        context_tokens = 16000
+        output_tokens = 4000
+
+        async def stream_events(self, messages, tools=None):
+            if messages[0]["content"].startswith("You are a context summarization assistant."):
+                async for event in super().stream_events(messages, tools):
+                    yield event
+                return
+            self.requests.append((messages, tools))
+            yield TextDelta("Incomplete answer")
+            yield ResponseEnd("length")
+
+    provider = Provider()
+    events = asyncio.run(collect(agent_loop(provider, history(8000), [], reserve_tokens=1500, keep_recent_tokens=1000)))
+    assert len(provider.requests) == 1
+    assert not provider.summaries
+    (reply,) = [event.message for event in events if isinstance(event, AgentMessageEnd)]
+    assert reply.stop_reason == "length" and not reply.context_omitted
+
+
+@pytest.mark.parametrize("failure", [None, "error"], ids=["recovered", "failed-summary"])
+def test_length_recovery_checkpoints_the_reply_before_summary_and_updates_its_final_state(failure):
+    from . import test_ai_basic as basic
+
+    saved = {}
+
+    class Provider(CompactionProvider):
+        context_tokens = 32000
+        output_tokens = 4000
+
+        async def stream_events(self, messages, tools=None):
+            if messages[0]["content"].startswith("You are a context summarization assistant."):
+                assert any(
+                    isinstance(entry, AssistantMessage) and entry.text == "Incomplete answer" and entry.context_omitted
+                    for entry in saved.values()
+                )
+                async for event in super().stream_events(messages, tools):
+                    yield event
+                return
+            self.requests.append((messages, tools))
+            yield TextDelta("Incomplete answer" if len(self.requests) == 1 else "Recovered answer")
+            yield TokenUsage(4000, 100, 4100)
+            yield ResponseEnd("length" if len(self.requests) == 1 else "stop")
+
+    provider = Provider(fail_summary=failure)
+    app = basic.create_test_app(
+        settings=basic.make_settings(compaction_reserve_tokens=1500, compaction_keep_recent_tokens=1000),
+        provider=provider,
+    )
+    with basic.AuthenticatedTestClient(app) as client:
+        sid = basic.create_session(client, basic.schedule_yaml())
+        store = app.state.session_store
+        session = store._sessions[sid]
+        snapshot = store.begin(sid, session.owner_token)
+        store.finish(
+            sid,
+            [UserMessage("x" * 16000), AssistantMessage("Earlier answer " + "y" * 8000)],
+            snapshot=snapshot,
+        )
+
+        def save_entry(_session_id, record):
+            seq, _run_id, entry = record
+            saved[seq] = entry
+
+        session.entry_log = save_entry
+        response = client.post(f"/sessions/{sid}/messages", json={"message": "Inspect P1"})
+        assert response.status_code == 200
+        assert provider.summaries
+        (reply,) = [
+            entry
+            for entry in session.transcript
+            if isinstance(entry, AssistantMessage) and entry.text == "Incomplete answer"
+        ]
+        assert reply.context_omitted == (failure is None)
+        assert reply in saved.values()
+        events = basic.parse_sse(response.text, include_response_end=True)
+        ended = [data for kind, data in events if kind == "response_end"]
+        if failure is None:
+            assert len(provider.requests) == 2
+            assert [data.get("context_omitted", False) for data in ended] == [True, False]
+            reply_seq = next(seq for seq, entry in saved.items() if entry == reply)
+            assert all(seq > reply_seq for seq, entry in saved.items() if isinstance(entry, CompactionEntry))
+        else:
+            assert len(provider.requests) == 1
+            assert len(ended) == 1 and not ended[0].get("context_omitted")
+            assert any(kind == "truncated" for kind, _data in events)
+            assert "Incomplete answer" in str(session.history)
+
+
 @pytest.mark.parametrize("failure", ["overflow", "length"])
 def test_recovery_can_summarize_a_single_oversized_input_after_omitting_the_attempt(failure):
     class Provider(CompactionProvider):

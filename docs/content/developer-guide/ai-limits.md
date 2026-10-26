@@ -59,6 +59,9 @@ Pi's design guides the whole agent. These implementation differences remain:
   and image representation differ from Pi's native message format.
 - The loop checks context before tool continuations as well as after a final
   response, so growing tool results can be summarized before the next request.
+  Length-stop recovery requires reported completion usage. If recovery compaction
+  skips or fails, normal output-limit handling retains the response and refuses
+  its partial tool calls.
   Manual compaction uses shared run admission, Stop, replay, and persistence.
   It requires an idle chat instead of implicitly stopping an active schedule
   operation. Use Stop before compacting an active chat.

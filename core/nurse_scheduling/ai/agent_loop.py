@@ -237,11 +237,13 @@ async def agent_loop(
             usage,
         )
         desired_output = getattr(provider, "output_tokens", None)
+        completion = (usage or {}).get("completion_tokens")
         recoverable_length = (
             finish_reason == "length"
             and type(desired_output) is int
             and desired_output > 0
-            and (usage or {}).get("completion_tokens", 0) < desired_output
+            and type(completion) is int
+            and completion < desired_output
         )
         if recoverable_length and overflow_recovered:
             conversation.append(response)
@@ -251,20 +253,24 @@ async def agent_loop(
         if recoverable_length:
             # Keep the truncated attempt for audit, but omit it from the context
             # being summarized and retried. Never execute its partial tool calls.
-            response = replace(response, context_omitted=True)
-            conversation.append(response)
-            yield AgentMessageEnd(response)
+            # Compaction events checkpoint the attempt before summary calls. Publish
+            # the omission only after a summary succeeds and a retry can replace it.
+            response_index = len(conversation)
+            omitted = replace(response, context_omitted=True)
+            conversation.append(omitted)
             compacted = False
             async with aclosing(compact_context(force=True)) as compaction_events:
                 async for event in compaction_events:
                     compacted = compacted or isinstance(event, AgentCompaction)
                     yield event
-            if not compacted:
-                break
-            overflow_recovered = True
-            continue
+            if compacted:
+                yield AgentMessageEnd(omitted)
+                overflow_recovered = True
+                continue
+            conversation[response_index] = response
+        else:
+            conversation.append(response)
         overflow_recovered = False
-        conversation.append(response)
         yield AgentMessageEnd(response)
         if not calls:
             async with aclosing(compact_context()) as compaction_events:
