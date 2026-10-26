@@ -39,8 +39,15 @@ python -m tests.ai.runner run
 
 Required settings are `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. Set `AI_SANDBOX_BACKEND=e2b` and select `AI_PROVIDER_MODEL`
-and `E2B_TEMPLATE` for your deployment. Cases run sequentially. By default,
-each case runs once.
+and `E2B_TEMPLATE` for your deployment. Independent cases run in parallel using
+LiteLLM deployment limits and cached health, capped at 20 sandboxes. Missing
+metadata or health uses the shared conservative fallback of at most four jobs.
+`--jobs` can lower concurrency. See `concurrency.json` in the run directory for
+the selected limit and reason. By default, each case runs once.
+
+Use `--repeat 12` to run each selected case twelve times with fresh history and
+sandboxes. Repeated runs share the same concurrency limit and save transcripts
+under separate `run-N/` directories. Any failed run fails the command.
 `--diagnostic-attempts 3` runs three independent attempts when the first fails,
 even if the second passes. Any failure keeps the command failed. Production
 provider retries still apply.

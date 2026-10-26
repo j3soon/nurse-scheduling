@@ -42,6 +42,7 @@ from nurse_scheduling.ai.context import (
     retained_entries,
     upload_event,
 )
+from nurse_scheduling.ai.litellm_concurrency import discover_capacity
 from nurse_scheduling.ai.provider import OpenAiCompatibleProvider
 from nurse_scheduling.ai.sandbox import SandboxError, SandboxFactory, managed_sandbox_factory
 from nurse_scheduling.ai.sandbox.factory import create_sandbox_factory
@@ -258,28 +259,44 @@ async def run_cases(
     *,
     judge_provider=None,
     output_dir: Path | None = None,
+    jobs: int = 1,
+    repeat: int = 1,
 ) -> bool:
-    """Repeat initially failed cases for inspection without changing their outcome."""
-    results = []
-    for case in cases:
+    """Run independent conversations concurrently, retaining every failure."""
+    if jobs < 1 or repeat < 1:
+        raise ValueError("jobs and repeat must be positive")
+    semaphore = asyncio.Semaphore(jobs)
+
+    async def run(case, repetition):
+        async with semaphore:
+            return await attempts(case, repetition)
+
+    async def attempts(case, repetition):
+        results = []
+        label = case.path.stem if repeat == 1 else f"{case.path.stem} (run {repetition})"
         for attempt in range(1, diagnostic_attempts + 1):
-            print(f"Attempt {attempt}: {case.path}", flush=True)
+            print(f"Attempt {attempt}: {case.path} (run {repetition}/{repeat})", flush=True)
             relative = case.path.relative_to(TESTCASES) if case.path.is_relative_to(TESTCASES) else Path(case.path.name)
-            transcript_path = (
-                output_dir / relative.with_suffix("") / f"attempt-{attempt}.md" if output_dir is not None else None
-            )
+            directory = relative.with_suffix("")
+            if repeat > 1:
+                directory /= f"run-{repetition}"
+            transcript_path = output_dir / directory / f"attempt-{attempt}.md" if output_dir is not None else None
             passed = await run_case(
                 case, provider, settings, factory, judge_provider=judge_provider, transcript_path=transcript_path
             )
             results.append(
                 {
-                    "case": case.path.stem,
+                    "case": label,
                     "attempt": attempt,
                     "passed": passed,
                 }
             )
             if attempt == 1 and passed:
                 break
+        return results
+
+    batches = await asyncio.gather(*(run(case, repetition) for case in cases for repetition in range(1, repeat + 1)))
+    results = [result for batch in batches for result in batch]
     print_summary(results)
     return all(result["passed"] for result in results)
 
@@ -287,7 +304,7 @@ async def run_cases(
 TRANSCRIPTS = ROOT.parents[2] / "artifacts" / "ai-testcases"
 
 
-async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
+async def _run(cases: list[Case], diagnostic_attempts: int, jobs: int | None = None, repeat: int = 1) -> bool:
     settings = AiSettings.from_env()
     provider = OpenAiCompatibleProvider(settings)
     factory = create_sandbox_factory(settings)
@@ -296,6 +313,16 @@ async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
         replace(settings, provider_model=judge_model), parameters={"temperature": 0}
     )
     output_dir = TRANSCRIPTS / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    capacity = await asyncio.to_thread(
+        discover_capacity, settings.provider_base_url, settings.provider_api_key, settings.provider_model
+    )
+    selected_jobs = capacity.select_jobs(jobs, len(cases) * repeat)
+    print(f"Case concurrency: {selected_jobs} ({capacity.reason}; maximum 20)", flush=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "concurrency.json").write_text(
+        json.dumps({**asdict(capacity), "requested_jobs": jobs, "jobs": selected_jobs}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     async with managed_sandbox_factory(factory):
         return await run_cases(
             cases,
@@ -305,6 +332,8 @@ async def _run(cases: list[Case], diagnostic_attempts: int) -> bool:
             diagnostic_attempts,
             judge_provider=judge_provider,
             output_dir=output_dir,
+            jobs=selected_jobs,
+            repeat=repeat,
         )
 
 
@@ -319,7 +348,11 @@ def main(argv: list[str] | None = None) -> int:
         default=1,
         help="total attempts for initially failed cases, without clearing failure (default: 1)",
     )
+    parser.add_argument("--jobs", type=int, help="lower the automatically discovered concurrency limit")
+    parser.add_argument("--repeat", type=int, default=1, help="independent runs per testcase (default: 1)")
     args = parser.parse_args(argv)
+    if (args.jobs is not None and args.jobs < 1) or args.repeat < 1:
+        parser.error("--jobs and --repeat must be positive")
     try:
         paths = set()
         for path in args.paths or [TESTCASES]:
@@ -328,7 +361,11 @@ def main(argv: list[str] | None = None) -> int:
             raise DefinitionError("no testcase YAML files found")
         cases = [load_case(path) for path in sorted(paths)]
         print(f"Validated {len(cases)} testcase(s).", flush=True)
-        return 0 if args.command == "validate" or asyncio.run(_run(cases, args.diagnostic_attempts)) else 1
+        return (
+            0
+            if args.command == "validate" or asyncio.run(_run(cases, args.diagnostic_attempts, args.jobs, args.repeat))
+            else 1
+        )
     except (DefinitionError, ValueError, OSError) as error:
         print(f"ERROR: {error}", flush=True)
         return 2

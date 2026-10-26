@@ -559,6 +559,86 @@ def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_pa
         assert reply in path.read_text(encoding="utf-8")
 
 
+def test_parallel_repetitions_bound_concurrency_and_retain_failed_attempts(tmp_path, monkeypatch):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+    paths = []
+    active = peak = 0
+
+    async def exercise():
+        release = asyncio.Event()
+        running = set()
+
+        async def attempt(case, *args, transcript_path, **kwargs):
+            nonlocal active, peak
+            repetition = transcript_path.parent.name
+            assert repetition not in running
+            running.add(repetition)
+            active += 1
+            peak = max(peak, active)
+            if active == 4:
+                release.set()
+            await release.wait()
+            await asyncio.sleep(0)
+            paths.append(transcript_path)
+            transcript_path.parent.mkdir(parents=True, exist_ok=True)
+            transcript_path.write_text("Conversation\n", encoding="utf-8")
+            running.remove(repetition)
+            active -= 1
+            return repetition != "run-2" or transcript_path.name != "attempt-1.md"
+
+        monkeypatch.setattr(runner, "run_case", attempt)
+        return await asyncio.wait_for(
+            run_cases([case], None, settings(), None, diagnostic_attempts=3, jobs=4, repeat=12, output_dir=tmp_path),
+            timeout=5,
+        )
+
+    assert not asyncio.run(exercise())
+    assert peak == 4 and active == 0
+    assert len(paths) == len(set(paths)) == 14
+    assert len({path.parent for path in paths}) == 12
+    assert len(list((tmp_path / "case" / "run-2").glob("attempt-*.md"))) == 3
+
+
+@pytest.mark.parametrize(
+    ("limit", "requested", "repeat", "expected"),
+    [(4, None, 12, 4), (8, 2, 12, 2), (40, None, 30, 20), (0, None, 12, None)],
+)
+def test_cli_discovers_capacity_and_bounds_parallel_repetitions(
+    tmp_path, monkeypatch, limit, requested, repeat, expected
+):
+    from nurse_scheduling.ai.litellm_concurrency import ProviderCapacity
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+    monkeypatch.setattr(AiSettings, "from_env", settings)
+    monkeypatch.setattr(runner, "TRANSCRIPTS", tmp_path / "transcripts")
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda *_: FakeSandboxFactory())
+    calls = []
+
+    def discover(*args):
+        assert args == (settings().provider_base_url, settings().provider_api_key, settings().provider_model)
+        return ProviderCapacity("test", (), limit, "test capacity")
+
+    async def execute(*args, jobs, repeat, **kwargs):
+        calls.append((jobs, repeat))
+        return True
+
+    monkeypatch.setattr(runner, "discover_capacity", discover)
+    monkeypatch.setattr(runner, "run_cases", execute)
+    argv = ["run", str(case.path), "--repeat", str(repeat)]
+    if requested is not None:
+        argv += ["--jobs", str(requested)]
+    assert main(argv) == (0 if expected else 2)
+    assert calls == ([(expected, repeat)] if expected else [])
+    reports = list((tmp_path / "transcripts").glob("*/concurrency.json"))
+    if expected:
+        assert json.loads(reports[0].read_text(encoding="utf-8"))["jobs"] == expected
+    else:
+        assert not reports
+
+
 @pytest.mark.parametrize("passed", [True, False], ids=["passing-summary", "failed-conversation"])
 def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed):
     from nurse_scheduling.ai.provider import ReasoningDelta
@@ -734,6 +814,9 @@ def test_cli_run_saves_successful_conversation_by_default(tmp_path, monkeypatch,
     case = definition(tmp_path, "steps: [{user: hi}]")
     provider = ScriptedProvider([[TextDelta("Successful local reply."), ResponseEnd("stop")]])
     output_dir = tmp_path / "transcripts"
+    from nurse_scheduling.ai.litellm_concurrency import ProviderCapacity
+
+    monkeypatch.setattr(runner, "discover_capacity", lambda *_: ProviderCapacity("test", (), 4, "test capacity"))
     monkeypatch.setattr(runner, "TRANSCRIPTS", output_dir)
     monkeypatch.setattr(AiSettings, "from_env", settings)
     monkeypatch.setattr(runner, "OpenAiCompatibleProvider", lambda *args, **kwargs: provider)
