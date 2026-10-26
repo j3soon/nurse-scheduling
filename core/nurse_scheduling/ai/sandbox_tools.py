@@ -140,9 +140,9 @@ class SandboxPiTools:
         )
         result = await self._sandbox.run(call.command, timeout_seconds=effective_timeout)
         full_output = result.stdout + result.stderr
-        prepared = prepare_bash_output(full_output)
-        full_output_path: str | None = None
-        if prepared.truncation.truncated and not result.sandbox_terminated:
+        prepared = result.prepared_output or prepare_bash_output(full_output)
+        full_output_path = result.full_output_path
+        if prepared.truncation.truncated and not full_output_path and not result.sandbox_terminated:
             full_output_path = f"{FULL_OUTPUT_DIRECTORY}/pi-bash-{secrets.token_hex(8)}.log"
             await self._sandbox.write_file(full_output_path, full_output)
 

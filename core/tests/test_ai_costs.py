@@ -112,7 +112,7 @@ def patch_gateway(monkeypatch, costs):
 
     def respond(request):
         if request.url.path.endswith("/models"):
-            return httpx.Response(200, json={"data": [{"id": "test-model"}]})
+            return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": 262144}]})
         if request.url.path.endswith("/model/info"):
             return httpx.Response(404)
         requests.append(request)
@@ -183,6 +183,8 @@ def test_timeout_retry_records_each_http_attempt(monkeypatch):
         httpx, "AsyncClient", lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(respond)})
     )
     provider = OpenAiCompatibleProvider(basic.make_settings(provider_retry_backoff_seconds=0), include_costs=True)
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
     events = asyncio.run(collect(provider.stream_events([])))
     finals = [event for event in events if isinstance(event, ProviderCall) and event.status != "pending"]
     assert len(attempts) == len(finals) == 2

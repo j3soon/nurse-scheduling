@@ -231,11 +231,15 @@ interface SessionStatusResponse {
 }
 
 interface SsePayload {
+  kind?: unknown;
+  characters?: unknown;
+  step?: unknown;
   summary?: unknown;
   keep_messages?: unknown;
   replay_arguments?: unknown;
   stop_reason?: unknown;
   context_note?: unknown;
+  context_omitted?: unknown;
   reason?: unknown;
   tokens_before?: unknown;
   success?: unknown;
@@ -577,13 +581,23 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   const emit = (event: SessionEvent) => events.push(runId === undefined ? event : { ...event, runId });
   if (runId) emit({ type: 'run_context', runId });
 
-  if (eventType === 'compaction_start' || eventType === 'compaction_end') {
+  if (eventType === 'generation_progress') {
+    if (!['compaction', 'tool_calls'].includes(payload.kind as string)
+      || !Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0
+      || !Number.isSafeInteger(payload.step) || (payload.step as number) < 1) {
+      throw new Error('The AI backend returned invalid generation progress.');
+    }
+    emit({ type: 'generation_progress', kind: payload.kind as 'compaction' | 'tool_calls',
+      characters: payload.characters as number, step: payload.step as number });
+  } else if (eventType === 'compaction_start' || eventType === 'compaction_end') {
     if (!['threshold', 'overflow', 'manual'].includes(payload.reason as string)
       || !Number.isSafeInteger(payload.tokens_before) || (payload.tokens_before as number) < 0
       || (eventType === 'compaction_end' && (typeof payload.success !== 'boolean' || typeof payload.aborted !== 'boolean'
         || (payload.skipped !== undefined && (typeof payload.skipped !== 'boolean' || (payload.skipped && (payload.success || payload.aborted))))
         || (payload.estimated_tokens_after !== undefined && (!Number.isSafeInteger(payload.estimated_tokens_after) || (payload.estimated_tokens_after as number) < 0))
         || (payload.summary !== undefined && typeof payload.summary !== 'string')
+        || (payload.characters !== undefined && (!Number.isSafeInteger(payload.characters) || (payload.characters as number) < 0))
+        || (payload.step !== undefined && (!Number.isSafeInteger(payload.step) || (payload.step as number) < 1))
         || (payload.keep_messages !== undefined && (!Number.isSafeInteger(payload.keep_messages) || (payload.keep_messages as number) < 0))))) {
       throw new Error('The AI backend returned invalid compaction status.');
     }
@@ -593,6 +607,8 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
       ...(payload.skipped === undefined ? {} : { skipped: payload.skipped as boolean }),
       ...(payload.summary === undefined ? {} : { summary: payload.summary as string }),
       ...(payload.keep_messages === undefined ? {} : { keepMessages: payload.keep_messages as number }),
+      ...(payload.characters === undefined ? {} : { characters: payload.characters as number }),
+      ...(payload.step === undefined ? {} : { step: payload.step as number }),
       ...(payload.estimated_tokens_after === undefined ? {} : { estimatedTokensAfter: payload.estimated_tokens_after as number }) });
   } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
@@ -621,11 +637,12 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'reasoning', text: payload.text });
   } else if (eventType === 'response_end') {
     if (!['stop', 'tool_use', 'length', 'error', 'aborted'].includes(payload.stop_reason as string)
-      || (payload.context_note !== undefined && typeof payload.context_note !== 'string')) {
+      || (payload.context_note !== undefined && typeof payload.context_note !== 'string')
+      || (payload.context_omitted !== undefined && payload.context_omitted !== true)) {
       throw new Error('The AI backend returned an invalid response boundary.');
     }
     emit({ type: 'response_end', stopReason: payload.stop_reason as 'stop' | 'tool_use' | 'length' | 'error' | 'aborted',
-      contextNote: payload.context_note as string | undefined });
+      contextNote: payload.context_note as string | undefined, contextOmitted: payload.context_omitted as true | undefined });
   } else if (eventType === 'truncated') {
     emit({ type: 'truncated' });
   } else if (eventType === 'tool_start' && typeof payload.name === 'string') {
@@ -825,6 +842,15 @@ export async function sendMessage(
   endpoint = getAiBaseUrl(),
   { messageId, shouldStop, onConnectionChange, selection }: SendMessageOptions = { messageId: newMessageId() },
 ): Promise<string> {
+  return acceptRun(sessionId, signal, authToken, endpoint, { messageId, shouldStop, onConnectionChange },
+    connection => postMessage(sessionId, message, connection, authToken, endpoint, 'application/json', messageId, selection));
+}
+
+async function acceptRun(
+  sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
+  { messageId, shouldStop, onConnectionChange }: Omit<SendMessageOptions, 'selection'>,
+  post: (signal: AbortSignal) => Promise<Response>,
+): Promise<string> {
   let retries = 0;
   let stopSaved = false;
   while (true) {
@@ -847,9 +873,7 @@ export async function sendMessage(
       }
       let body: { run_id?: unknown };
       try {
-        const response = await postMessage(
-          sessionId, message, connection.signal, authToken, endpoint, 'application/json', messageId, selection,
-        );
+        const response = await post(connection.signal);
         body = await response.json() as { run_id?: unknown };
       } catch (error) {
         if (error instanceof SyntaxError) throw new Error('The AI backend returned an invalid run ID.');
@@ -992,13 +1016,17 @@ export async function getChatExportUrl(sessionId: string, authToken: string | nu
 /** Summarize an idle session without asking a new question. */
 export async function compactSession(
   sessionId: string, messageId: string, authToken: string | null, endpoint: string,
-): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
-    method: 'POST', credentials: 'include',
-    headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ message_id: messageId }),
+  options: Omit<SendMessageOptions, 'messageId' | 'selection'> & { signal: AbortSignal },
+): Promise<string> {
+  return acceptRun(sessionId, options.signal, authToken, endpoint, { ...options, messageId }, async signal => {
+    const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    if (!response.ok) throw await responseError(response);
+    return response;
   });
-  if (!response.ok) throw await responseError(response);
 }
 
 /** Stop the named message's run, or every run of the session when no message is named. */

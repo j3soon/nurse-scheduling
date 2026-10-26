@@ -48,7 +48,7 @@ elif [[ "$run_full_suite" == false ]]; then
       tests/ai/*)
         test_paths+=(tests/test_ai_testcases.py)
         ;;
-      tests/test_ai_*.py | tests/ai_fixtures/*)
+      tests/test_ai_*.py | tests/ai_fixtures/* | tests/chat_rendering_helper.py)
         ai_changed=true
         ;;
       tests/test_*.py)

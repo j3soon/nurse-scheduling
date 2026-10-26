@@ -25,7 +25,84 @@ import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 export type TranscriptMessage = ChatMessage & {
   presentation?: 'notice' | 'summary' | 'context';
   compaction?: CompactionActivity;
+  compacted?: boolean;
 };
+
+function contextMessageCount(message: TranscriptMessage): number {
+  if (message.role === 'system' || message.role === 'optimizer' || message.presentation === 'notice') return 0;
+  if (message.presentation === 'summary') return message.compaction?.invalidated ? 0 : 1;
+  if (message.role === 'user') return 1;
+  if (message.status === 'pending') return 0;
+  const activity = message.activity ?? [];
+  if (activity.length === 0) {
+    return message.status === 'failed' || message.status === 'stopped' || !message.content ? 0 : 1;
+  }
+  let count = 0;
+  let step: 'none' | 'text' | 'tools' = 'none';
+  for (const entry of activity) {
+    if (entry.kind === 'reasoning' || entry.kind === 'response') {
+      if (entry.context === 'omitted'
+        || ((message.status === 'failed' || message.status === 'stopped') && entry.context !== 'complete')) {
+        step = 'none';
+        continue;
+      }
+      if (step !== 'text') {
+        count += 1;
+        step = 'text';
+      }
+    } else if (entry.kind === 'tool' && entry.state !== 'preparing') {
+      if (step === 'none') count += 1;
+      count += 1;
+      step = entry.endsRound ? 'none' : 'tools';
+    }
+  }
+  return count;
+}
+
+export function transcriptConversation(messages: ChatMessage[]): TranscriptMessage[] {
+  const bubbles: TranscriptMessage[] = [];
+  const counts: number[] = [];
+  for (const message of messages) {
+    const parts = transcriptMessages(message);
+    const partCounts = parts.map(contextMessageCount);
+    if (message.role === 'assistant' && (message.status === 'failed' || message.status === 'stopped')
+      && partCounts.every(count => count === 0)
+      && !message.activity?.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')) {
+      for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+        if (bubbles[i].role === 'assistant') break;
+        if (bubbles[i].role === 'user' && bubbles[i].source === 'status') counts[i] = 0;
+        else if (bubbles[i].role === 'user' && (bubbles[i].source === undefined || bubbles[i].source === 'optimizer')) {
+          counts[i] = 0;
+          break;
+        }
+      }
+    }
+    bubbles.push(...parts);
+    counts.push(...partCounts);
+  }
+  let active = new Set<number>();
+  bubbles.forEach((bubble, index) => {
+    if (bubble.presentation === 'summary' && !bubble.compaction?.invalidated) {
+      let keep = bubble.compaction?.keepMessages ?? 0;
+      const retained = new Set<number>();
+      // Keep the newest messages. The new summary replaces the earlier one, so it never counts as kept.
+      for (const prior of Array.from(active).sort((a, b) => b - a)) {
+        if (keep <= 0) break;
+        if (counts[prior] > 0 && bubbles[prior].presentation !== 'summary') {
+          retained.add(prior);
+          keep -= counts[prior];
+        }
+      }
+      retained.add(index);
+      active = retained;
+    } else if (counts[index] > 0) {
+      active.add(index);
+    }
+  });
+  return bubbles.map((bubble, index) => (
+    counts[index] > 0 && !active.has(index) ? { ...bubble, compacted: true } : bubble
+  ));
+}
 
 // Derive bubbles for display. Keep saved messages and execution ownership intact.
 export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
@@ -44,7 +121,9 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
     part.activity!.push(entry);
     if (entry.kind === 'response') part.content += entry.text;
   };
-  if (content && !activity!.some(entry => entry.kind === 'response')) append({ kind: 'response', text: content });
+  if (content && (status !== 'failed' || content !== failureReason) && !activity!.some(entry => entry.kind === 'response')) {
+    append({ kind: 'response', text: content });
+  }
   for (const entry of activity!) {
     if (entry.kind === 'compaction') {
       const { summary, ...progress } = entry;
@@ -59,14 +138,25 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
   if (status === 'pending' && parts.at(-1)?.presentation && !activity!.some(entry => (
     entry.kind === 'compaction' && (entry.state === 'running' || entry.reason === 'manual')
   ))) parts.push({ ...base, content: '' });
-  const footer = parts.findLast(part => part.role === 'assistant') ?? parts.at(-1)!;
+  else if ((status === 'failed' || status === 'stopped')
+    && !parts.some(part => part.role === 'assistant' && !part.presentation)
+    && !activity!.some(entry => entry.kind === 'compaction' && entry.reason === 'manual')) {
+    const contextIndex = parts.findIndex(part => part.presentation === 'context');
+    parts.splice(contextIndex >= 0 ? contextIndex : parts.length, 0, { ...base, content: '' });
+  }
+  const footer = parts.findLast(part => part.role === 'assistant' && part.presentation !== 'notice')
+    ?? parts.findLast(part => part.role === 'assistant') ?? parts.at(-1)!;
   Object.assign(footer, { createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
     truncated, modelSelection, providerCalls, costSummary, downloadId, unsentFiles });
   return parts;
 }
 
 export function formatCharacterCount(characters: number): string {
-  return characters >= 1000 ? `${(characters / 1000).toFixed(1)}k` : `${characters}`;
+  return characters.toLocaleString('en-US');
+}
+
+export function characterCount(text: string): number {
+  return Array.from(text).length;
 }
 
 export function formatResponseDuration(startedAt: number, completedAt: number): string {
@@ -81,15 +171,20 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
   if (entry.kind === 'notice') return 'App notice';
   if (entry.kind === 'compaction' && entry.invalidated) return 'Conversation summary discarded';
-  if (entry.kind === 'compaction') return {
+  if (entry.kind === 'compaction') return ({
     running: 'Summarizing conversation', completed: 'Conversation summarized',
     failed: 'Summarization failed', interrupted: 'Summarization interrupted',
     skipped: 'No compaction needed',
-  }[entry.state];
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(entry.text.length)} characters`;
+  }[entry.state]) + (entry.characters === undefined ? ''
+    : `${(entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : ''} · ${formatCharacterCount(entry.characters)} characters`);
+  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
   if (entry.kind === 'schedule-applied') return 'Applied to your schedule';
+  if (entry.argumentsCharacters !== undefined) {
+    const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
+    return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;
+  }
   if (entry.state === 'running') return `${entry.name} · running`;
   if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
   return entry.ok ? entry.name : `${entry.name} · failed`;

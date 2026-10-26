@@ -22,7 +22,7 @@
 import type { ActivityEntry } from './AssistantActivity';
 import type { ToolActivity, ToolStartActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
-import type { ChatMessageContent } from './chatTranscript';
+import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
 // Plain-HTTP LAN origins lack randomUUID, so build the same version 4 UUID form from random bytes.
 export function messageId(): string {
@@ -39,7 +39,7 @@ export function messageId(): string {
 export type AssistantEvent =
   | { type: 'delta'; text: string }
   | { type: 'reasoning'; text: string }
-  | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' }>
+  | Extract<SessionEvent, { type: 'compaction_start' | 'compaction_end' | 'generation_progress' }>
   | { type: 'truncated' }
   | Extract<SessionEvent, { type: 'response_end' }>
   | { type: 'provider_retry'; message: string }
@@ -52,7 +52,18 @@ export type AssistantEvent =
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
+    || (event.type === 'generation_progress' && event.kind === 'tool_calls')
     || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
+}
+
+export function invalidateRunSummaries(messages: ChatMessage[], runId: string): ChatMessage[] {
+  return messages.map(message => {
+    if (message.role !== 'assistant' || (message.runId ?? message.id) !== runId
+      || !message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'completed' && !entry.invalidated)) return message;
+    return { ...message, activity: message.activity.map(entry => (
+      entry.kind === 'compaction' && entry.state === 'completed' ? { ...entry, invalidated: true } : entry
+    )) };
+  });
 }
 
 function appendResponseActivity(entries: ActivityEntry[], text: string): ActivityEntry[] {
@@ -93,12 +104,15 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'response_end': {
-      const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
-      const ended = activity.map(entry => (
+      const context = event.stopReason === 'error' || event.stopReason === 'aborted' || event.contextOmitted
+        ? 'omitted' : 'complete';
+      // A new model response follows the latest tool result, which ends its tool round.
+      const roundEnd = activity.findLastIndex(entry => entry.kind === 'tool' && entry.state !== 'preparing');
+      const ended = activity.map((entry, index) => (
         event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
           ? { ...entry, invalidated: true }
           : (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
-          ? { ...entry, context } : entry
+          ? { ...entry, context } : index === roundEnd ? { ...entry, endsRound: true } : entry
       )) as ActivityEntry[];
       if (event.contextNote) {
         ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });
@@ -106,7 +120,8 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       return { ...message, activity: ended, ...(event.stopReason === 'length' ? { truncated: true } : {}) };
     }
     case 'provider_retry':
-      return { ...message, activity: [...activity, { kind: 'notice', text: event.message }] };
+      return { ...message, activity: [...activity.filter(entry => entry.kind !== 'tool' || entry.state !== 'preparing'),
+        { kind: 'notice', text: event.message }] };
     case 'delta':
       return {
         ...message,
@@ -121,6 +136,17 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       return { ...message, activity: [...activity, ...notice, { kind: 'compaction', state: 'running', reason: event.reason,
         text: 'The conversation is being summarized.' }] };
     }
+    case 'generation_progress': {
+      if (event.kind === 'compaction') {
+        const index = activity.findLastIndex(entry => entry.kind === 'compaction' && entry.state === 'running');
+        return { ...message, activity: activity.map((entry, i) => i === index
+          ? { ...entry, characters: event.characters, step: event.step } : entry) };
+      }
+      const entry: ActivityEntry = { kind: 'tool', name: 'Tool calls', arguments: '', result: '', ok: true,
+        state: 'preparing', argumentsCharacters: event.characters };
+      const index = activity.findLastIndex(item => item.kind === 'tool' && item.state === 'preparing');
+      return { ...message, activity: index < 0 ? [...activity, entry] : activity.map((item, i) => i === index ? entry : item) };
+    }
     case 'compaction_end': {
       const state = event.success ? 'completed' : event.aborted ? 'interrupted' : event.skipped ? 'skipped' : 'failed';
       const notice: ActivityEntry[] = event.reason === 'manual'
@@ -131,9 +157,13 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
         ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
           ? 'Summarization stopped. The original context was kept.' : event.skipped
-            ? 'Compaction would not reduce context. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+            ? 'Nothing to compact. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
-      return { ...message, activity: index < 0 ? [...activity, ...notice, entry] : [...activity.slice(0, index), entry, ...activity.slice(index + 1)] };
+      const progress = index < 0 ? undefined : activity[index] as Extract<ActivityEntry, { kind: 'compaction' }>;
+      const characters = event.characters ?? progress?.characters;
+      const step = event.step ?? progress?.step;
+      const completed = { ...entry, ...(characters === undefined ? {} : { characters }), ...(step === undefined ? {} : { step }) };
+      return { ...message, activity: index < 0 ? [...activity, ...notice, completed] : [...activity.slice(0, index), completed, ...activity.slice(index + 1)] };
     }
     case 'truncated':
       return { ...message, truncated: true };
@@ -148,7 +178,8 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
     case 'tool_start':
       return {
         ...message,
-        activity: [...activity, { kind: 'tool', ...event.activity, result: '', ok: true, state: 'running' }],
+        activity: [...activity.filter(entry => entry.kind !== 'tool' || entry.state !== 'preparing'),
+          { kind: 'tool', ...event.activity, result: '', ok: true, state: 'running' }],
       };
     case 'tool':
       return { ...message, activity: finishToolActivity(activity, event.activity) };
@@ -168,7 +199,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
 
 export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[] {
   return entries.map(entry => (
-    (entry.kind === 'tool' || entry.kind === 'compaction') && entry.state === 'running'
+    (entry.kind === 'tool' || entry.kind === 'compaction') && (entry.state === 'running' || entry.state === 'preparing')
       ? { ...entry, state: 'interrupted' as const }
       : entry
   ));
@@ -216,7 +247,7 @@ export function toAssistantEvent(
 ): AssistantEvent | null {
   switch (event.type) {
     case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'response_end': case 'tool_start': case 'tool':
-    case 'compaction_start': case 'compaction_end':
+    case 'compaction_start': case 'compaction_end': case 'generation_progress':
       return event;
     case 'schedule_change': {
       const before = workingSchedule.current ?? browserSchedule.current;

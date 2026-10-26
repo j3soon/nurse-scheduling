@@ -351,7 +351,8 @@ def test_allowed_tool_batch_executes_concurrently_and_reports_in_call_order():
 
 
 @pytest.mark.parametrize("count", [8, 9, 32])
-def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
+@pytest.mark.parametrize("parallel", [None, 4, 16], ids=["default", "four", "sixteen"])
+def test_large_read_batches_limit_active_calls_and_keep_result_order(count, parallel):
     active = peak = 0
 
     async def execute(_name, arguments):
@@ -370,11 +371,12 @@ def test_large_read_batches_limit_active_calls_and_keep_result_order(count):
                 provider,
                 QUESTION,
                 bind_agent_tools(TOOLS, execute, frozenset({BASH_TOOL})),
+                **({"max_parallel_tools": parallel} if parallel is not None else {}),
             )
         ]
 
     events = asyncio.run(collect())
-    assert peak <= 8
+    assert peak == min(count, parallel or 16)
     uses = [event for event in events if isinstance(event, AgentToolUse)]
     assert [event.tool_call_id for event in uses] == [f"call_{index}" for index in range(count)]
     assert all(event.ok for event in uses)
@@ -605,11 +607,20 @@ def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
 def test_agent_omits_a_final_answer_when_closed_before_the_run_finishes(monkeypatch, closed_after):
     compact = ContextCompactor.compact
 
-    async def compact_after_answer(self, messages, tools, force=False):
+    async def compact_after_answer(
+        self, messages, tools, force=False, already_compacted=False, after_omitted_attempt=False
+    ):
         if messages[-1]["role"] == "assistant":
             yield AgentCompaction(CompactionEntry("Summary", 0, 1000))
             return
-        async for event in compact(self, messages, tools, force=force):
+        async for event in compact(
+            self,
+            messages,
+            tools,
+            force=force,
+            already_compacted=already_compacted,
+            after_omitted_attempt=after_omitted_attempt,
+        ):
             yield event
 
     monkeypatch.setattr(ContextCompactor, "compact", compact_after_answer)

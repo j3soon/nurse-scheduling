@@ -79,6 +79,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   barriers when a test needs task ordering instead of an elapsed duration.
 - Bound polling by elapsed time or wait for a completion event with a timeout.
   Do not derive a waiting budget from a fixed number of sleeps.
+- For a timeout test that targets a later phase, arm the real deadline after
+  that phase starts. Do not make unrelated setup fit a short wall-clock budget.
 
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
@@ -146,12 +148,17 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
-  Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
+  Follow Pi agent v1.0.0 across all aspects of AI agent design and behavior.
+  Add a limit or restriction only when a concrete service requirement makes it
+  necessary.
+  Prefer the simplest implementation that preserves the upstream design.
   Clone external reference code under the ignored repository-root `artifacts/`
   directory and record the inspected revision in related developer documentation.
   Preserve upstream compaction prompt text exactly and record its revision and
   hashes. Keep project-specific workspace guidance in the main system prompt
   instead of duplicating it in compaction prompts.
+  Verify Pi alignment against the pinned source across the affected execution
+  path. Document each necessary difference and its reason in the limits page.
 - `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
@@ -174,21 +181,27 @@ stderr. Do not replace an explicitly selected file with a fallback.
   compaction boundary. A status message cannot stand in for the current request.
   Manual compaction shares run admission, Stop, replay, and persistence. Keep
   its request ID idempotent. Do not create a user question or allocate a workspace.
-  Cover short questions with longer completed replies. Treat a summary that does
-  not reduce context as unchanged context rather than a provider failure.
-  Use Pi's shared manual and automatic retention boundary. Keep recent messages
-  within the model and server limits, and skip a short conversation before calling
-  the provider when no older messages remain to summarize.
+  Cover short questions with longer completed replies. Use Pi's token threshold,
+  shared manual and automatic retention boundary, and separate history and turn-prefix
+  output budgets. Do not derive normal compaction behavior from defensive history
+  limits. Accept completed summaries without a character-size reduction test.
+  Skip a short conversation when no older messages remain to summarize.
   Keep summary requests visible in provider cost records, but keep their text out
-  of the answer stream. Use `tests/test_ai_compaction.py` for these contracts.
-  Test chunked summaries through the provider's token-limit calculation, including
-  updates with a previous split-turn summary and small model context windows.
+  of the answer stream. Test retries through each provider-stream consumer,
+  including compaction. Keep only the successful draft and retain all cost records.
+  Publish coalesced character counts for summary and tool-call generation without
+  exposing drafts. Count Unicode code points in chat, replay, and exports. Keep
+  character counts separate from provider token usage.
+  Use `tests/test_ai_compaction.py` for these contracts.
+  Test complete summary requests through the provider's token-limit calculation,
+  including updates with a previous split-turn summary and oversized requests.
+  Require a valid discovered model context window before paid generation.
   Coalesce streamed context estimates with text batches. Replace token estimates
   with provider usage without adding estimates to billed usage or cost totals.
-  Test history character and message thresholds without model context metadata.
+  Test that defensive history budgets do not alter compaction thresholds or retention.
   For live cross-run checks, use `../scripts/test_ai_compaction_live.sh` with
   `AI_ENV_FILE`. It runs five scenarios, at most four concurrently through the real session API
-  and prebuilt E2B sandboxes. A smaller history budget forces compaction.
+  and prebuilt E2B sandboxes. Explicit compaction token settings force compaction.
   Select an available model with a reported context limit. Check that model
   switching is rejected and supported reasoning-effort changes remain accepted.
   Check remembered file context separately from file availability in the new VM.
@@ -202,6 +215,14 @@ stderr. Do not replace an explicitly selected file with a fallback.
   candidate review in `workspace_tools.py`, and model-facing optimizer arguments
   in `optimizer_tool.py`. Optimizer job operations remain in `optimizer.py`,
   with HTTP transport in `optimizer_http.py`.
+- Keep defensive history, stream, and service capacity bounds separate from normal
+  Pi token budgets. Refuse new work at capacity without silently dropping completed
+  exchanges. Document defaults and upstream differences in
+  `docs/content/developer-guide/ai-limits.md`.
+  Define defensive defaults once as constants and allow optional environment
+  overrides. Keep those overrides out of environment examples and document them
+  in the limits page. Compose must pass optional overrides without duplicating
+  their defaults. Test code may lower bounds through constructor arguments.
 - `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
@@ -248,6 +269,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
   bytes and native download authorization with a rich saved-event fixture. Prepare
   browser archives before starting native downloads. Bound pending disk files and
   close them after download, expiry, preparation failure, or service shutdown.
+  Share transcript styles with the frontend. Compare fresh Python HTML against
+  the current live page with `experimental-ai-rendering.spec.ts` when changing
+  chat presentation or saved-event projection. Frozen export hashes alone do
+  not establish frontend parity.
 - Retry temporary provider failures automatically inside the provider request,
   with exponential backoff and a bounded total time. Retry only the incomplete
   model request, never commands or optimizer submissions. Do not wait for the
@@ -317,8 +342,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   the file version referenced by an earlier transcript entry.
   After rejecting optimizer files, check that a restart does not load an older
   workbook as the latest result.
-- Bound sandbox file and command output bytes while receiving them. Truncating
-  tool output after buffering does not bound the AI service's memory use.
+- Bound sandbox file bytes while receiving them. Capture full command logs inside
+  the sandbox and return a bounded tail with its log path. Check whether SDK
+  callbacks run after buffering. Truncation there does not bound backend memory.
 - Test file workflows across message boundaries and session expiry. Check the
   bytes delivered by the download API and the files loaded into the next VM.
   A printed workspace path does not prove delivery or retention.
@@ -358,6 +384,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   they stopped or that replay is safe.
   Evaluate tool deadlines through the tool's timeout parameter. Shell timers can
   start separate process groups and exercise a different cleanup path.
+  In live cleanup tests, wait for a child's ready signal before starting the
+  deadline. Cover timeouts before startup as separate cases.
 - Sandbox allocation is lazy. Only file tools and optimizer start need a
   sandbox. Optimizer status and finish-now controls must not allocate or resume
   one. Tests that verify attachment hydration must call a sandbox tool.
@@ -574,8 +602,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   omit the failed attempt from model context and retry the original request.
   Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed
-  response completion. Keep output limits cumulative across attempts and use
-  distinct errors for timeouts before and during streaming.
+  response completion. Follow model token limits and bound each HTTP response
+  while reading bytes, including unterminated SSE lines. Keep defensive byte
+  limits separate from normal output budgets. Use distinct errors for timeouts
+  before and during streaming.
 
 ## Server Authentication
 - `API_AUTH_TOKEN` is the optional legacy credential. Authentication is
@@ -709,6 +739,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
   Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
+  Reconfigure stdin and stdout to UTF-8 in helpers that exchange text through pipes.
   Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.

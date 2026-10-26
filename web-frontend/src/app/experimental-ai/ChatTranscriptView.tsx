@@ -19,12 +19,14 @@
 
 // This code is mostly AI generated.
 
+import '../../../../core/nurse_scheduling/ai/chat_styles.css';
+
 import { FiDownload } from 'react-icons/fi';
 
 import { AssistantActivity, CompactionSummary } from './AssistantActivity';
 import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
-import { messageLabel, messageUploadedFileLines, transcriptMessages } from './chatPresentation';
+import { characterCount, messageLabel, messageUploadedFileLines, transcriptConversation } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
 
@@ -32,13 +34,13 @@ import type { ChatMessage } from './chatTranscript';
 
 function ThinkingIndicator() {
   return (
-    <span role="status" aria-label="Thinking" className="inline-flex items-center gap-2 text-gray-600">
+    <span role="status" aria-label="Thinking" className="thinking">
       <span>Thinking</span>
-      <span aria-hidden="true" className="inline-flex gap-1">
+      <span aria-hidden="true" className="thinking-dots">
         {[0, 1, 2].map(index => (
           <span
             key={index}
-            className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse"
+            className="thinking-dot"
             style={{ animationDelay: `${index * 160}ms` }}
           />
         ))}
@@ -83,14 +85,14 @@ export function ChatTranscriptView({
   sessionExpiresAt,
   sessionRetentionSeconds,
 }: ChatTranscriptViewProps) {
-  const bubbles = messages.flatMap(message => transcriptMessages(message).map((part, index) => ({
-    message: part, key: `${message.id}-${index}`,
-  })));
+  const bubbles = transcriptConversation(messages).map((part, index) => ({
+    message: part, key: `${part.id}-${index}`,
+  }));
   return (
       <section
         aria-label="Chat messages"
         aria-live="polite"
-        className="mb-4 min-h-80 space-y-4 rounded-xl border border-gray-200 bg-gray-50 p-2 sm:p-4"
+        className="chat mb-4 min-h-80"
       >
         {messages.length === 0 && (
           <div className="flex min-h-72 items-center justify-center text-center text-gray-500">
@@ -100,41 +102,33 @@ export function ChatTranscriptView({
         {bubbles.map(({ message, key }) => {
           const notice = message.presentation === 'notice';
           const summary = message.presentation === 'summary' ? message.compaction : undefined;
+          const centered = notice || summary?.invalidated || message.role === 'optimizer';
+          const alignment = centered ? 'mx-auto' : message.role === 'assistant' ? 'mr-auto' : 'ml-auto';
+          const classes = ['message', message.role, message.source,
+            notice || summary?.invalidated ? 'app-notice' : undefined, alignment].filter(Boolean).join(' ');
           const uploads = messageUploadedFileLines(message);
           const timestamp = message.responseCompletedAt ?? message.createdAt;
           const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
           return (
             <article
               key={key}
-              className={`min-w-0 rounded-xl px-3 py-3 sm:px-4 ${
-                notice || summary?.invalidated
-                  ? 'mx-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-gray-50 text-gray-700'
-                  : message.role === 'optimizer'
-                  ? 'mx-auto max-w-[95%] sm:max-w-[85%] border border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : message.role === 'system'
-                    ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-dashed border-gray-300 bg-gray-50 text-gray-700'
-                    : message.role === 'user' && message.source === undefined
-                      ? 'ml-auto max-w-[95%] sm:max-w-[85%] bg-blue-600 text-white'
-                      : message.role === 'user'
-                        ? 'ml-auto max-w-[95%] sm:max-w-[85%] border border-blue-200 bg-blue-50 text-blue-950'
-                        : 'mr-auto max-w-[95%] sm:max-w-[85%] border border-gray-200 bg-white text-gray-900'
-              }`}
+              className={classes}
             >
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide opacity-70">{notice ? 'App notice'
+              <p className="label">{notice ? 'App notice'
                 : summary ? summary.invalidated ? 'Discarded conversation summary' : 'User · Conversation summary' : messageLabel(message)}</p>
-              {(notice || summary || message.role === 'system' || message.source !== undefined || message.role === 'optimizer') && (
-                <p className="mb-2 text-xs opacity-70">
-                  {notice || message.role === 'optimizer' ? 'App notice. Not sent to AI.'
-                    : summary ? summary.invalidated ? 'Omitted from future model context.' : 'Summary used in future model context.'
-                      : message.presentation === 'context' ? 'Sent in future model context.' : 'Sent to AI.'}
+              {/* Messages reach the model by default, so only exceptions get a status line. */}
+              {(notice || summary?.invalidated || message.role === 'optimizer' || message.compacted) && (
+                <p className="message-status">
+                  {summary?.invalidated ? 'Omitted from future model context.'
+                    : message.compacted ? 'Compacted out of context.' : 'Not sent to AI.'}
                 </p>
               )}
-              {summary && <details className="text-xs">
-                <summary className="cursor-pointer select-none text-gray-500 hover:text-gray-700">Conversation summary</summary>
+              {summary && <details className="system-prompt">
+                <summary className="collapsed-summary">Conversation summary</summary>
                 <CompactionSummary entry={summary} />
               </details>}
               {uploads.length > 0 && (
-                <ul aria-label="Uploaded files in this message" className="mb-2 list-inside list-disc text-xs">
+                <ul aria-label="Uploaded files in this message" className="attachments">
                   {uploads.map((file, index) => <li key={index}>{file}</li>)}
                 </ul>
               )}
@@ -148,26 +142,26 @@ export function ChatTranscriptView({
                 />
               )}
               {summary ? null : notice ? null : message.presentation === 'context' ? (
-                <p className="whitespace-pre-wrap break-words text-xs">{message.content}</p>
+                <p className="context-content">{message.content}</p>
               ) : message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null
                   : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
               ) : message.role === 'system' ? (
-                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.source !== undefined ? (
                 // The label names the topic, so the exact text starts collapsed.
-                <CollapsedText summary={`${message.content.length.toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
               ) : message.role === 'user' ? (
-                <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                <p className="plain-content">{message.content}</p>
               ) : optimizer ? (
                 <>
-                  <p className="whitespace-pre-wrap break-words">{optimizer.summary}</p>
+                  <p className="plain-content">{optimizer.summary}</p>
                   {optimizer.details.length > 0 && (
-                    <dl className="mt-3 grid gap-1.5 text-sm">
+                    <dl className="optimizer-details">
                       {optimizer.details.map(({ label, value }, index) => (
-                        <div key={`${label}-${index}`} className="min-w-0 [overflow-wrap:anywhere]">
-                          <dt className="inline font-semibold">{label}:</dt>{' '}
-                          <dd className="inline whitespace-pre-wrap">{value}</dd>
+                        <div key={`${label}-${index}`} className="optimizer-detail">
+                          <dt className="optimizer-label">{label}:</dt>{' '}
+                          <dd className="optimizer-value">{value}</dd>
                         </div>
                       ))}
                     </dl>
@@ -176,6 +170,7 @@ export function ChatTranscriptView({
               ) : null}
               {message.role === 'optimizer' && message.optimizerJob?.downloadable && (
                 <button
+                  data-live-action="download-optimizer"
                   type="button"
                   onClick={() => void downloadOptimizationResult(message.optimizerJob?.jobId ?? '')}
                   disabled={downloadingOptimizationId !== null}
@@ -186,7 +181,7 @@ export function ChatTranscriptView({
                 </button>
               )}
               {message.downloadId && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div data-live-action="generated-files" className="mt-3 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
                     disabled={removingDownloadId === message.downloadId}
                     className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
@@ -202,14 +197,14 @@ export function ChatTranscriptView({
               )}
               {showCosts && message.costSummary && <CostDetails summary={message.costSummary} calls={message.providerCalls ?? []}
                 running={message.status === 'pending'} />}
-              {showModels && message.modelSelection && <div className="mt-2 break-all text-xs text-gray-500">
+              {showModels && message.modelSelection && <div className="model-selection">
                 {message.modelSelection.model} · {message.modelSelection.reasoning === 'default' ? 'Default reasoning' : message.modelSelection.reasoning}
               </div>}
               {timestamp !== undefined && (
                 <time
                   dateTime={new Date(timestamp).toISOString()}
                   title={new Date(timestamp).toLocaleString()}
-                  className={`mt-2 block text-[0.6875rem] ${message.role === 'user' && message.source === undefined ? 'text-blue-100' : 'text-gray-400'}`}
+                  className="message-time"
                 >
                   {formatResponseTime(timestamp)}
                   {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (
@@ -218,18 +213,18 @@ export function ChatTranscriptView({
                 </time>
               )}
               {message.role === 'assistant' && message.status === 'stopped' && (
-                <p className="mt-2 text-sm text-gray-500">Stopped before completion.</p>
+                <p className="stopped">Stopped before completion.</p>
               )}
-              {message.truncated && <p className="mt-2 text-sm text-amber-800">
+              {message.truncated && <p className="truncated">
                 A response reached the output token limit. Tool calls in that response were not executed.
               </p>}
               {message.status === 'failed' && message.failureReason && !message.activity?.some(entry => (
                 entry.kind === 'response' && entry.text === message.failureReason
               )) && (
-                <p className="mt-2 whitespace-pre-wrap text-sm text-red-700">{message.failureReason}</p>
+                <p className="failure-reason">{message.failureReason}</p>
               )}
               {message.role === 'assistant' && message.status === 'failed' && !conversationUnavailable && (
-                <p className="mt-3 border-t border-red-200 pt-3 text-sm text-red-700">
+                <p className="failure">
                   {message.unsentFiles
                     ? `This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach ${message.unsentFiles.length ? message.unsentFiles.join(', ') : 'the files'} again, then send the question.`
                     : 'This response failed before completion. Send a new message to continue.'}

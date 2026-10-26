@@ -88,6 +88,8 @@ class ResponseEndEvent(RunFields):
     type: Literal["response_end"]
     stop_reason: Literal["stop", "tool_use", "length", "error", "aborted"]
     context_note: NotRequired[str]
+    # Length recovery omits an attempt that the stop reason alone does not mark as failed.
+    context_omitted: NotRequired[Literal[True]]
 
 
 class ToolFields(RunFields):
@@ -177,6 +179,15 @@ class CompactionEndEvent(CompactionFields):
     estimated_tokens_after: NotRequired[int]
     summary: NotRequired[str]
     keep_messages: NotRequired[int]
+    characters: NotRequired[int]
+    step: NotRequired[int]
+
+
+class GenerationProgressEvent(RunFields):
+    type: Literal["generation_progress"]
+    kind: Literal["compaction", "tool_calls"]
+    characters: int
+    step: int
 
 
 class ContextUsageEvent(RunFields):
@@ -247,6 +258,7 @@ AgentSessionRunEvent = (
     | ContextUsageEvent
     | CompactionStartEvent
     | CompactionEndEvent
+    | GenerationProgressEvent
     | HistoryTrimmedEvent
 )
 AgentSessionEvent = AgentSessionRunEvent | OptimizationEvent | OptimizationProgressEvent

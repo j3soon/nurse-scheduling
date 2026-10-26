@@ -185,12 +185,16 @@ test('applies the schedule a response finishes with as one undoable step', async
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  const answer = page.getByText('I added one nurse.', { exact: true }).locator('xpath=ancestor::article');
+  const notice = page.getByText('Applied to your schedule').locator('xpath=ancestor::article');
+  await expect(answer.locator('time')).toHaveCount(1);
+  await expect(notice.locator('time')).toHaveCount(0);
   await page.getByText('Schedule check passed').click();
   await expect(page.getByText('The candidate passed trusted server-side validation.').last()).toBeVisible();
   await expect(page.getByText('schedule edit')).toBeVisible();
   await page.getByText('bash', { exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: 'Command' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: 'Result' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: /^Command · / })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: /^Result · / })).toBeVisible();
   await page.getByLabel('Chat messages').screenshot({ path: '../artifacts/tool-command-result.png' });
   await expect(page.getByRole('button', { name: 'Approve' })).toBeHidden();
 
@@ -244,6 +248,8 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
   await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('schedule edit')).toBeVisible();
+  // Sending keeps focus in the composer, where Ctrl+Z is text undo.
+  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).blur();
   await page.keyboard.press('Control+z');
   state.finishAnswer();
   await expect(page.getByText(/replaced changes made during this response/)).toBeVisible();

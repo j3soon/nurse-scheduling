@@ -48,6 +48,8 @@ const nextConfig: NextConfig = {
   /* config options here */
   ...developmentConfig,
   output: "export",
+  // The transcript stylesheet is shared with the Python chat exporter.
+  turbopack: { root: REPO_ROOT },
   env: {
     NEXT_PUBLIC_APP_VERSION: appVersion,
     NEXT_PUBLIC_GA_MEASUREMENT_ID: 'G-XGDWE4SWF7',

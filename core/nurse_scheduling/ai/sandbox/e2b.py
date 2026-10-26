@@ -20,13 +20,17 @@
 # This code is mostly AI generated.
 
 import asyncio
+import json
 import logging
 import os
+import secrets
+import shlex
 import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
@@ -46,9 +50,9 @@ from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
 
 from ..config import AiSettings
+from ..pi.bash import DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, PreparedBashOutput, prepare_bash_output
 from .base import (
     DEFAULT_MAX_FILE_BYTES,
-    MAX_COMMAND_OUTPUT_BYTES,
     CommandResult,
     SandboxError,
     SandboxFileNotFoundError,
@@ -62,6 +66,8 @@ logger = logging.getLogger("nurse_scheduling.ai.sandbox.e2b")
 E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
+MAX_COMMAND_REPORT_BYTES = 1024 * 1024
+COMMAND_OUTPUT_SOURCE = Path(__file__).with_name("command_output.py").read_text(encoding="utf-8")
 # E2B pauses the VM when this active timeout expires, and each auto-resume
 # restarts it. One hour is the E2B Hobby tier maximum.
 ACTIVE_TIMEOUT_SECONDS = 3600
@@ -76,7 +82,7 @@ NON_RETRYABLE_E2B_ERRORS = (
 )
 
 
-def _command_output_limiter() -> Callable[[str], None]:
+def _command_report_limiter() -> Callable[[str], None]:
     output_bytes = 0
 
     def bound_output(chunk: str) -> None:
@@ -84,10 +90,46 @@ def _command_output_limiter() -> Callable[[str], None]:
         # the first excess chunk, including output from cleanup commands.
         nonlocal output_bytes
         output_bytes += len(chunk.encode("utf-8"))
-        if output_bytes > MAX_COMMAND_OUTPUT_BYTES:
-            raise SandboxError(f"Sandbox command output exceeds the {MAX_COMMAND_OUTPUT_BYTES}-byte limit.")
+        if output_bytes > MAX_COMMAND_REPORT_BYTES:
+            raise SandboxError("Sandbox command report exceeds its transport limit.")
 
     return bound_output
+
+
+def _output_command(mode: str, path: str, command: str | None = None) -> str:
+    arguments = ["python3", "-c", COMMAND_OUTPUT_SOURCE, mode, path]
+    if command is not None:
+        arguments.append(command)
+    return "exec " + shlex.join(arguments)
+
+
+def _prepare_output_report(report: str) -> PreparedBashOutput:
+    try:
+        data = json.loads(report)
+        tail = data["tail"]
+        total_bytes, total_lines, last_line_bytes = (
+            data[name] for name in ("total_bytes", "total_lines", "last_line_bytes")
+        )
+        if not isinstance(tail, str) or len(tail.encode()) > 100 * 1024:
+            raise ValueError("Invalid tail")
+        if any(type(value) is not int or value < 0 for value in (total_bytes, total_lines, last_line_bytes)):
+            raise ValueError("Invalid output counts")
+        if total_bytes < len(tail.encode()) or last_line_bytes > total_bytes:
+            raise ValueError("Inconsistent output counts")
+        prepared = prepare_bash_output(tail)
+        truncated = total_bytes > DEFAULT_MAX_BYTES or total_lines > DEFAULT_MAX_LINES
+        truncation = replace(
+            prepared.truncation,
+            total_bytes=total_bytes,
+            total_lines=total_lines,
+            truncated=truncated,
+            truncated_by=(prepared.truncation.truncated_by or ("bytes" if total_bytes > DEFAULT_MAX_BYTES else "lines"))
+            if truncated
+            else None,
+        )
+        return PreparedBashOutput(truncation, last_line_bytes)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SandboxError("E2B returned an invalid command output report.") from exc
 
 
 def _is_retryable_e2b_error(error: BaseException) -> bool:
@@ -459,7 +501,8 @@ class E2BSandboxBackend:
         if timeout <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-        bound_output = _command_output_limiter()
+        bound_output = _command_report_limiter()
+        output_path = f"/tmp/pi-bash-{secrets.token_hex(8)}.log"
 
         async with self._active_operation():
             self._commands += 1
@@ -468,7 +511,7 @@ class E2BSandboxBackend:
             waiting = None
             try:
                 handle = await self._sandbox.commands.run(
-                    isolated_command(command),
+                    isolated_command(_output_command("run", output_path, command)),
                     background=True,
                     user=E2B_USER,
                     cwd=E2B_WORKSPACE,
@@ -509,13 +552,43 @@ class E2BSandboxBackend:
                         duration,
                         cleaned,
                     )
+                    if not cleaned:
+                        return CommandResult(
+                            "",
+                            "",
+                            COMMAND_TIMEOUT_EXIT_CODE,
+                            duration_seconds=duration,
+                            timed_out=True,
+                            sandbox_terminated=True,
+                        )
+                    try:
+                        async with asyncio.timeout(self._control_request_timeout_seconds):
+                            partial = await self._sandbox.commands.run(
+                                _output_command("snapshot", output_path),
+                                user=E2B_USER,
+                                cwd=E2B_WORKSPACE,
+                                timeout=self._control_request_timeout_seconds,
+                                request_timeout=self._control_request_timeout_seconds,
+                                on_stdout=_command_report_limiter(),
+                                on_stderr=_command_report_limiter(),
+                            )
+                    except CommandExitException as exc:
+                        raise SandboxError("E2B could not recover sandbox command output.") from exc
+                    except TimeoutError:
+                        # A large log can outlast this deadline, which expires before the SDK's own.
+                        # The command group already stopped. An SDK timeout can mean that the sandbox ended.
+                        return CommandResult(
+                            "", "", COMMAND_TIMEOUT_EXIT_CODE, duration_seconds=duration, timed_out=True
+                        )
+                    prepared = _prepare_output_report(partial.stdout)
                     return CommandResult(
-                        handle.stdout,
-                        handle.stderr,
+                        prepared.truncation.content,
+                        "",
                         COMMAND_TIMEOUT_EXIT_CODE,
                         duration_seconds=duration,
                         timed_out=True,
-                        sandbox_terminated=not cleaned,
+                        prepared_output=prepared,
+                        full_output_path=output_path if prepared.truncation.truncated else None,
                     )
             except CommandExitException as exc:
                 result = exc
@@ -540,6 +613,7 @@ class E2BSandboxBackend:
                         )
 
             duration = time.perf_counter() - started
+            prepared = _prepare_output_report(result.stdout)
             logger.info(
                 "sandbox command finished sandbox_id=%s command_number=%s exit_code=%s duration_seconds=%.3f",
                 self.sandbox_id,
@@ -548,15 +622,17 @@ class E2BSandboxBackend:
                 duration,
             )
             return CommandResult(
-                stdout=result.stdout,
-                stderr=result.stderr,
+                stdout=prepared.truncation.content,
+                stderr="",
                 exit_code=result.exit_code,
                 duration_seconds=duration,
+                prepared_output=prepared,
+                full_output_path=output_path if prepared.truncation.truncated else None,
             )
 
     async def _stop_command_group(self, pid: int) -> bool:
         """Bound cleanup independently of execution and never replay the user command."""
-        bound_output = _command_output_limiter()
+        bound_output = _command_report_limiter()
         try:
             async with asyncio.timeout(self._control_request_timeout_seconds):
                 result = await self._sandbox.commands.run(

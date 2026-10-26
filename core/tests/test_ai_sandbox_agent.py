@@ -25,11 +25,13 @@ import threading
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from nurse_scheduling.ai import provider as provider_module
+from nurse_scheduling.ai import workspace_tools
 from nurse_scheduling.ai.agent_types import (
     AgentContextUsage,
     AgentEvent,
@@ -228,6 +230,8 @@ def test_large_provider_read_batch_preserves_workspace_and_proposal(monkeypatch)
             provider_model="test-model",
         )
     )
+    provider.context_tokens = 262144
+    provider._context_tokens_loaded = True
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=checkpoint))
 
     events = _collect(provider, factory)
@@ -943,23 +947,39 @@ def test_whole_turn_timeout_before_a_tool_call_does_not_start_a_sandbox():
     assert factory.created == []
 
 
-def test_turn_deadline_closes_the_workspace_while_waiting_for_the_next_response():
+def test_turn_deadline_closes_the_workspace_while_waiting_for_the_next_response(monkeypatch):
     class WaitingAfterRead:
         requests = 0
+        cancelled = False
 
         async def stream_events(self, _messages, tools=None):
             self.requests += 1
             if self.requests == 1:
                 yield ToolCallRequest((ToolCall("read", READ_TOOL, '{"path":"/workspace/schedule.yaml"}'),))
             else:
-                await asyncio.Event().wait()
+                self.deadline.reschedule(asyncio.get_running_loop().time())
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    self.cancelled = True
                 yield TextDelta("unreachable")
 
     provider = WaitingAfterRead()
+
+    @asynccontextmanager
+    async def turn_timeout(_seconds):
+        # Let hydration and the read finish before testing timeout during inference.
+        async with asyncio.timeout(None) as deadline:
+            provider.deadline = deadline
+            yield
+
+    monkeypatch.setattr(workspace_tools, "asyncio", SimpleNamespace(timeout=turn_timeout, to_thread=asyncio.to_thread))
     factory = FakeSandboxFactory()
     with pytest.raises(SandboxTurnTimeoutError):
-        _collect(provider, factory, turn_timeout_seconds=0.2)
+        _collect(provider, factory)
     assert provider.requests == 2
+    assert provider.deadline.expired()
+    assert provider.cancelled
     assert len(factory.created) == 1
     assert factory.created[0].closed
 

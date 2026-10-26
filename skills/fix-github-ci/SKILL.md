@@ -11,13 +11,82 @@ coverage the CI job is intended to enforce.
 
 ## Investigate
 
+Check `test -f /.dockerenv` and follow the root
+`AGENTS.md` environment rules. Setup commands, interpreters, and absolute
+paths differ between a dev container (`/workspace`) and a host checkout.
+
+Prefer authenticated `gh` for GitHub reads. It uses an existing `GH_TOKEN`
+automatically. Check `gh auth status >/dev/null 2>&1` and report only whether
+authentication succeeded. Do not print credentials. If the CLI is unavailable
+or lacks access, try a connected GitHub integration. Do not assume an
+integration has the same access as the CLI.
+
+Identify the relevant commit, workflow run, attempt, failed job, and failed
+step before downloading logs. Use `--json` with `--jq` to print only these
+fields. For a supplied run, a compact job summary is:
+
+```sh
+gh run view RUN_ID --repo OWNER/REPO --json headSha,attempt,jobs \
+  --jq '{sha: .headSha, attempt, failed_jobs: [.jobs[] | select(.conclusion == "failure") | {id: .databaseId, name, steps: [.steps[] | select(.conclusion == "failure") | {name, number}]}]}'
+```
+
+For a PR, select runs for its current head SHA. If those runs pass, report
+that state instead of investigating an unrelated older failure. Keep older
+failures separate when the user explicitly asks about them. Paginate run and
+job listings when the relevant entry is not on the first page.
+
+From the repository root, save the selected job's failed-step logs:
+
+```sh
+mkdir -p artifacts
+log_tmp=$(mktemp artifacts/.ci-RUN_ID-JOB_ID-ATTEMPT.XXXXXX)
+if gh run view RUN_ID --repo OWNER/REPO --attempt ATTEMPT --job JOB_ID \
+  --log-failed > "$log_tmp"; then
+  mv "$log_tmp" artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+else
+  rm -f "$log_tmp"
+  false
+fi
+```
+
+Keep the run, job, and attempt in cache filenames. Reuse cached logs for
+completed attempts. Search the saved log with `rg -n` and read small line
+ranges around the failure. Do not print the whole log. Use `--log` for the
+selected job only when failed-step output omits necessary setup or surrounding
+diagnostics.
+When CLI step names show `UNKNOWN STEP`, use job metadata to identify the step.
+
+If CLI and connected integration access cannot retrieve a public repository's
+logs, try the selected job's [REST log-download endpoint](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run).
+Run and job summary endpoints do not return log contents. The download endpoint
+returns a redirect that expires after one minute, so follow it immediately:
+
+```sh
+log_tmp=$(mktemp artifacts/.ci-RUN_ID-JOB_ID-ATTEMPT.XXXXXX)
+if curl --fail-with-body --location --silent --show-error \
+  -H 'Accept: application/vnd.github+json' \
+  https://api.github.com/repos/OWNER/REPO/actions/jobs/JOB_ID/logs \
+  > "$log_tmp"; then
+  mv "$log_tmp" artifacts/ci-RUN_ID-JOB_ID-ATTEMPT.log
+else
+  cat "$log_tmp" >&2
+  rm -f "$log_tmp"
+  false
+fi
+```
+
+If curl lacks `--fail-with-body`, capture the HTTP status and response body
+separately and treat HTTP errors as failures. Keep the body for diagnosis.
+Public log access can still be denied. Report the specific authentication,
+permission, rate-limit, retention, or availability error. Reuse only successful
+downloads as cached logs. Both examples replace the cache only after a successful
+download. If access remains unavailable, reproduce locally or
+request `GH_TOKEN` through the container environment, as the root `AGENTS.md`
+describes.
+
 Inspect the failure log, runner matrix, workflow step, and exact command that
 failed. Reproduce the smallest relevant command locally when possible, then
 compare the local environment with the runner context.
-
-Before reproducing locally, check `test -f /.dockerenv` and follow the root
-`AGENTS.md` environment rules. Setup commands, interpreters, and absolute
-paths differ between a dev container (`/workspace`) and a host checkout.
 
 Use the evidence to distinguish among an application defect, a non-portable or
 flaky test, incorrect workflow setup, a dependency mismatch, and a transient

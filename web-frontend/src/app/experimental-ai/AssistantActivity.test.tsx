@@ -38,6 +38,25 @@ const scheduleChangeEntry: ActivityEntry = {
 };
 
 describe('AssistantActivity', () => {
+  it('shows exact Unicode character counts for responses, reasoning, tools, and compaction', async () => {
+    const user = userEvent.setup();
+    render(<AssistantActivity entries={[
+      { kind: 'response', text: '新😀' },
+      { kind: 'reasoning', text: '😀'.repeat(1200) },
+      { kind: 'compaction', reason: 'manual', state: 'running', text: 'Summarizing', characters: 320, step: 2 },
+      { kind: 'tool', name: 'Tool calls', state: 'preparing', argumentsCharacters: 54, arguments: '', result: '', ok: true },
+      { ...bashEntry, arguments: '{"x":"新😀"}', result: '新😀' },
+    ]} />);
+    expect(screen.getAllByText('2 characters')[0]).toBeVisible();
+    expect(screen.getByText('Reasoning · 1,200 characters')).toBeVisible();
+    expect(screen.getByText('Summarizing conversation · pass 2 · 320 characters')).toBeVisible();
+    expect(screen.getByText('Preparing tool calls · 54 characters')).toBeVisible();
+    await user.click(screen.getByText('bash'));
+    expect(within(screen.getByLabelText('Tool arguments')).getByRole('heading', { name: 'Command · 10 characters' })).toBeVisible();
+    expect(within(screen.getByLabelText('Tool result')).getByRole('heading', { name: 'Result · 2 characters' })).toBeVisible();
+    expect(screen.getByText('Reasoning · 1,200 characters')).not.toHaveClass('select-none');
+    expect(screen.getByText('Summarizing conversation · pass 2 · 320 characters')).not.toHaveClass('select-none');
+  });
   it('shows the exact user-role compaction summary and tool replay arguments', async () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[
@@ -99,9 +118,9 @@ describe('AssistantActivity', () => {
 
     const argumentsSection = screen.getByRole('region', { name: 'Tool arguments' });
     const resultSection = screen.getByRole('region', { name: 'Tool result' });
-    expect(within(argumentsSection).getByRole('heading', { name: 'Command' })).toBeVisible();
+    expect(within(argumentsSection).getByRole('heading', { name: /^Command · / })).toBeVisible();
     expect(within(argumentsSection).getByText(/sed -i/)).toBeVisible();
-    expect(within(resultSection).getByRole('heading', { name: 'Result' })).toBeVisible();
+    expect(within(resultSection).getByRole('heading', { name: /^Result · / })).toBeVisible();
     expect(within(resultSection).getByText('exit_code: 0')).toBeVisible();
     expect(within(argumentsSection).queryByText('exit_code: 0')).not.toBeInTheDocument();
   });
@@ -110,7 +129,7 @@ describe('AssistantActivity', () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[{ kind: 'tool', name: 'read', arguments: '{"path":"/workspace/schedule.yaml"}', result: '', ok: true, state: 'running' }]} />);
     await user.click(screen.getByText('read · running'));
-    expect(screen.getByRole('heading', { name: 'Arguments' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: /^Arguments · / })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Tool result' })).not.toBeInTheDocument();
   });
 
@@ -123,20 +142,21 @@ describe('AssistantActivity', () => {
 
     await user.click(screen.getByText('schedule edit'));
 
-    expect(screen.getByText(/description: ''/)).toHaveClass('text-red-700');
-    expect(screen.getByText(/description: Head/)).toHaveClass('text-green-700');
+    expect(screen.getByText(/description: ''/)).toHaveClass('removed');
+    expect(screen.getByText(/description: Head/)).toHaveClass('added');
   });
 
-  it('reveals long output one chunk at a time', async () => {
+  it.each(['x'.repeat(2500), '😀'.repeat(2001)])('reveals long output in complete Unicode characters', async longResult => {
     const user = userEvent.setup();
-    const longResult = 'x'.repeat(2500);
     render(<AssistantActivity entries={[{ kind: 'tool', name: 'bash', arguments: '{}', result: longResult, ok: true }]} />);
 
     await user.click(screen.getByText('bash'));
 
-    const more = screen.getByRole('button', { name: 'Show more output (500 characters left)' });
+    const remaining = Array.from(longResult).length - 2000;
+    const more = screen.getByRole('button', { name: `Show more output (${remaining} characters left)` });
     await user.click(more);
-    expect(screen.queryByRole('button', { name: /Show more output/ })).not.toBeInTheDocument();
+    expect(more.closest('details')).toHaveAttribute('open');
+    expect(screen.getByText(Array.from(longResult).slice(2000).join(''))).toBeVisible();
   });
 
   it('keeps entries in the order the assistant produced them', () => {

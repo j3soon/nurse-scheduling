@@ -67,6 +67,7 @@ import {
   stopResponse,
   messageId,
   interruptRunningTools,
+  invalidateRunSummaries,
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
@@ -92,6 +93,7 @@ interface StreamCallbacks {
   onProviderRetry?: (message: string) => void;
   onToolStart?: (activity: ToolStartActivity) => void;
   onTool?: (activity: ToolActivity) => void;
+  onGenerationProgress?: (event: Extract<SessionEvent, { type: 'generation_progress' }>) => void;
   onSteering?: (messageId: string, message: string) => void;
   onScheduleChange?: (scheduleYaml: string) => void;
   onScheduleApplied?: (applied: ScheduleApplied) => void;
@@ -105,7 +107,12 @@ interface StreamCallbacks {
   onError?: (message: string) => void;
 }
 
-function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): void {
+function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks, setMessages: Dispatch<SetStateAction<ChatMessage[]>>): void {
+  const runId = event.runId;
+  if (runId && (event.type === 'error' || event.type === 'stopped' || event.type === 'stale'
+    || (event.type === 'response_end' && event.contextNote))) {
+    setMessages(previous => invalidateRunSummaries(previous, runId));
+  }
   if (event.runId && event.type !== 'run_context' && event.type !== 'session_reset') callbacks.onRunContext?.(event.runId);
   switch (event.type) {
     case 'provider_call': callbacks.onProviderCall?.(event.call); break;
@@ -118,6 +125,7 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks): voi
     case 'reasoning': callbacks.onReasoning?.(event.text); break;
     case 'provider_retry': callbacks.onProviderRetry?.(event.message); break;
     case 'compaction_start': case 'compaction_end': callbacks.onCompaction?.(event); break;
+    case 'generation_progress': callbacks.onGenerationProgress?.(event); break;
     case 'truncated': callbacks.onTruncated?.(); break;
     case 'response_end': callbacks.onResponseEnd?.(event); break;
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
@@ -146,12 +154,13 @@ function assistantEventCallbacks(
   applySchedule: (applied: ScheduleApplied) => string | null,
 ): Required<Pick<StreamCallbacks,
   'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
-  | 'onScheduleApplied'>> {
+  | 'onScheduleApplied' | 'onGenerationProgress'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
     onReasoning: text => apply({ type: 'reasoning', text }),
     onCompaction: event => apply(event),
+    onGenerationProgress: event => apply(event),
     onTruncated: () => apply({ type: 'truncated' }),
     onResponseEnd: event => apply(event),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
@@ -224,6 +233,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [isReconnecting, setIsReconnecting] = useState(false);
   const resumedRequestRef = useRef<string | null>(null);
   const currentRequestRef = useRef<{ id: string; stopped: boolean } | null>(null);
+  const backgroundEventRef = useRef<(event: SessionEvent) => void>(() => {});
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
@@ -611,11 +621,12 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       onHistoryTrimmed: setTrimmedHistoryCount,
       onError: failBackgroundTurn,
     };
+    backgroundEventRef.current = event => dispatchPageEvent(event, handlers, setMessages);
     sessionEvents.connect({
       sessionId, endpoint, authToken, resetReplay,
       onEventId: () => setIsReconnecting(false),
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
-      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers), ownsConversation),
+      onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
         if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
       },
@@ -859,7 +870,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         onHistoryTrimmed: setTrimmedHistoryCount,
       }, () => lifecycle.owns(operation) && !controller.signal.aborted);
       const foreground = eventRouterRef.current.begin(
-        event => dispatchPageEvent(event, callbacks), rejectRun,
+        event => dispatchPageEvent(event, callbacks, setMessages), rejectRun,
         () => startSessionEventStream(sessionId, sessionEndpoint, true),
       );
       if (!sessionEvents.connected()) startSessionEventStream(sessionId, sessionEndpoint);
@@ -1027,15 +1038,60 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
 
   const compactContext = async () => {
     const sessionId = sessionIdRef.current;
-    if (!sessionId || isStreaming || compactionRequested) return;
-    const ownsConversation = lifecycle.capture();
+    if (!sessionId || lifecycle.busy) return;
+    const request = { id: messageId(), stopped: false };
+    currentRequestRef.current = request;
+    const operation = lifecycle.begin('foreground', request.id);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setCompactionRequested(true);
+    const endpoint = sessionEndpointRef.current ?? aiEndpoint;
+    let runFinished = false;
+    let finishRun!: () => void;
+    let rejectRun!: (error: Error) => void;
+    const finished = new Promise<void>((resolve, reject) => {
+      finishRun = () => { runFinished = true; resolve(); };
+      rejectRun = reject;
+    });
+    void finished.catch(() => {});
+    const foreground = eventRouterRef.current.begin(event => {
+      if (!lifecycle.owns(operation)) return;
+      // Compaction has no user question, so use the background transcript projection.
+      backgroundEventRef.current(event);
+      if (['done', 'stopped', 'stale', 'error'].includes(event.type)) finishRun();
+    }, rejectRun, () => startSessionEventStream(sessionId, endpoint, true));
+    controller.signal.addEventListener('abort', finishRun, { once: true });
+    if (!sessionEvents.connected()) startSessionEventStream(sessionId, endpoint);
     try {
-      await compactSession(sessionId, messageId(), authToken, sessionEndpointRef.current ?? aiEndpoint);
+      const runId = await compactSession(sessionId, request.id, authToken, endpoint, {
+        signal: controller.signal,
+        shouldStop: () => request.stopped,
+        onConnectionChange: connected => { if (lifecycle.owns(operation)) setIsReconnecting(!connected); },
+      });
+      if (!lifecycle.owns(operation)) return;
+      eventRouterRef.current.acknowledge(foreground, runId, () => {});
+      if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
+        await stopSession(sessionId, authToken, endpoint, request.id).catch(stopError => {
+          if (!lifecycle.owns(operation)) return;
+          lifecycle.stopFailed([operation]);
+          reportRequestError(stopError, 'The AI response could not be stopped.');
+        });
+      }
+      await finished;
     } catch (compactError) {
-      if (ownsConversation()) reportRequestError(compactError, 'The conversation could not be compacted.');
+      if (lifecycle.owns(operation) && !controller.signal.aborted) {
+        reportRequestError(compactError, 'The conversation could not be compacted.');
+      }
     } finally {
-      if (ownsConversation()) setCompactionRequested(false);
+      controller.signal.removeEventListener('abort', finishRun);
+      eventRouterRef.current.finish(foreground);
+      if (lifecycle.owns(operation)) {
+        setCompactionRequested(false);
+        setIsReconnecting(false);
+        if (currentRequestRef.current === request) currentRequestRef.current = null;
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
+        lifecycle.finish(operation);
+      }
     }
   };
 
@@ -1080,13 +1136,15 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   };
 
   const restoreConversation = useCallback((storedConversation: StoredChatConversation) => {
-      // Replayed events reconcile onto the unfinished background message by ID, so
-      // restore it before the stream opens. Its tools stopped with the old page.
-      if (storedConversation.backgroundAssistantId) {
-        lifecycle.begin('background', storedConversation.backgroundAssistantId, 'interrupted');
-      }
+      const expired = storedConversation.expiresAt <= Date.now();
+      // The server owns background work across reloads. Reconcile its later
+      // events onto the saved pending message instead of declaring it failed.
+      // An expired chat receives no events, so its background reply fails.
+      const backgroundId = expired ? undefined : storedConversation.backgroundAssistantId;
+      if (backgroundId) lifecycle.begin('background', backgroundId);
       setMessages(storedConversation.messages.map(message => (
         message.status === 'pending' && !message.requestId
+          && (message.runId ?? message.id) !== backgroundId
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
           : message
       )));
@@ -1102,7 +1160,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       appliedScheduleRunsRef.current = { ...storedConversation.appliedScheduleRuns };
       sessionEndpointRef.current = storedConversation.endpoint;
       setSessionEndpoint(storedConversation.endpoint);
-      if (storedConversation.expiresAt <= Date.now()) {
+      if (expired) {
         window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
         setConversationUnavailable(true);
         setSessionNotice(

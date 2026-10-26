@@ -169,14 +169,16 @@ docker build -f docker/Dockerfile.dev -t j3soon/nurse-scheduling:dev .
 ```
 
 ```sh
-# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi/Antigravity CLI auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
-# mount project files and Codex/Claude Code/OpenCode/Pi config
+mkdir -p ~/docker/.gemini
+mkdir -p ~/docker/.config/antigravity
+# mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config
 docker run --rm -it --network=host \
   -e GH_TOKEN \
   -v $(pwd):/app \
@@ -186,6 +188,8 @@ docker run --rm -it --network=host \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v ~/docker/pi/agent:/root/.pi/agent \
+  -v ~/docker/.gemini:/root/.gemini \
+  -v ~/docker/.config/antigravity:/root/.config/antigravity \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev
@@ -202,14 +206,16 @@ The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
 wheel. Use another environment for the `pulp/highs` solver.
 
 ```sh
-# persist Codex/Claude Code/OpenCode/Pi auth/config across containers
+# persist Codex/Claude Code/OpenCode/Pi/Antigravity CLI auth/config across containers
 mkdir -p ~/docker/.codex
 mkdir -p ~/docker/.claude
 touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
-# mount project files and Codex/Claude Code/OpenCode/Pi config
+mkdir -p ~/docker/.gemini
+mkdir -p ~/docker/.config/antigravity
+# mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config
 docker run --rm -it --gpus all --network=host \
   -e GH_TOKEN \
   -v $(pwd):/app \
@@ -219,6 +225,8 @@ docker run --rm -it --gpus all --network=host \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v ~/docker/pi/agent:/root/.pi/agent \
+  -v ~/docker/.gemini:/root/.gemini \
+  -v ~/docker/.config/antigravity:/root/.config/antigravity \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   j3soon/nurse-scheduling:dev-cuopt
@@ -238,7 +246,9 @@ touch ~/docker/.claude.json
 mkdir -p ~/docker/opencode/.config/opencode
 mkdir -p ~/docker/opencode/.local/share/opencode
 mkdir -p ~/docker/pi/agent
-# mount project files and Codex/Claude Code/OpenCode/Pi config, and forward X11 display
+mkdir -p ~/docker/.gemini
+mkdir -p ~/docker/.config/antigravity
+# mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config, and forward X11 display
 docker run --rm -it --network=host \
   -e GH_TOKEN \
   -v $(pwd):/app \
@@ -248,6 +258,8 @@ docker run --rm -it --network=host \
   -v ~/docker/opencode/.config/opencode:/root/.config/opencode \
   -v ~/docker/opencode/.local/share/opencode:/root/.local/share/opencode \
   -v ~/docker/pi/agent:/root/.pi/agent \
+  -v ~/docker/.gemini:/root/.gemini \
+  -v ~/docker/.config/antigravity:/root/.config/antigravity \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/timezone:/etc/timezone:ro \
   -e DISPLAY=$DISPLAY \

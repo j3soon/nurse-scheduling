@@ -52,6 +52,29 @@ describe('stored conversation compatibility', () => {
     expect(readStoredConversation()?.messages[0].activity).toEqual([summary]);
   });
 
+  it('restores tool round ends and rejects invalid markers', () => {
+    const tool: Record<string, unknown> = { kind: 'tool', name: 'read', arguments: '{}', result: 'Alice', ok: true, endsRound: true };
+    const stored = { ...conversation(), messages: [{ id: 'answer', role: 'assistant', content: 'Answer', activity: [tool] }] };
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+    expect(readStoredConversation()?.messages[0].activity).toEqual([tool]);
+    tool.endsRound = false;
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+    expect(readStoredConversation()).toBeNull();
+  });
+
+  it('restores character progress and rejects invalid saved counters', () => {
+    const activity = [
+      { kind: 'compaction', reason: 'manual', state: 'running', text: 'Summarizing', characters: 10, step: 2 },
+      { kind: 'tool', name: 'Tool calls', state: 'preparing', arguments: '', result: '', ok: true, argumentsCharacters: 20 },
+    ];
+    const stored = { ...conversation(), messages: [{ id: 'answer', role: 'assistant', content: '', activity }] };
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+    expect(readStoredConversation()?.messages[0].activity).toEqual(activity);
+    activity[0].characters = -1;
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+    expect(readStoredConversation()).toBeNull();
+  });
+
   it('rejects corrupt activity and pending request data', () => {
     for (const change of [
       { messages: [{ id: 'answer', role: 'assistant', content: '', activity: [{ kind: 'tool' }] }] },

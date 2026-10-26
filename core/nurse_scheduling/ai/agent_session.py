@@ -67,6 +67,7 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
+    CompactionEntry,
     ToolResultMessage,
     UserMessage,
 )
@@ -172,7 +173,9 @@ class MessageReceipt:
 class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
-    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot: ...
+    def begin(
+        self, session_id: str, owner_token: str | None, *, run_id: str | None = None, compact_only: bool = False
+    ) -> RunSnapshot: ...
 
     def remember_message(self, session_id: str, message: AcceptedMessage) -> None: ...
 
@@ -602,6 +605,7 @@ class AgentSession:
                     try:
                         runtime.store.remember_message(self.id, accepted)
                     except HTTPException:
+                        self.locked_model = previous_lock
                         run.cancel()
                         await asyncio.shield(run.done)
                         raise
@@ -863,6 +867,12 @@ class AgentSession:
             }
         )
 
+    async def _finalize_provider_calls(self, runtime: SessionRuntime, output: RunOutput, events: RunEvents) -> None:
+        for call in tuple(output.calls.values()):
+            if call.status == "pending":
+                final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
+                await _complete(self._report_provider_call(final, runtime, output, events))
+
     async def _compact_context(
         self,
         run: AgentRun,
@@ -873,46 +883,59 @@ class AgentSession:
     ) -> None:
         """Summarize retained context without a user question or workspace."""
         settings = runtime.settings
-        history = project_history(snapshot.transcript, settings.max_history_chars)
+        history = project_history(snapshot.transcript, None)
         messages = build_provider_messages(
             history, snapshot.schedule_yaml, "", max_download_bytes=settings.max_download_bytes
         )[:-1]
         skipped = False
-        async with runtime.concurrency_limit:
-            compactor = ContextCompactor(
-                runtime.provider,
-                history_limit=settings.max_history_chars,
-                message_limit=settings.max_history_messages,
-            )
-            await compactor.prepare()
-            definitions = SandboxPiTools.tool_definitions(settings.sandbox_command_timeout_seconds)
-            definitions.append(optimizer_tool_definition(settings.optimizer_default_timeout_seconds))
-            summary_events = compactor.compact(messages, definitions, force=True, manual=True)
-            async with aclosing(summary_events):
-                async for event in summary_events:
-                    if isinstance(event, ProviderCall):
-                        await self._report_provider_call(event, runtime, output, events)
-                        continue
-                    if isinstance(event, AgentCompaction):
-                        self.agent.state.messages.append(event.entry)
-                        self._save_run_messages(run.id, self.agent.state.messages)
-                    wire = output.consume(event)
-                    if wire is not None:
-                        events.emit(wire)
-                    if isinstance(event, AgentCompactionEnd):
-                        skipped = event.skipped
-                    if isinstance(event, AgentCompactionEnd) and event.success:
-                        events.emit(
-                            {
-                                "type": "context_usage",
-                                **context_usage(
-                                    event.used_chars,
-                                    settings,
-                                    provider=runtime.provider,
-                                    estimated_tokens=event.estimated_tokens_after,
-                                ),
-                            }
-                        )
+        try:
+            async with runtime.concurrency_limit:
+                compactor = ContextCompactor(
+                    runtime.provider,
+                    reserve_tokens=settings.compaction_reserve_tokens,
+                    keep_recent_tokens=settings.compaction_keep_recent_tokens,
+                )
+                await compactor.prepare()
+                definitions = SandboxPiTools.tool_definitions(settings.sandbox_command_timeout_seconds)
+                definitions.append(optimizer_tool_definition(settings.optimizer_default_timeout_seconds))
+                summary_events = compactor.compact(
+                    messages,
+                    definitions,
+                    force=True,
+                    manual=True,
+                    already_compacted=bool(
+                        snapshot.transcript
+                        and isinstance(snapshot.transcript[-1], CompactionEntry)
+                        and snapshot.transcript[-1].valid
+                    ),
+                )
+                async with aclosing(summary_events):
+                    async for event in summary_events:
+                        if isinstance(event, ProviderCall):
+                            await self._report_provider_call(event, runtime, output, events)
+                            continue
+                        if isinstance(event, AgentCompaction):
+                            self.agent.state.messages.append(event.entry)
+                            self._save_run_messages(run.id, self.agent.state.messages)
+                        wire = output.consume(event)
+                        if wire is not None:
+                            events.emit(wire)
+                        if isinstance(event, AgentCompactionEnd):
+                            skipped = event.skipped
+                        if isinstance(event, AgentCompactionEnd) and event.success:
+                            events.emit(
+                                {
+                                    "type": "context_usage",
+                                    **context_usage(
+                                        event.used_chars,
+                                        settings,
+                                        provider=runtime.provider,
+                                        estimated_tokens=event.estimated_tokens_after,
+                                    ),
+                                }
+                            )
+        finally:
+            await self._finalize_provider_calls(runtime, output, events)
         if not self.agent.state.messages and not skipped:
             events.emit(
                 {
@@ -995,10 +1018,7 @@ class AgentSession:
                                 }
                             )
         finally:
-            for call in tuple(output.calls.values()):
-                if call.status == "pending":
-                    final = replace(call, status="reported" if call.cost_usd is not None else "unavailable")
-                    await _complete(self._report_provider_call(final, runtime, output, events))
+            await self._finalize_provider_calls(runtime, output, events)
 
     def _commit_run(
         self,
@@ -1202,7 +1222,7 @@ class AgentSession:
         snapshot = (
             store.begin_background(session_id, run_id=run.id)
             if background
-            else store.begin(session_id, owner, run_id=run.id)
+            else store.begin(session_id, owner, run_id=run.id, compact_only=compact_only)
         )
         if snapshot is None:
             return

@@ -289,8 +289,9 @@ Each run binds `AgentSession.id` to a provider copy through `with_session_id`.
 The copy preserves the selected model, reasoning parameters, credentials, and
 provider metadata. Session IDs and request limits stay on each copy, so
 concurrent chats cannot overwrite each other's settings. Direct-provider copies
-share cached model-limit discovery, including unavailable metadata. Optional
-session binding also keeps existing providers without this capability usable.
+share cached model-limit discovery. A failed discovery request is not cached, so
+the next request retries it. Optional session binding also keeps existing
+providers without this capability usable.
 
 The Chat Completions adapter sends `x-session-id` on every completion request.
 Tool follow-ups, timeout retries, compaction summaries, and optimizer reviews
@@ -329,6 +330,9 @@ stay in the audit transcript but are omitted from model requests. The frontend
 labels their partial text and reasoning as omitted from future context. Failed
 reasoning metadata and partial tool arguments are discarded. Tools are released only after a clean response completion. A retry
 after a completed tool exchange resends its result without executing it again.
+Summary generation also discards the failed draft before collecting the retry,
+matching Pi's `completeSummarization`. Each attempt retains its cost record, and
+the provider's defensive HTTP byte limit applies separately to each attempt.
 
 ## Automatic context compaction
 
@@ -340,24 +344,26 @@ Repeated IDs return the same run. Summary events use the `manual` reason.
 Migration 010 adds the compaction run kind. Failed and interrupted manual runs
 keep the original context without a workspace-discard notice.
 
-`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Before a model
-request and after the final answer, it checks the discovered model context
-window. It reserves up to 16,384 tokens for output, reduced to one quarter of a
-smaller window. It also checks 80 percent of the configured history character
-and message limits, so normal retention does not discard older state first.
-Without model metadata, the history limits still trigger compaction. Summary
-requests use a 32,768-token fallback window. An explicit context-overflow
-rejection can also trigger compaction.
+`generation_progress` events report draft character counts for compaction and
+tool-call arguments. Updates are coalesced with the stream's 25 ms batching.
+Compaction identifies each summary pass and resets its count on retry. Draft
+summary text and incomplete tool arguments stay private. Chat and exports count
+Unicode code points and show tool-result size after execution. These character
+counts are separate from provider-reported token usage and costs.
 
-Manual and automatic compaction use Pi's same cut-point algorithm. The retention
-target is 20,000 recent tokens, capped by one third of the model window and the
-server history budgets. The character budget caps it at `max_history_chars / 12`,
-and the message budget caps it at the estimated tokens in the latest
-`max_history_messages / 3` messages. A short conversation stays unchanged without
-a provider call. A split turn retains its recent messages with their tool pairs.
-If that tail cannot fit a smaller model window, a later safe boundary is used.
-A single tool batch that still cannot fit is summarized too. A generated summary
-that would increase context is discarded.
+`ContextCompactor` follows [Pi v1.0.0 compaction][pi-compaction]. Automatic
+compaction starts when context tokens exceed the model window minus
+`AI_COMPACTION_RESERVE_TOKENS` (default 16,384). Character and message retention
+budgets do not trigger compaction. Model metadata must report a positive context
+window. A missing window rejects generation instead of assuming a fallback size.
+
+Manual and automatic compaction use Pi's same cut-point algorithm with
+`AI_COMPACTION_KEEP_RECENT_TOKENS` (default 20,000). The model window and server
+history budgets do not reduce that retention target. Cut points preserve tool
+calls with their results. A short conversation stays unchanged when no older
+messages remain to summarize. If the cut splits a turn, older history and the
+turn prefix receive separate summaries. A completed summary is accepted without
+a character-count reduction requirement. Failed summaries keep original context.
 
 The estimate uses the most recent completed same-model input and output usage,
 plus estimates for later messages. A characters/4 estimate covers missing usage,
@@ -366,7 +372,7 @@ Old usage is invalid after a summary replaces its original input. Cached tokens
 are already included in Chat Completions prompt usage.
 
 The composer footer derives Context percentage and Tokens from the same backend
-token count and model context limit. It labels estimates with `(est.)` and shows
+token count and model context limit. It prefixes estimates with `~` and shows
 an unavailable percentage when the model limit is unknown. Character and message
 limits remain internal retention safeguards. Estimated cost is separate.
 `AgentContextUsage` estimates include the current request and streamed reasoning or
@@ -380,18 +386,8 @@ exports show the same status. Successful compaction replaces the context meter
 with a fresh estimate until the next model call reports usage. Summary failures
 keep the original context. Stop closes the summary stream and finishes its status.
 
-The cut point keeps up to 20,000 recent estimated tokens, reduced for smaller
-windows and history budgets. It can split a long turn before an assistant
-response, but never between a tool call and its results. Supplemental tool
-images stay with their exchange and do not count as durable messages. If a
-single tool batch fills the available input, its essential results enter the
-summary instead. The current system instructions and trusted request status
-remain outside the summary.
-
 Older messages are serialized as conversation data. Tool arguments retain file
-paths. Tool results are limited to 2,000 characters per result, as in Pi. Large
-inputs use bounded successive summary requests, updating the previous summary.
-Opaque reasoning is never converted to text for summarization. The separate
+paths. Tool results are limited to 2,000 characters per result, as in Pi. Opaque reasoning is never converted to text for summarization. The separate
 manifest `ai/prompts/compaction.json` records the initial, update, split-turn,
 and system prompts from Pi v1.0.0 at `a13d35a`. Each upstream string is unchanged.
 The manifest records matching upstream and model-input hashes. Project guidance
@@ -401,23 +397,18 @@ The prompt loader removes provenance comments before model requests.
 A later compaction passes the existing summary separately in `previous-summary`
 tags and uses Pi's update instructions. When a cut splits an active turn, older
 history and the active turn prefix receive separate summaries. The latter uses
-Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Large
-inputs retain bounded chunking and use the update instructions after each chunk.
-Recent responses retain their native replay metadata. File paths still depend
-on the summary and recent messages. Pi's separate cumulative file-operation
-records are not implemented.
+Pi's dedicated checkpoint format, and recent tool exchanges stay intact.
+Recent responses retain their native replay metadata. As in Pi, each summary
+saves the read, written, and edited paths separately, appends them in
+`read-files` and `modified-files` tags, and carries them into later summaries.
 
-Summary calls use the frozen run model and reasoning selection. Their provider
-output limit is at most 80 percent of the reserved tokens, following Pi. Every
-completion also fits the model's advertised output cap and remaining context
-with a safety margin of 4,096 tokens or half the context window, whichever is
-smaller. Summary chunks use the same margin. Reported same-model usage informs the request
-estimate when available, including tool definitions and later messages. Numeric
-thinking budgets leave 1,024 tokens for answer text. Models without discovered
-limits retain provider defaults unless the caller supplies a cap.
-An exhausted context budget triggers overflow recovery. An output cap too small
-for reasoning and answer text reports a provider error without compacting history.
-Summary chunks leave room for the full previous summary, output, and safety margin.
+Summary calls use the frozen run model and reasoning selection. Pi limits history
+summary output to 80 percent of the reserved tokens and turn-prefix output to
+50 percent, both subject to the provider's model and remaining-context limits.
+There is no additional summary character limit or local input chunking.
+An oversized summary request fails without replacing the original context.
+The provider keeps its context safety margin and numeric thinking allowance.
+
 Summary requests have no tools, and their text and reasoning do not enter the answer stream.
 Their provider call records include costs and usage. An empty, truncated, oversized,
 failed, or tool-requesting summary leaves the original context intact. Stop
@@ -427,7 +418,10 @@ Tool execution is not repeated by that retry.
 
 A successful summary appends a `CompactionEntry`, leaving earlier audit entries
 intact. Its completion event includes the exact summary and retained-message count.
-The frontend displays the summary separately and marks it discarded if its run fails. Context projection replays its summary plus the referenced recent tail.
+The frontend displays the summary separately and marks every summary from a failed
+run as discarded, including summaries before steering replies. Saved chat exports
+use the same rule. Context projection replays a valid summary plus its referenced
+recent tail.
 Retention keeps the summary and that tail together. Hard service memory limits
 can still remove an entire older context unit. Failed, cancelled, and stale
 runs cannot replay their summaries of discarded workspace work. Migration 009
@@ -480,13 +474,19 @@ turn, so each replayed tool call has a result.
 The `tool_start` event carries the tool name and arguments before execution, so
 the UI and evaluation artifact retain a command even if the sandbox fails. A
 later `tool` event carries its result and whether the call did what it was
-asked. Sandbox backends return raw command output to the AI layer. The AI
-`bash` adapter combines stdout and stderr, keeps the last 2,000 lines or 50 KB,
-and stores the full output in the temporary sandbox when truncation occurs.
-This display policy stays outside the provider-neutral sandbox interface.
-The E2B adapter separately bounds combined stdout and stderr to 4 MiB while
-receiving it. Exceeding that bound stops the stream, destroys the sandbox,
-and fails the turn. File reads stream at most 16 MiB by default. Schedule
+asked. The E2B command wrapper combines stdout and stderr as they arrive and
+writes the full log inside the sandbox. It retains a bounded UTF-8 tail and
+sends that tail with line and byte counts through the SDK. The `bash` adapter
+keeps the last 2,000 lines or 50 KiB and links the full log when truncated.
+Small logs are deleted after capture. A command timeout preserves partial logs
+when process cleanup succeeds. If the log is too large to read before the
+control deadline, the result has no output, and the sandbox remains available.
+An SDK timeout during that read can mean that the sandbox ended, so the service
+discards the sandbox. Logs live until the disposable sandbox closes.
+Command output has no separate capture ceiling. Sandbox disk capacity and
+execution deadlines bound resource use. A 1 MiB transport bound protects the
+small JSON report, independently of the log's size.
+File reads stream at most 64 MiB by default. Schedule
 reads use the configured schedule limit, and ZIP reads use the download limit.
 
 When one model response requests multiple reads, the reads run concurrently
@@ -498,10 +498,9 @@ pauses again before the next provider reasoning turn.
 An agent run spans the model/tool loop until the agent finishes. Pi uses a turn
 for one model response and its tool results. VM lifecycle code uses run.
 
-Agent runs default to a six-hour deadline (`AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600`),
-2,000 tool rounds and 6,000 tool calls (`AI_AGENT_MAX_TOOL_ROUNDS` and
-`AI_AGENT_MAX_TOOL_CALLS`). The deadline includes provider responses, sandbox
-operations and paused time.
+Agent runs default to a six-hour deadline (`AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600`)
+with defensive defaults of 2,000 tool rounds and 6,000 tool calls.
+The deadline includes provider responses, sandbox operations and paused time.
 Each optimizer follow-up is a separate run with its own limits. Stop still cancels
 an active run.
 
@@ -510,8 +509,8 @@ its start until it ends. A run does not hold a slot while its optimizer job
 solves. Other runs wait for a free slot, so four long runs can delay every other
 session for up to the run deadline. Autonomous optimization can also chain
 follow-up runs without a user message until the session reaches
-`AI_OPTIMIZER_MAX_RUNS_PER_SESSION`. Raise the concurrency limit when a
-deployment expects long runs, or lower the deadline and tool limits.
+the defensive bound of 1,000 optimizer runs by default. Raise the concurrency limit
+when a deployment expects long runs, or lower the run deadline.
 
 The VM active timeout is independent of the agent run deadline. It is one
 hour, which is the E2B Hobby tier maximum. Timeout pauses the VM with memory
@@ -645,8 +644,8 @@ final candidate.
 
 Configured tool-round and tool-call limits bound the model-tool loop alongside
 per-command and complete agent-turn deadlines.
-One provider response may contain up to 32 tool calls. Read-only batches run at
-most eight calls concurrently and keep results in call order. Mixed or mutating
+One provider response has a defensive bound of 1,024 tool calls. Read-only
+batches run at most `AI_AGENT_MAX_PARALLEL_TOOLS` calls concurrently (default 16) and keep results in call order. Mixed or mutating
 batches run sequentially. A larger valid batch does not discard earlier workspace
 changes or replay the provider request.
 
@@ -674,12 +673,10 @@ They did not submit optimizer jobs or establish a token or latency saving.
 The Nurse Scheduling adapter delegates file and command operations to
 `SandboxBackend`. `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` defaults to 60 seconds
 and caps each command at that duration. The agent can run many commands within
-the separate turn deadline. E2B
-returns completed stdout and stderr separately, so the adapter concatenates
-them and cannot reproduce Pi's live
-stream interleaving exactly. Nonzero and missing command exit codes produce
-failed tool results that the agent can read before continuing. GIF detection
-requires a complete GIF87a or GIF89a signature.
+the separate turn deadline. The E2B command wrapper combines stdout and stderr
+as they arrive, as Pi's live output stream does. Nonzero and missing command
+exit codes produce failed tool results that the agent can read before
+continuing. GIF detection requires a complete GIF87a or GIF89a signature.
 
 The v1.0.0 comparison covers all four tools, image detection and processing,
 and head/tail truncation. Edit/write execution and image processing are unchanged
@@ -1042,9 +1039,18 @@ The browser and operator command use the same Python archive writer.
 See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
 one-command Docker and native database workflow. Export requires PostgreSQL history.
 
-The Python formatter's HTML and Markdown match 52 TypeScript reference
-documents across 26 cases, including the complete saved-event fixture.
-The frozen reference hashes remain in the core export tests.
+The live transcript and offline HTML use the same transcript stylesheet.
+The browser rendering test replays a deterministic conversation through the
+real frontend event handling and compares it with freshly generated Python HTML.
+It checks content, order, disclosure states, computed styles, and screenshots at
+desktop and phone widths, including after reload. Computed styles must match
+exactly. Screenshot comparison allows one RGB level of browser edge rounding.
+Frozen export hashes provide separate output regression checks.
+
+Exports use UTC timestamps and archive-relative file links. Copy buttons and
+session actions remain in the live app.
+Native disclosures keep reasoning, tools, long output, and provider costs
+expandable in offline HTML without scripts.
 
 The Python ZIP writer is available through
 `python -m nurse_scheduling.ai.export_chat SESSION_ID OUTPUT.zip` with
@@ -1099,10 +1105,10 @@ controls. `/capabilities.app_version` identifies the AI service. The parent
 | `DELETE /sessions/{id}/uploads/{upload_id}` | Remove one retained file. |
 | `POST /sessions/{id}/messages` | Stream one answer to a JSON `message`. |
 
-The default limits are 32 retained files, 25 MB per file, and 200 MB of retained
+The default bounds are 128 retained files, 50 MB per file, and 500 MB of retained
 source files per session. MB uses 1,000,000 bytes.
 With PostgreSQL, `AI_MAX_ARCHIVE_BYTES` also limits the file bytes stored per
-session, 1 GB by default. It counts every stored upload, generated ZIP, and
+session, 10 GB by default. It counts every stored upload, generated ZIP, and
 optimizer file, including removed files, because removal keeps the stored copy.
 A full session refuses new uploads with HTTP 413. It keeps the answer without a
 new generated ZIP, and an optimizer result that cannot be stored reports this
@@ -1124,6 +1130,9 @@ the retry asks only for the files that did not upload. Remove unused uploads to
 free session capacity.
 The backend bounds each streamed request body to the per-file limit plus
 64 KiB for multipart overhead. NGINX permits 64 MiB per `/ai/` request.
+JSON requests have a 64 MiB body bound before parsing. Questions have no
+separate character limit. Provider requests must fit the selected model's
+context window with its response budget and safety margin.
 
 Upload requests contain only repeated `files` fields. Other field names are
 rejected. Uploads are refused while a response is active. Every turn can read
@@ -1152,9 +1161,10 @@ lost during compaction. Historical status messages remain unchanged. Each VM
 receives `TZ` once at creation from the browser timezone. The agent can use bash
 `date` when it needs the current date or time.
 
-When history passes `AI_MAX_HISTORY_CHARS`, the backend drops the oldest
-messages until about half the budget remains. It keeps the newest completed
-exchange. This keeps the request prefix unchanged for many turns between cuts.
+Defensive history and memory limits refuse new work without discarding completed
+exchanges. Normal compaction follows Pi token settings. See
+[AI runtime limits and Pi comparison](ai-limits.md) for defaults, remaining
+differences, and deployment capacity controls.
 
 Each assistant turn starts with a `model_input` event. Its `system` field
 contains the system message. Its `messages` field lists the request messages
@@ -1253,11 +1263,12 @@ See the [capability discovery instructions](reproduce/core.md#attachment-capabil
 
 Follow the [AI test instructions](reproduce/core.md#ai-tests). The opt-in
 `test_ai_compaction_live.sh` command exercises the real session API and E2B with
-five long-chat scenarios, at most four concurrently. It forces compaction with a smaller history
-budget and checks constraints, complete tool exchanges, model switching, Stop,
-reconnect replay, and fresh sandbox filesystems. Its traces are synthetic test
-conversations. It does not change the production prompts or connect to a
-production database.
+five long-chat scenarios, at most four concurrently. Explicit compaction token settings
+force compaction. The scenarios check constraints, complete tool exchanges,
+manual compaction, Stop, reconnect replay, and fresh sandbox filesystems. They
+also check that model changes return HTTP 409 and supported reasoning-effort
+changes remain accepted. The command uses synthetic test conversations. It does
+not change the production prompts or connect to a production database.
 
 ## Mapping to Pi
 

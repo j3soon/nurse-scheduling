@@ -38,9 +38,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   it, as `README.md` describes. If `gh auth status` reports no login, read the
   public repository through the GitHub REST API with `curl`. Unauthenticated
   requests are limited to 60 per hour, so batch them and save the responses.
-  They cannot download job logs or use GraphQL, which reports review thread
-  resolution. Reproduce a failing CI step locally, or ask the user to restart
-  the container with `GH_TOKEN`.
+  They cannot use GraphQL, which reports review thread resolution. For public
+  job logs, try the per-job download endpoint in `skills/fix-github-ci`.
+  If log access is denied, reproduce the failing CI step locally or ask the
+  user to restart the container with `GH_TOKEN`.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat
@@ -158,9 +159,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Choose the model actually running the commit for the attribution line. Codex
   may use `gpt-6-sol` or `gpt-6-astra`. Select the matching full lowercase
   slug rather than inferring it from task difficulty or available model lists.
-  Pi and Claude Code must use their own active harness and model names. If the
-  active model is unclear, verify it before committing. Never substitute a
-  shortened family name such as `GPT-5`.
+  Pi, Claude Code, and Antigravity CLI must use their own active harness and
+  model names. If the active model is unclear, verify it before committing.
+  Never substitute a shortened family name such as `GPT-5`.
 - Include validation details in a commit body only when they materially help a
   reviewer assess the change, such as a regression reproduction, an unusual check,
   or a known limitation. Omit routine successful-test and lint summaries. Keep

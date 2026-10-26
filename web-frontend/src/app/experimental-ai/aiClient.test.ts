@@ -24,6 +24,7 @@ import {
   decodeEvent,
   PRODUCTION_AI_API_URL,
   cancelOptimization,
+  compactSession,
   createSession,
   downloadGeneratedZip,
   downloadOptimization,
@@ -48,12 +49,26 @@ import {
   uploadFiles,
 } from './aiClient';
 
+it('decodes generation counts and rejects malformed counters before dispatch', () => {
+  expect(decodeEvent('generation_progress', { kind: 'compaction', characters: 4, step: 2, run_id: 'run' })).toEqual([
+    { type: 'run_context', runId: 'run' },
+    { type: 'generation_progress', kind: 'compaction', characters: 4, step: 2, runId: 'run' },
+  ]);
+  for (const invalid of [{ characters: -1 }, { characters: 0.5 }, { characters: '2' }, { step: 0 }, { kind: 'unknown' }]) {
+    expect(() => decodeEvent('generation_progress', { kind: 'tool_calls', characters: 4, step: 1, ...invalid })).toThrow('invalid generation progress');
+  }
+});
+
 it('decodes response boundaries and rejects malformed omission notes', () => {
   expect(decodeEvent('response_end', { stop_reason: 'error', context_note: 'Workspace discarded.' })).toEqual([
     { type: 'response_end', stopReason: 'error', contextNote: 'Workspace discarded.' },
   ]);
   expect(() => decodeEvent('response_end', { stop_reason: 'other' })).toThrow('invalid response boundary');
   expect(() => decodeEvent('response_end', { stop_reason: 'stop', context_note: 3 })).toThrow('invalid response boundary');
+  expect(decodeEvent('response_end', { stop_reason: 'length', context_omitted: true })).toEqual([
+    { type: 'response_end', stopReason: 'length', contextOmitted: true },
+  ]);
+  expect(() => decodeEvent('response_end', { stop_reason: 'length', context_omitted: false })).toThrow('invalid response boundary');
 });
 
 it('decodes compaction status and rejects malformed estimates', () => {
@@ -220,6 +235,7 @@ describe('AI client', () => {
   it('reads the advertised AI authentication requirement', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
       auth: { required: true, scheme: 'Bearer' },
+
       file_attachments: {
         enabled: true,
         max_files: 1,
@@ -524,6 +540,28 @@ describe('AI client', () => {
       { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION, frontend_timezone: FRONTEND_TIMEZONE },
       { message: 'Question', message_id: 'message-1', frontend_version: CURRENT_APP_VERSION, frontend_timezone: FRONTEND_TIMEZONE },
     ]);
+    expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
+  });
+
+  it('retries compaction with its original ID and saves a pending Stop before retrying', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ run_id: 'compact-run' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onConnectionChange = vi.fn();
+    await expect(compactSession('session-id', 'compact-id', 'token', '/ai', {
+      signal: new AbortController().signal, shouldStop: () => true, onConnectionChange,
+    })).resolves.toBe('compact-run');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/ai/sessions/session-id/compact', '/ai/sessions/session-id/stop', '/ai/sessions/session-id/compact',
+    ]);
+    for (const [, request] of fetchMock.mock.calls) {
+      expect(request).toMatchObject({
+        credentials: 'include', headers: { Authorization: 'Bearer token' },
+        body: JSON.stringify({ message_id: 'compact-id' }), signal: expect.any(AbortSignal),
+      });
+    }
     expect(onConnectionChange.mock.calls).toEqual([[false], [true]]);
   });
 

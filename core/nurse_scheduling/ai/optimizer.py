@@ -31,6 +31,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
+from .config import MAX_OPTIMIZER_RESULT_BYTES, MAX_OPTIMIZER_RUNS_PER_SESSION, MAX_SCHEDULE_BYTES
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
 from .result_context import build_request_audit, build_result_context
 
@@ -181,10 +182,10 @@ class SessionOptimizer:
         default_timeout_seconds: int = 300,
         status_failure_grace_seconds: float = 60.0,
         max_sessions: int = 1000,
-        max_runs_per_session: int = 50,
-        max_result_bytes: int = 10_000_000,
+        max_runs_per_session: int = MAX_OPTIMIZER_RUNS_PER_SESSION,
+        max_result_bytes: int = MAX_OPTIMIZER_RESULT_BYTES,
         max_cached_result_bytes: int = 100_000_000,
-        max_schedule_bytes: int = 1_000_000,
+        max_schedule_bytes: int = MAX_SCHEDULE_BYTES,
         save_result: Callable[[SessionOptimization, OptimizerArtifact | None], Awaitable[str | None]] | None = None,
         load_artifact: Callable[[str, str | None], Awaitable[OptimizerArtifact | None]] | None = None,
     ) -> None:

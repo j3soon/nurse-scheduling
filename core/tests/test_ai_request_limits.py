@@ -34,6 +34,11 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxFactory
 TOKEN = "local-request-limit-test-key"
 
 
+@pytest.fixture(autouse=True)
+def small_json_body_budget(monkeypatch):
+    monkeypatch.setattr("nurse_scheduling.ai.request_limits.JSON_MAX_BYTES", 64 * 1024)
+
+
 def make_app(*, authenticated=True, max_attachment_bytes=8):
     return create_app(
         settings=AiSettings(
@@ -42,7 +47,6 @@ def make_app(*, authenticated=True, max_attachment_bytes=8):
             provider_model="stub",
             auth_token=TOKEN if authenticated else None,
             max_schedule_bytes=32,
-            max_message_chars=16,
             max_attachment_bytes=max_attachment_bytes,
             max_attachment_files=2,
         ),

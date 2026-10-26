@@ -62,6 +62,11 @@ assert_line "$output" 'tests: none'
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list)"
 assert_line "$output" 'tests: none'
 
+write_fixture core/nurse_scheduling/ai/chat_styles.css
+output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list)"
+assert_line "$output" 'spec: e2e/experimental-ai-rendering.spec.ts'
+rm -- "$fixture_root/core/nurse_scheduling/ai/chat_styles.css"
+
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'

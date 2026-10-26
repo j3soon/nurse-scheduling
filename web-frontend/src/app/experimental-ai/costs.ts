@@ -79,7 +79,7 @@ export function formatUsd(value: string): string {
 
 export function costLabel(summary: CostSummary, includeCalls = true): string {
   return formatUsd(summary.usd) + (includeCalls ? ` · ${summary.calls} ${summary.calls === 1 ? 'call' : 'calls'}` : '')
-    + (summary.pending ? ` · ${summary.pending} pending` : '')
+    + (includeCalls && summary.pending ? ` · ${summary.pending} pending` : '')
     + (summary.unavailable ? ` · ${summary.unavailable} unavailable` : '');
 }
 

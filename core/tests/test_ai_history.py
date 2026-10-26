@@ -817,6 +817,8 @@ def record(entry) -> tuple[str, dict]:
     payload = asdict(entry)
     if isinstance(entry, ToolResultMessage):
         payload.pop("image")
+    if isinstance(entry, AssistantMessage) and not entry.context_omitted:
+        payload.pop("context_omitted")
     return kind, json.loads(json.dumps(payload))
 
 
@@ -1548,8 +1550,8 @@ def test_postgres_background_run_keeps_metadata_and_event_ownership(postgres_his
     assert postgres_history.load_events(session_id, 0)[-1][3] == ("error" if failed else "done")
 
 
-def test_postgres_rejected_question_does_not_shift_trimmed_history_after_restart(postgres_history, monkeypatch):
-    settings = basic.make_settings(history_postgres_url="test", max_history_messages=2)
+def test_postgres_rejected_question_preserves_all_history_after_restart(postgres_history, monkeypatch):
+    settings = basic.make_settings(history_postgres_url="test", max_history_messages=1000)
     provider = basic.FakeProvider([["First answer"], ["Latest answer"]])
     app = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -1564,8 +1566,13 @@ def test_postgres_rejected_question_does_not_shift_trimmed_history_after_restart
             assert basic.parse_sse(response.text)[-1][0] == "done"
         owner = client.cookies[basic.OWNER_COOKIE]
         session = app.state.session_store._sessions[session_id]
-        assert session.dropped_entries == 2
-        expected = [UserMessage("Next question"), AssistantMessage("Latest answer")]
+        assert session.dropped_entries == 0
+        expected = [
+            UserMessage("Question"),
+            AssistantMessage("First answer"),
+            UserMessage("Next question"),
+            AssistantMessage("Latest answer"),
+        ]
         assert session.transcript == expected
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies={basic.OWNER_COOKIE: owner}) as client:
@@ -1828,7 +1835,7 @@ def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history)
 
 
 def test_postgres_restored_conversation_matches_the_live_conversation(postgres_history):
-    settings = basic.make_settings(history_postgres_url="test", max_history_messages=4)
+    settings = basic.make_settings(history_postgres_url="test", max_history_messages=1000)
     provider = basic.FakeProvider([["A1"], ProviderError("private detail"), ["A3"], ["A4"]])
     app = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
@@ -1844,14 +1851,9 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
         owner = client.cookies[basic.OWNER_COOKIE]
         live = app.state.session_store._sessions[session_id]
         expected = (list(live.transcript), live.dropped_entries, live.dropped_history_messages)
-    # Retention trimmed the first exchange, both app events, and the interrupted second exchange.
-    assert [entry for entry in expected[0] if not isinstance(entry, AppEventEntry)] == [
-        UserMessage("Q3"),
-        AssistantMessage("A3"),
-        UserMessage("Q4"),
-        AssistantMessage("A4"),
-    ]
-    assert expected[1] > 0 and expected[2] > 0
+    assert [entry.text for entry in expected[0] if isinstance(entry, UserMessage)] == ["Q1", "Q2", "Q3", "Q4"]
+    assert len([entry for entry in expected[0] if isinstance(entry, AppEventEntry)]) == 3
+    assert expected[1] == expected[2] == 0
 
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -2482,6 +2484,38 @@ def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_h
     assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
 
 
+def test_postgres_compaction_preserves_file_paths_and_omitted_attempts(postgres_history):
+    from nurse_scheduling.ai.context import prepare_provider_request, projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    history = postgres_history
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Inspect", 0, model="model", attachment_count=0)
+    omitted = AssistantMessage(
+        "Partial attempt",
+        "length",
+        tool_calls=(ToolCall("partial", "write", '{"path":"/workspace/partial"}'),),
+        context_omitted=True,
+    )
+    summary = CompactionEntry(
+        "Inspected files", 0, 9000, read_files=("/workspace/read",), modified_files=("/workspace/written",)
+    )
+    entries = [omitted, summary, AssistantMessage("Recovered")]
+    saved = [(seq, run, entry) for seq, entry in enumerate(entries, 1)]
+    history.append_entries(session, saved)
+    history.finish_run(run, "completed", None, None, True, session_id=session, state=state, entries=saved)
+    restarted = ChatHistory("test")
+    restarted.initialize()
+    restored = restarted.load_session(session, owner)["entries"]
+    assert restored[1:] == entries
+    assert prepare_provider_request([], [restored[1]]) == []
+    projected = projected_history(restored)
+    assert "Partial attempt" not in str(projected)
+    assert projected[0]["_compaction_files"] == {"read": ["/workspace/read"], "modified": ["/workspace/written"]}
+
+
 @pytest.mark.parametrize("destination", ["same", "model", "endpoint"])
 def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_restart(postgres_history, destination):
     from nurse_scheduling.ai.context import prepare_provider_request
@@ -2621,7 +2655,7 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
     async def exercise():
         provider = CompactionProvider()
         provider.context_tokens = 131072
-        settings = basic.make_settings(history_postgres_url="test")
+        settings = basic.make_settings(history_postgres_url="test", compaction_keep_recent_tokens=1000)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
             sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]

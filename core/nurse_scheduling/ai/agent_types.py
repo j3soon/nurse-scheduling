@@ -65,6 +65,15 @@ class AgentCompaction:
 
 
 @dataclass(frozen=True)
+class AgentGenerationProgress:
+    """Current draft size. A new summary step or retry starts its count again."""
+
+    kind: Literal["compaction", "tool_calls"]
+    characters: int
+    step: int = 1
+
+
+@dataclass(frozen=True)
 class AgentCompactionStart:
     """A context summary is about to call the provider."""
 
@@ -129,6 +138,7 @@ AgentEvent = (
     | AgentContextUsage
     | AgentCompaction
     | AgentCompactionStart
+    | AgentGenerationProgress
     | AgentCompactionEnd
     | AgentText
     | AgentReasoning
