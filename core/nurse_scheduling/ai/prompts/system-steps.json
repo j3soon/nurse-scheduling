@@ -1011,28 +1011,38 @@
       "new-schedule-qualified-slots",
       "new-schedule-policy-declined"
     ],
-    "hypothesis": "Offers optional people groups for shared primary shift preferences or eligibility rules before building a roster.",
-    "sha256": "a5b4e8d7724403e35c7e1de231c6dd19e06bfed18b4e4b025eab124a6c2cd211",
+    "hypothesis": "Includes monthly primary shifts in new-schedule information and offers optional people groups before construction or optimization.",
+    "sha256": "e133d221e27b9623209bb2977da139f2d60c91ddde20cb14a0af376eef920d3b",
     "evidence": [
       {
         "case": "new-schedule-primary-shift-groups",
-        "input_sha256": "459c2c97393d45085d9fbc182c514a24b83392116f8b857bf7a54a699da3d4ee",
+        "input_sha256": "eda1d40a9bf2cc450f16b91cd9ef113692e1b0da14b3a29572373ee52aac9c5f",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
+            "case": "new-schedule-policy-declined",
+            "input_sha256": "ec2adebb09b9715bb66299731bdc14d6b68230545eb88b7d7d2c887f330d36d3",
+            "before": "3/3",
+            "after": "3/3"
+          },
+          {
             "case": "new-schedule-qualified-slots",
-            "input_sha256": "50867b20a7f2372d0f7af8131d200e69562c8ad5d96e2aabdeceebed3b054e15",
+            "input_sha256": "313698d1ce2e397fea6ba1d24c44b64752ca16cd77f4fa131da650acdd5fbade",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits the optional primary shift people-group offer. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
+        "note": "Full-prompt ablation of the complete primary-shift step, three repetitions per version. The step restores monthly primary-shift questions and optional group offers. Qualified-slot explanations and declined-policy drafts pass in both versions. These legacy controls start from an incomplete initial fixture. All resulting draft proposals pass frontend validation. Separately, the reviewed new-schedule information case uses the frontend empty schedule fixture and passed 32/32 with primary shifts mentioned. This does not isolate the incremental benefit of the intake sentence."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_new-schedule-information.yaml"
+    ]
   },
   {
     "id": "autonomous-roster-validation",
