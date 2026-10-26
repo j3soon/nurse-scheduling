@@ -45,7 +45,6 @@ from e2b.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     TemplateException,
-    TimeoutException,
 )
 from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
@@ -575,8 +574,9 @@ class E2BSandboxBackend:
                             )
                     except CommandExitException as exc:
                         raise SandboxError("E2B could not recover sandbox command output.") from exc
-                    except (TimeoutError, TimeoutException):
-                        # A large log can outlast the snapshot deadline. The command group already stopped.
+                    except TimeoutError:
+                        # A large log can outlast this deadline, which expires before the SDK's own.
+                        # The command group already stopped. An SDK timeout can mean that the sandbox ended.
                         return CommandResult(
                             "", "", COMMAND_TIMEOUT_EXIT_CODE, duration_seconds=duration, timed_out=True
                         )
