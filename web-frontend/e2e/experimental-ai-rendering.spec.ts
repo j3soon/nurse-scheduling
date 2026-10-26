@@ -32,8 +32,8 @@ const storageKey = 'nurse-scheduling-ai-conversation';
 type SavedEvent = { type: string; occurred_at: number; data: Record<string, unknown> };
 type SavedRun = Omit<typeof fixture.runs[number], 'finished_at'> & { finished_at: number | null };
 type Snapshot = Omit<typeof fixture, 'events' | 'runs'> & { events: SavedEvent[]; runs: SavedRun[] };
-const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'failed-summary',
-  'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted', 'manual-running'] as const;
+const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'length-recovery',
+  'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted', 'manual-running'] as const;
 
 function scenario(variant: typeof variants[number]): Snapshot {
   const snapshot: Snapshot = structuredClone(fixture);
@@ -91,6 +91,14 @@ function scenario(variant: typeof variants[number]): Snapshot {
     append('response_end', { stop_reason: 'length' });
     if (variant === 'failed-truncated') append('error', { message: 'The follow-up provider request failed.' });
     else append('done');
+  } else if (variant === 'length-recovery') {
+    append('delta', { text: 'Partial plan before the length stop.' });
+    append('response_end', { stop_reason: 'length', context_omitted: true });
+    append('compaction_start', { reason: 'overflow', tokens_before: 25000 });
+    append('compaction_end', { reason: 'overflow', tokens_before: 25000, success: true, aborted: false,
+      summary: 'Retain Alice and Bob.', keep_messages: 1 });
+    append('delta', { text: 'Recovered answer.' });
+    append('done');
   } else if (variant === 'empty') append('done');
   const last = snapshot.runs.at(-1)!;
   const terminal = snapshot.events.at(-1)!;
@@ -303,6 +311,11 @@ for (const variant of variants) test(`current Python export follows the live tra
     }
     await exported.setContent(exportHtml(snapshot));
     await expect(exported.locator('script')).toHaveCount(0);
+    if (variant === 'length-recovery') {
+      for (const current of [page, exported]) {
+        await expect(current.getByText('Incomplete response. Omitted from future model context.')).toHaveCount(1);
+      }
+    }
     await Promise.all([
       writeFile(path.join(dir, 'frontend-original.html'), await page.content()),
       writeFile(path.join(dir, 'export-original.html'), await exported.content()),

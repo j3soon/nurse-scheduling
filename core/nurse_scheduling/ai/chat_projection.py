@@ -350,7 +350,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         elif kind == "response_end":
             for entry in activity:
                 if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
-                    entry["context"] = "omitted" if data["stop_reason"] in {"error", "aborted"} else "complete"
+                    omitted = data["stop_reason"] in {"error", "aborted"} or data.get("context_omitted")
+                    entry["context"] = "omitted" if omitted else "complete"
             if data.get("context_note"):
                 _invalidate_summaries(turn)
                 activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})

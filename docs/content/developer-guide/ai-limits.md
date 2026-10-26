@@ -30,7 +30,7 @@ N/A marks a limit or component absent in the pinned Pi implementation.
 | Context safety margin | 4,096 tokens | Same. |
 | Tool-result text in summary input | Truncated to 2,000 characters | Same. |
 | Cumulative file-operation records in summaries | Supported | Read, write, and edit paths are saved separately and appended to each summary. |
-| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the model output limit. Partial tool calls are not executed. |
+| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the model output limit. Partial tool calls are not executed. Chats and exports label the omitted attempt. |
 
 Each history or turn-prefix section is summarized in one request. Complete,
 successful summaries are accepted, including empty text, as in Pi. Summary

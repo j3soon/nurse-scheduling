@@ -104,7 +104,8 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
   const activity = message.activity ?? [];
   switch (event.type) {
     case 'response_end': {
-      const context = event.stopReason === 'error' || event.stopReason === 'aborted' ? 'omitted' : 'complete';
+      const context = event.stopReason === 'error' || event.stopReason === 'aborted' || event.contextOmitted
+        ? 'omitted' : 'complete';
       const ended = activity.map(entry => (
         event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
           ? { ...entry, invalidated: true }

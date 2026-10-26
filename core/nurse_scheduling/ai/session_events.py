@@ -88,6 +88,8 @@ class ResponseEndEvent(RunFields):
     type: Literal["response_end"]
     stop_reason: Literal["stop", "tool_use", "length", "error", "aborted"]
     context_note: NotRequired[str]
+    # Length recovery omits an attempt that the stop reason alone does not mark as failed.
+    context_omitted: NotRequired[Literal[True]]
 
 
 class ToolFields(RunFields):

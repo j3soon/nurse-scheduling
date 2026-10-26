@@ -84,6 +84,8 @@ class RunOutput:
         if isinstance(event, AgentMessageEnd):
             self.pending_text.clear()
             self.pending_reasoning.clear()
+            if event.message.context_omitted:
+                return {"type": "response_end", "stop_reason": event.message.stop_reason, "context_omitted": True}
             if not event.message.tool_calls and event.message.stop_reason in {"stop", "length"}:
                 # Validation and workspace cleanup can still reject the final answer.
                 return {"type": "truncated"} if event.message.stop_reason == "length" else None

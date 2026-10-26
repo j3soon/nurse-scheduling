@@ -121,6 +121,19 @@ describe('assistant events', () => {
     expect(message.activity?.find(entry => entry.kind === 'tool')).toMatchObject({ result: 'File contents' });
   });
 
+  it('marks a length-limited attempt omitted when recovery retries it', () => {
+    const message = reduce([
+      { type: 'delta', text: 'Partial plan' },
+      { type: 'response_end', stopReason: 'length', contextOmitted: true },
+      { type: 'delta', text: 'Recovered answer' },
+      { type: 'done' },
+    ]);
+    expect(message.activity).toEqual([
+      { kind: 'response', text: 'Partial plan', context: 'omitted' },
+      { kind: 'response', text: 'Recovered answer' },
+    ]);
+  });
+
   it('shows the exact workspace interruption note separately from failed output', () => {
     const message = reduce([
       { type: 'delta', text: 'Partial' },
