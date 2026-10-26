@@ -397,9 +397,10 @@ The prompt loader removes provenance comments before model requests.
 A later compaction passes the existing summary separately in `previous-summary`
 tags and uses Pi's update instructions. When a cut splits an active turn, older
 history and the active turn prefix receive separate summaries. The latter uses
-Pi's dedicated checkpoint format, and recent tool exchanges stay intact. Recent responses retain their native replay metadata. File paths still depend
-on the summary and recent messages. Pi's separate cumulative file-operation
-records are not implemented.
+Pi's dedicated checkpoint format, and recent tool exchanges stay intact.
+Recent responses retain their native replay metadata. As in Pi, each summary
+saves the read, written, and edited paths separately, appends them in
+`read-files` and `modified-files` tags, and carries them into later summaries.
 
 Summary calls use the frozen run model and reasoning selection. Pi limits history
 summary output to 80 percent of the reserved tokens and turn-prefix output to
