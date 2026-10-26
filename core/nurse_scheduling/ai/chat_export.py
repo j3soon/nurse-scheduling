@@ -533,10 +533,11 @@ def _display_messages(messages):
         if bubble.get("presentation") == "summary" and not bubble["compaction"].get("invalidated"):
             keep = bubble["compaction"].get("keepMessages", 0)
             retained = set()
+            # Keep the newest messages. The new summary replaces the earlier one, so it never counts as kept.
             for prior in sorted(active, reverse=True):
                 if keep <= 0:
                     break
-                if counts[prior] > 0:
+                if counts[prior] > 0 and bubbles[prior].get("presentation") != "summary":
                     retained.add(prior)
                     keep -= counts[prior]
             retained.add(index)

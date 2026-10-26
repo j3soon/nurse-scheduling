@@ -120,6 +120,34 @@ it('marks messages before the retained compaction tail as compacted out of conte
   expect(screen.getByText('System').closest('article')).not.toHaveTextContent('Compacted out of context.');
 });
 
+it('keeps the newest messages in order across summaries and replaces the earlier summary', () => {
+  const answer = (id: string, text: string) => (
+    { id, role: 'assistant' as const, content: text, activity: [{ kind: 'response' as const, text }] });
+  const compaction = (id: string, keepMessages: number) => ({ id, role: 'assistant' as const, content: '', activity: [
+    { kind: 'compaction' as const, reason: 'manual' as const, state: 'completed' as const,
+      text: 'The conversation was summarized.', summary: `Summary ${id}.`, keepMessages },
+  ] });
+  renderTranscript([
+    { id: 'q1', role: 'user', content: 'First question' }, answer('a1', 'First answer'),
+    { id: 'q2', role: 'user', content: 'Second question' }, answer('a2', 'Second answer'),
+    compaction('first', 2),
+    { id: 'q3', role: 'user', content: 'Third question' }, answer('a3', 'Third answer'),
+    { id: 'q4', role: 'user', content: 'Fourth question' }, answer('a4', 'Fourth answer'),
+    // The earlier summary is folded into the new one, so only conversation messages count.
+    compaction('second', 5),
+  ]);
+  const status = (text: string) => screen.getByText(text).closest('article');
+  for (const text of ['First question', 'First answer', 'Second question']) {
+    expect(status(text)).toHaveTextContent('Compacted out of context.');
+  }
+  for (const text of ['Second answer', 'Third question', 'Third answer', 'Fourth question', 'Fourth answer']) {
+    expect(status(text)).not.toHaveTextContent('Compacted out of context.');
+  }
+  const summaries = screen.getAllByText('User · Conversation summary').map(label => label.closest('article'));
+  expect(summaries[0]).toHaveTextContent('Compacted out of context.');
+  expect(summaries[1]).not.toHaveTextContent('Compacted out of context.');
+});
+
 it('counts parallel tool calls as one step and ignores uncommitted turns when marking compacted messages', () => {
   renderTranscript([
     { id: 'q1', role: 'user', content: 'Compacted question' },

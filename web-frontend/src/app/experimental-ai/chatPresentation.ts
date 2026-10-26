@@ -85,9 +85,10 @@ export function transcriptConversation(messages: ChatMessage[]): TranscriptMessa
     if (bubble.presentation === 'summary' && !bubble.compaction?.invalidated) {
       let keep = bubble.compaction?.keepMessages ?? 0;
       const retained = new Set<number>();
-      for (const prior of Array.from(active).reverse()) {
+      // Keep the newest messages. The new summary replaces the earlier one, so it never counts as kept.
+      for (const prior of Array.from(active).sort((a, b) => b - a)) {
         if (keep <= 0) break;
-        if (counts[prior] > 0) {
+        if (counts[prior] > 0 && bubbles[prior].presentation !== 'summary') {
           retained.add(prior);
           keep -= counts[prior];
         }

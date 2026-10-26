@@ -280,6 +280,37 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
     assert messages == original
 
 
+def test_exports_keep_the_newest_messages_across_summaries():
+    def answer(text):
+        return {"role": "assistant", "content": text, "activity": [{"kind": "response", "text": text}]}
+
+    def compaction(keep):
+        entry = {"kind": "compaction", "reason": "manual", "state": "completed"}
+        entry |= {"text": "The conversation was summarized.", "summary": f"Summary {keep}.", "keepMessages": keep}
+        return {"role": "assistant", "content": "", "activity": [entry]}
+
+    messages = [
+        {"role": "user", "content": "First question"},
+        answer("First answer"),
+        {"role": "user", "content": "Second question"},
+        answer("Second answer"),
+        compaction(2),
+        {"role": "user", "content": "Third question"},
+        answer("Third answer"),
+        {"role": "user", "content": "Fourth question"},
+        answer("Fourth answer"),
+        # The earlier summary is folded into the new one, so only conversation messages count.
+        compaction(5),
+    ]
+    metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
+    articles = build_html_chat(messages, metadata).split('<article class="')[1:]
+    by_text = lambda text: next(article for article in articles if text in article)
+    for text in ("First question", "First answer", "Second question", "Summary 2."):
+        assert "Compacted out of context." in by_text(text)
+    for text in ("Second answer", "Third question", "Third answer", "Fourth question", "Fourth answer", "Summary 5."):
+        assert "Compacted out of context." not in by_text(text)
+
+
 def test_exports_preserve_tools_without_inventing_an_html_response():
     messages = [
         {
