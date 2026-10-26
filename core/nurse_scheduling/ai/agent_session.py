@@ -67,6 +67,7 @@ from .transcript import (
     AgentMessage,
     AppEventEntry,
     AssistantMessage,
+    CompactionEntry,
     ToolResultMessage,
     UserMessage,
 )
@@ -172,7 +173,9 @@ class MessageReceipt:
 class SessionPersistence(Protocol):
     """Session operations needed by a foreground or background run."""
 
-    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot: ...
+    def begin(
+        self, session_id: str, owner_token: str | None, *, run_id: str | None = None, compact_only: bool = False
+    ) -> RunSnapshot: ...
 
     def remember_message(self, session_id: str, message: AcceptedMessage) -> None: ...
 
@@ -880,7 +883,7 @@ class AgentSession:
     ) -> None:
         """Summarize retained context without a user question or workspace."""
         settings = runtime.settings
-        history = project_history(snapshot.transcript, settings.max_history_chars)
+        history = project_history(snapshot.transcript, None)
         messages = build_provider_messages(
             history, snapshot.schedule_yaml, "", max_download_bytes=settings.max_download_bytes
         )[:-1]
@@ -895,7 +898,17 @@ class AgentSession:
                 await compactor.prepare()
                 definitions = SandboxPiTools.tool_definitions(settings.sandbox_command_timeout_seconds)
                 definitions.append(optimizer_tool_definition(settings.optimizer_default_timeout_seconds))
-                summary_events = compactor.compact(messages, definitions, force=True, manual=True)
+                summary_events = compactor.compact(
+                    messages,
+                    definitions,
+                    force=True,
+                    manual=True,
+                    already_compacted=bool(
+                        snapshot.transcript
+                        and isinstance(snapshot.transcript[-1], CompactionEntry)
+                        and snapshot.transcript[-1].valid
+                    ),
+                )
                 async with aclosing(summary_events):
                     async for event in summary_events:
                         if isinstance(event, ProviderCall):
@@ -1209,7 +1222,7 @@ class AgentSession:
         snapshot = (
             store.begin_background(session_id, run_id=run.id)
             if background
-            else store.begin(session_id, owner, run_id=run.id)
+            else store.begin(session_id, owner, run_id=run.id, compact_only=compact_only)
         )
         if snapshot is None:
             return

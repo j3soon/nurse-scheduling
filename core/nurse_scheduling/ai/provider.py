@@ -102,6 +102,8 @@ class ChatMessage(TypedDict, total=False):
     _usage: dict[str, int | None]
     _compaction_summary: bool
     _tool_image: bool
+    _reasoning_text: str
+    _compaction_files: dict[str, list[str]]
 
 
 @dataclass(frozen=True)
@@ -419,8 +421,6 @@ class OpenAiCompatibleProvider:
         )
         if limit is None:
             return
-        if limit < 1:
-            raise ProviderContextOverflowError.for_user("The AI request leaves no room for a response.")
         parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
         payload.pop("max_tokens", None)
         payload.pop("max_completion_tokens", None)
@@ -532,7 +532,11 @@ class OpenAiCompatibleProvider:
         retry_deadline: float | None = None
         for attempt in range(1, max_attempts + 1):
             estimate = estimate_context_tokens(payload["messages"], tools or [])
-            used_tokens = max(estimate, (self._context_used_tokens or 0) + max(0, estimate - original_estimate))
+            used_tokens = (
+                self._context_used_tokens + max(0, estimate - original_estimate)
+                if self._context_used_tokens is not None
+                else estimate
+            )
             self._apply_output_limit(payload, used_tokens)
             call = ProviderCall(str(uuid4()), self._settings.provider_model)
             if self._include_costs:

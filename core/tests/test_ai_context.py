@@ -126,6 +126,7 @@ def test_later_context_keeps_responses_and_tools_but_releases_images():
             "role": "assistant",
             "content": "Checking. ",
             "tool_calls": [{"id": "read-1", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+            "_reasoning_text": "private reasoning",
         },
         {"role": "tool", "tool_call_id": "read-1", "content": "large tool result"},
         {"role": "assistant", "content": "Done."},

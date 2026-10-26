@@ -686,7 +686,7 @@ test('keeps short context with a manual request notice instead of a compaction f
   await expect(page.getByRole('button', { name: 'Compact context', exact: true })).toBeEnabled();
   await expect(page.getByText('Summarization failed', { exact: true })).toBeHidden();
   await page.getByText('No compaction needed', { exact: true }).click();
-  await expect(page.getByText('Compaction would not reduce context. The original context was kept.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Nothing to compact. The original context was kept.', { exact: true })).toBeVisible();
   expect(captured.messageBodies).toHaveLength(1);
   await page.screenshot({ path: '../artifacts/manual-compaction-skipped.png', fullPage: true });
   await page.reload();

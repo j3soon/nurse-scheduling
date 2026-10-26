@@ -19,6 +19,7 @@
 
 # This file is mostly AI generated.
 
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing
@@ -26,7 +27,7 @@ from pathlib import Path
 
 from .agent_types import AgentCompaction, AgentCompactionEnd, AgentCompactionStart, AgentGenerationProgress
 from .context import STATUS_PREFIX, SUMMARY_PREFIX, apply_compaction, history_chars
-from .context_tokens import estimate_context_tokens, estimate_tokens
+from .context_tokens import estimate_context_tokens, estimate_tokens, reasoning_text
 from .provider import (
     ChatMessage,
     ProviderCall,
@@ -58,6 +59,10 @@ def _serialize(messages: Sequence[ChatMessage]) -> str:
         content = content or ""
         if message["role"] == "tool" and len(content) > 2000:
             content = content[:2000] + "\n[Tool result truncated for summary]"
+        if message["role"] == "assistant":
+            reasoning = reasoning_text(message)
+            if reasoning:
+                parts.append(f"[Assistant thinking]: {reasoning}")
         parts.append(f"[{message['role']}]: {content}")
         for call in message.get("tool_calls", []):
             function = call["function"]
@@ -95,7 +100,6 @@ class ContextCompactor:
         self.provider = provider
         self.reserve_tokens = reserve_tokens
         self.keep_recent_tokens = keep_recent_tokens
-        self.failed = False
         self._summary_step = 0
 
     async def prepare(self) -> None:
@@ -115,23 +119,41 @@ class ContextCompactor:
         return estimate_context_tokens(messages, tools, asdict(identity) if identity else None)
 
     def needed(self, messages, tools) -> bool:
-        if self.failed:
-            return False
         window = self.window
         return window is not None and self.tokens(messages, tools) > window - self.reserve_tokens
 
     async def compact(
-        self, messages: Sequence[ChatMessage], tools: Sequence[dict], *, force: bool = False, manual: bool = False
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Sequence[dict],
+        *,
+        force: bool = False,
+        manual: bool = False,
+        already_compacted: bool = False,
+        after_omitted_attempt: bool = False,
     ) -> AsyncIterator[
         ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd | AgentGenerationProgress
     ]:
         if not force and not self.needed(messages, tools):
             return
         body = _conversation(messages)
-        previous_summary = ""
+        previous_summary = None
+        previous_files = {}
         if body and body[0].get("_compaction_summary"):
+            previous_files = body[0].get("_compaction_files", {})
             previous_summary = body.pop(0)["content"].removeprefix(SUMMARY_PREFIX + "\n")
-        if len(body) < 2:
+        cut = _cut_point(body, self.keep_recent_tokens)
+        if (
+            after_omitted_attempt
+            and body
+            and cut == len(body) - 1
+            and _is_cut_point(body[cut])
+            and estimate_tokens(body[cut]) >= self.keep_recent_tokens
+        ):
+            # Pi can keep only the omitted attempt after an oversized final input.
+            # Its visible context is empty, so summarize that input too.
+            cut = len(body)
+        if already_compacted or cut == 0:
             if manual:
                 yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
             return
@@ -139,11 +161,6 @@ class ContextCompactor:
             raise ProviderError.for_user(
                 "The selected model has no valid context window. Configure its model metadata."
             )
-        cut = _cut_point(body, self.keep_recent_tokens)
-        if cut == 0:
-            if manual:
-                yield AgentCompactionEnd("manual", False, self.tokens(messages, tools), skipped=True)
-            return
         older, recent = body[:cut], body[cut:]
         keep = sum(not message.get("_tool_image", False) for message in recent)
         entries = load_system_prompt_entries(COMPACTION_MANIFEST)
@@ -177,7 +194,7 @@ class ContextCompactor:
                             summary = event
             if turn_start is not None:
                 # Pi summarizes older history and the active turn prefix separately.
-                history_text = summary or "No prior history."
+                history_text = summary if summary is not None else "No prior history."
                 events = self._summarize(
                     body[turn_start:cut],
                     prompts,
@@ -189,9 +206,31 @@ class ContextCompactor:
                             yield event
                         else:
                             summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
-            entry = CompactionEntry(summary, keep, self.tokens(messages, tools))
+            read_files = set(previous_files.get("read", ()))
+            modified_files = set(previous_files.get("modified", ()))
+            for message in older:
+                for call in message.get("tool_calls", ()):
+                    function = call["function"]
+                    try:
+                        arguments = json.loads(function["arguments"])
+                    except (ValueError, TypeError):
+                        continue
+                    path = arguments.get("path") if isinstance(arguments, dict) else None
+                    if not isinstance(path, str) or not path:
+                        continue
+                    if function["name"] == "read":
+                        read_files.add(path)
+                    elif function["name"] in {"write", "edit"}:
+                        modified_files.add(path)
+            read = tuple(sorted(read_files - modified_files))
+            modified = tuple(sorted(modified_files))
+            for tag, paths in (("read-files", read), ("modified-files", modified)):
+                if paths:
+                    summary += f"\n\n<{tag}>\n" + "\n".join(paths) + f"\n</{tag}>"
+            entry = CompactionEntry(
+                summary, keep, self.tokens(messages, tools), read_files=read, modified_files=modified
+            )
         except ProviderError:
-            self.failed = True
             logger.warning("AI context compaction failed. Original context retained.", exc_info=True)
             yield AgentCompactionEnd(reason, False, tokens_before)
             return
@@ -211,7 +250,7 @@ class ContextCompactor:
         self,
         messages: Sequence[ChatMessage],
         prompts: dict[str, str],
-        summary: str = "",
+        summary: str | None = None,
         *,
         initial_prompt: str = "context-compaction",
     ) -> AsyncIterator[ProviderCall | AgentGenerationProgress | str]:
@@ -252,7 +291,7 @@ class ContextCompactor:
                 elif isinstance(event, ResponseEnd):
                     finish = event.finish_reason
                     ended = True
-        summary = "".join(text).strip()
-        if not summary or not ended or finish == "length":
-            raise ProviderError("Compaction returned an empty or incomplete summary")
+        summary = "".join(text)
+        if not ended or finish == "length":
+            raise ProviderError("Compaction returned an incomplete summary")
         yield summary

@@ -21,6 +21,7 @@ N/A marks a limit or component absent in the pinned Pi implementation.
 | Policy | Pi v1.0.0 | This service |
 | --- | --- | --- |
 | Automatic compaction | Context tokens exceed model window minus reserve | Same. |
+| Context usage | Latest valid provider usage plus estimates for later messages | Same. Text estimates do not override valid same-model usage. |
 | Output reserve | 16,384 tokens | `AI_COMPACTION_RESERVE_TOKENS=16384` |
 | Recent context retained | 20,000 estimated tokens | `AI_COMPACTION_KEEP_RECENT_TOKENS=20000` |
 | History summary output | 80% of reserve, limited by model output and available context | Same. |
@@ -28,13 +29,54 @@ N/A marks a limit or component absent in the pinned Pi implementation.
 | Model context window | Supplied by model definitions | Requires positive context-window metadata before generation. |
 | Context safety margin | 4,096 tokens | Same. |
 | Tool-result text in summary input | Truncated to 2,000 characters | Same. |
-| Cumulative file-operation records in summaries | Supported | N/A. File paths remain in messages and generated summaries. |
+| Cumulative file-operation records in summaries | Supported | Read, write, and edit paths are saved separately and appended to each summary. |
+| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the model output limit. Partial tool calls are not executed. |
 
 Each history or turn-prefix section is summarized in one request. Complete,
-successful summaries are accepted. Summary failure preserves the original
-context. A request that cannot fit the model window fails explicitly.
+successful summaries are accepted, including empty text, as in Pi. Summary
+failure preserves the original context and does not disable later automatic
+compaction attempts in the same run. Compaction skips when the retention
+boundary leaves no older messages to summarize.
+An immediately repeated compaction skips when the last transcript entry is
+already a summary. Summary text is preserved, including whitespace.
+A large text estimate clamps requested output to at least one token, as in Pi.
+The provider decides whether the request fits. A provider rejection preserves
+the original context.
+A recovery attempt can summarize a single oversized final input after omitting
+the failed response, as in Pi. Manual compaction keeps that input when there is
+no omitted recovery attempt.
 A split conversation turn can require two summary requests, as in Pi.
 Model token limits bound generated text and reasoning.
+
+### Integration differences
+
+Pi's design guides the whole agent. These implementation differences remain:
+
+- The provider adapter uses OpenAI-compatible messages. Fallback estimates use
+  characters divided by four, count readable reasoning and tool arguments,
+  and include the system prompt and tool definitions. Opaque signatures and
+  encrypted replay data do not inflate these estimates. Message serialization
+  and image representation differ from Pi's native message format.
+- The loop checks context before tool continuations as well as after a final
+  response, so growing tool results can be summarized before the next request.
+  Manual compaction uses shared run admission, Stop, replay, and persistence.
+  It requires an idle chat instead of implicitly stopping an active schedule
+  operation. Use Stop before compacting an active chat.
+  The UI combines Pi's two ineligible cases into one skipped notice.
+- Status messages stay with their user question. They describe the schedule
+  workspace and cannot replace the request that starts a conversation turn.
+  Summaries from failed or cancelled runs are invalidated because those runs
+  discard their temporary workspace.
+- Model discovery must supply a positive context window before paid generation.
+  Pi supplies model definitions directly. Numeric reasoning settings must leave
+  the provider's minimum thinking budget and room for an answer. Invalid settings
+  fail before the request, rather than sending a known invalid payload.
+- Pi's extension hooks and custom compaction instructions are not exposed by
+  this service. HTTP, memory, storage, and runtime bounds below protect the shared
+  deployment and can still refuse work at capacity. Manual compaction bypasses
+  the active-history quota and summarizes the full retained history, so reaching
+  that quota does not prevent reducing it. Shared memory and concurrency limits
+  still apply to the compaction request.
 
 ## Defensive execution and input bounds
 

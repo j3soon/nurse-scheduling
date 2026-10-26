@@ -210,7 +210,10 @@ class SessionStore:
             len(messages) >= self._settings.max_history_messages
             or history_chars(messages) >= self._settings.max_history_chars
         ):
-            raise HTTPException(429, "This chat reached its defensive history limit. Export it and start a new chat.")
+            raise HTTPException(
+                429,
+                "This chat reached its defensive history limit. Compact the context, or export it and start a new chat.",
+            )
 
     def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
@@ -288,12 +291,14 @@ class SessionStore:
         if session_id in self._sessions:
             self._retire(session_id)
 
-    def begin(self, session_id: str, owner_token: str | None, *, run_id: str | None = None) -> RunSnapshot:
+    def begin(
+        self, session_id: str, owner_token: str | None, *, run_id: str | None = None, compact_only: bool = False
+    ) -> RunSnapshot:
         """Reserve the current conversation version for one foreground run."""
         session = self._get_owned(session_id, owner_token)
         if session.active:
             raise HTTPException(status_code=409, detail="This chat session already has an active response.")
-        return self._reserve(session, run_id=run_id)
+        return self._reserve(session, run_id=run_id, compact_only=compact_only)
 
     def begin_background(self, session_id: str, *, run_id: str | None = None) -> RunSnapshot | None:
         self._prune_expired()
@@ -302,8 +307,9 @@ class SessionStore:
             return None
         return self._reserve(session, run_id=run_id)
 
-    def _reserve(self, session: AgentSession, *, run_id: str | None) -> RunSnapshot:
-        self._check_history_capacity(session)
+    def _reserve(self, session: AgentSession, *, run_id: str | None, compact_only: bool = False) -> RunSnapshot:
+        if not compact_only:
+            self._check_history_capacity(session)
         self._require_capacity(0)
         snapshot = session.begin_run(run_id=run_id)
         if self._settings.history_postgres_url:

@@ -24,11 +24,12 @@ import logging
 import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from math import ceil
 
 from .agent_types import (
     AgentCompaction,
+    AgentCompactionEnd,
     AgentContextUsage,
     AgentEvent,
     AgentGenerationProgress,
@@ -64,7 +65,7 @@ from .provider import (
     ToolCallRequest,
     ToolCapableChatProvider,
 )
-from .transcript import AgentMessage, AssistantMessage, ToolResultMessage, UserMessage
+from .transcript import AgentMessage, AssistantMessage, CompactionEntry, ToolResultMessage, UserMessage
 
 logger = logging.getLogger("nurse_scheduling.ai.agent")
 MAX_PARALLEL_TOOL_CALLS = 16
@@ -117,7 +118,20 @@ async def agent_loop(
         return prepare_provider_request(prefix, conversation, _preserve_native=True)
 
     async def compact_context(*, force=False):
-        events = compactor.compact(current_request(), [tool.definition for tool in tools], force=force)
+        events = compactor.compact(
+            current_request(),
+            [tool.definition for tool in tools],
+            force=force,
+            already_compacted=bool(
+                conversation and isinstance(conversation[-1], CompactionEntry) and conversation[-1].valid
+            ),
+            after_omitted_attempt=bool(
+                force
+                and conversation
+                and isinstance(conversation[-1], AssistantMessage)
+                and conversation[-1].context_omitted
+            ),
+        )
         async with aclosing(events):
             async for event in events:
                 if isinstance(event, AgentCompaction):
@@ -132,6 +146,7 @@ async def agent_loop(
         # summary streams. Every follow-up provider request must see queued input.
         if conversation and take_steering is not None:
             for message_id, text in take_steering(False):
+                overflow_recovered = False
                 conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
         answer, reasoning, calls = [], [], ()
@@ -191,7 +206,12 @@ async def agent_loop(
                     elif isinstance(event, ResponseEnd):
                         finish_reason = event.finish_reason
         except ProviderContextOverflowError:
-            if overflow_recovered or answer or calls:
+            failed = AssistantMessage(
+                "".join(answer), "error", "".join(reasoning), calls, usage=usage, context_omitted=True
+            )
+            conversation.append(failed)
+            yield AgentMessageEnd(failed)
+            if overflow_recovered:
                 raise
             compacted = False
             async with aclosing(compact_context(force=True)) as compaction_events:
@@ -206,7 +226,6 @@ async def agent_loop(
             reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
             conversation.append(AssistantMessage("".join(answer), reason, "".join(reasoning), calls))
             raise
-        overflow_recovered = False
         stop_reason = "length" if finish_reason == "length" else "tool_use" if calls else "stop"
         response = AssistantMessage(
             "".join(answer),
@@ -217,6 +236,34 @@ async def agent_loop(
             replay.provider if replay else getattr(provider, "identity", None),
             usage,
         )
+        desired_output = getattr(provider, "output_tokens", None)
+        recoverable_length = (
+            finish_reason == "length"
+            and type(desired_output) is int
+            and desired_output > 0
+            and (usage or {}).get("completion_tokens", 0) < desired_output
+        )
+        if recoverable_length and overflow_recovered:
+            conversation.append(response)
+            yield AgentMessageEnd(response)
+            yield AgentCompactionEnd("overflow", False, compactor.tokens(current_request(), definitions))
+            break
+        if recoverable_length:
+            # Keep the truncated attempt for audit, but omit it from the context
+            # being summarized and retried. Never execute its partial tool calls.
+            response = replace(response, context_omitted=True)
+            conversation.append(response)
+            yield AgentMessageEnd(response)
+            compacted = False
+            async with aclosing(compact_context(force=True)) as compaction_events:
+                async for event in compaction_events:
+                    compacted = compacted or isinstance(event, AgentCompaction)
+                    yield event
+            if not compacted:
+                break
+            overflow_recovered = True
+            continue
+        overflow_recovered = False
         conversation.append(response)
         yield AgentMessageEnd(response)
         if not calls:
@@ -227,6 +274,7 @@ async def agent_loop(
             if not steering:
                 break
             for message_id, text in steering:
+                overflow_recovered = False
                 conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
             continue
@@ -322,6 +370,7 @@ async def agent_loop(
             if not steering:
                 return
             for message_id, text in steering:
+                overflow_recovered = False
                 conversation.append(UserMessage(text))
                 yield AgentSteering(message_id, text)
 

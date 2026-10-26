@@ -154,7 +154,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
         ...(event.keepMessages === undefined ? {} : { keepMessages: event.keepMessages }),
         text: event.success ? 'The conversation was summarized.' : event.aborted
           ? 'Summarization stopped. The original context was kept.' : event.skipped
-            ? 'Compaction would not reduce context. The original context was kept.' : 'Summarization failed. The original context was kept.' };
+            ? 'Nothing to compact. The original context was kept.' : 'Summarization failed. The original context was kept.' };
       const index = activity.findLastIndex(item => item.kind === 'compaction' && item.state === 'running');
       const progress = index < 0 ? undefined : activity[index] as Extract<ActivityEntry, { kind: 'compaction' }>;
       const characters = event.characters ?? progress?.characters;

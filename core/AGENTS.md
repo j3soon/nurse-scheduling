@@ -145,12 +145,17 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Experimental AI
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
-  Use Pi agent v1.0.0 as a reference for AI chat architecture and design philosophy.
+  Follow Pi agent v1.0.0 across all aspects of AI agent design and behavior.
+  Add a limit or restriction only when a concrete service requirement makes it
+  necessary.
+  Prefer the simplest implementation that preserves the upstream design.
   Clone external reference code under the ignored repository-root `artifacts/`
   directory and record the inspected revision in related developer documentation.
   Preserve upstream compaction prompt text exactly and record its revision and
   hashes. Keep project-specific workspace guidance in the main system prompt
   instead of duplicating it in compaction prompts.
+  Verify Pi alignment against the pinned source across the affected execution
+  path. Document each necessary difference and its reason in the limits page.
 - `AgentSession` owns conversation changes, steering, applied schedules, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered

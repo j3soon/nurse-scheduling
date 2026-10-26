@@ -817,6 +817,8 @@ def record(entry) -> tuple[str, dict]:
     payload = asdict(entry)
     if isinstance(entry, ToolResultMessage):
         payload.pop("image")
+    if isinstance(entry, AssistantMessage) and not entry.context_omitted:
+        payload.pop("context_omitted")
     return kind, json.loads(json.dumps(payload))
 
 
@@ -2480,6 +2482,38 @@ def test_postgres_compaction_survives_restart_only_for_completed_runs(postgres_h
     assert summary.valid == (status == "completed")
     assert restored[3].stop_reason == ("stop" if status == "completed" else reason)
     assert ("Goal: keep nights" in str(projected_history(restored))) == (status == "completed")
+
+
+def test_postgres_compaction_preserves_file_paths_and_omitted_attempts(postgres_history):
+    from nurse_scheduling.ai.context import prepare_provider_request, projected_history
+    from nurse_scheduling.ai.transcript import CompactionEntry
+
+    history = postgres_history
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    state = session_state(owner)
+    history.save_session(session, state)
+    history.start_run(run, session, state, "Inspect", 0, model="model", attachment_count=0)
+    omitted = AssistantMessage(
+        "Partial attempt",
+        "length",
+        tool_calls=(ToolCall("partial", "write", '{"path":"/workspace/partial"}'),),
+        context_omitted=True,
+    )
+    summary = CompactionEntry(
+        "Inspected files", 0, 9000, read_files=("/workspace/read",), modified_files=("/workspace/written",)
+    )
+    entries = [omitted, summary, AssistantMessage("Recovered")]
+    saved = [(seq, run, entry) for seq, entry in enumerate(entries, 1)]
+    history.append_entries(session, saved)
+    history.finish_run(run, "completed", None, None, True, session_id=session, state=state, entries=saved)
+    restarted = ChatHistory("test")
+    restarted.initialize()
+    restored = restarted.load_session(session, owner)["entries"]
+    assert restored[1:] == entries
+    assert prepare_provider_request([], [restored[1]]) == []
+    projected = projected_history(restored)
+    assert "Partial attempt" not in str(projected)
+    assert projected[0]["_compaction_files"] == {"read": ["/workspace/read"], "modified": ["/workspace/written"]}
 
 
 @pytest.mark.parametrize("destination", ["same", "model", "endpoint"])

@@ -89,7 +89,7 @@ describe('assistant events', () => {
     expect(message.activity).toEqual([
       { kind: 'notice', text: 'You requested context compaction.' },
       { kind: 'compaction', reason: 'manual', state: 'skipped',
-        text: 'Compaction would not reduce context. The original context was kept.' },
+        text: 'Nothing to compact. The original context was kept.' },
     ]);
   });
   it('preserves the exact compaction summary and marks it discarded after a failed run', () => {

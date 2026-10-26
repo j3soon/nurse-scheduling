@@ -82,17 +82,16 @@ def test_short_requests_leave_the_fixed_pi_context_margin(monkeypatch, window):
 
 
 @pytest.mark.parametrize("window", [1024, 4096])
-def test_small_windows_fail_when_the_fixed_margin_leaves_no_response_room(monkeypatch, window):
+def test_small_windows_use_pi_minimum_output_budget(monkeypatch, window):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = window
-    with pytest.raises(ProviderContextOverflowError, match="no room for a response"):
-        asyncio.run(_collect(provider.stream_events([{"role": "user", "content": "Hello"}])))
-    assert requests == []
+    asyncio.run(_collect(provider.stream_events([{"role": "user", "content": "Hello"}])))
+    assert json.loads(requests[0].content)["max_tokens"] == 1
 
 
 @pytest.mark.parametrize("window", [4096, 8192])
-def test_compaction_preserves_context_when_the_pi_request_does_not_fit(monkeypatch, window):
+def test_provider_decides_whether_an_estimated_oversized_summary_fits(monkeypatch, window):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = window
@@ -104,8 +103,9 @@ def test_compaction_preserves_context_when_the_pi_request_does_not_fit(monkeypat
     ]
     before = json.dumps(messages)
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
-    assert not any(isinstance(event, AgentCompaction) for event in events)
-    assert requests == []
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["max_tokens"] == 1
     assert json.dumps(messages) == before
 
 
@@ -116,6 +116,35 @@ def test_actual_context_usage_limits_output_when_wire_estimate_is_smaller(monkey
     bound = provider.with_output_limit(None, context_used_tokens=7000)
     asyncio.run(_collect(bound.stream_events([{"role": "user", "content": "Hello"}])))
     assert json.loads(requests[0].content)["max_tokens"] == 4904
+
+
+def test_actual_context_usage_replaces_a_larger_wire_estimate(monkeypatch):
+    requests = []
+    provider = wire_provider(monkeypatch, requests)
+    provider.context_tokens = 16000
+    bound = provider.with_output_limit(None, context_used_tokens=7000)
+    asyncio.run(_collect(bound.stream_events([{"role": "user", "content": "x" * 100000}])))
+    assert json.loads(requests[0].content)["max_tokens"] == 4904
+
+
+def test_provider_rejection_of_oversized_summary_preserves_context(monkeypatch):
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(400, json={"error": {"code": "context_length_exceeded"}})
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider.context_tokens = 16000
+    messages = [
+        {"role": "user", "content": "Earlier task " + "x" * 200000},
+        {"role": "assistant", "content": "Recent answer " + "y" * 80000},
+    ]
+    original = json.dumps(messages)
+    events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
+    assert len(requests) == 1
+    assert not any(isinstance(event, AgentCompaction) for event in events)
+    assert json.dumps(messages) == original
 
 
 def test_numeric_reasoning_budget_leaves_answer_room_and_preserves_parameters(monkeypatch):
@@ -130,14 +159,13 @@ def test_numeric_reasoning_budget_leaves_answer_room_and_preserves_parameters(mo
 
 
 @pytest.mark.parametrize("remaining", [0, -100])
-def test_exhausted_context_fails_before_sending_a_completion(monkeypatch, remaining):
+def test_exhausted_context_uses_pi_minimum_output_budget(monkeypatch, remaining):
     requests = []
     provider = wire_provider(monkeypatch, requests)
     provider.context_tokens = 16000
     bound = provider.with_output_limit(None, context_used_tokens=16000 - 4096 - remaining)
-    with pytest.raises(ProviderContextOverflowError, match="no room for a response"):
-        asyncio.run(_collect(bound.stream_events([])))
-    assert requests == []
+    asyncio.run(_collect(bound.stream_events([])))
+    assert json.loads(requests[0].content)["max_tokens"] == 1
 
 
 @pytest.mark.parametrize("limit_source", ["max_tokens", "max_completion_tokens", "model"])
@@ -229,8 +257,9 @@ def test_large_summary_input_is_not_silently_chunked(monkeypatch, previous_chars
         {"role": "user", "content": "Inspect P1"},
     ]
     events = asyncio.run(_collect(ContextCompactor(provider).compact(messages, [], force=True)))
-    assert not any(isinstance(event, AgentCompaction) for event in events)
-    assert requests == []
+    assert any(isinstance(event, AgentCompaction) for event in events)
+    assert len(requests) == 1
+    assert json.loads(requests[0].content)["max_tokens"] == 1
 
 
 @pytest.mark.parametrize(

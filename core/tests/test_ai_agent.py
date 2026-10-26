@@ -607,11 +607,20 @@ def test_agent_keeps_partial_output_when_closed_and_releases_it_on_reset():
 def test_agent_omits_a_final_answer_when_closed_before_the_run_finishes(monkeypatch, closed_after):
     compact = ContextCompactor.compact
 
-    async def compact_after_answer(self, messages, tools, force=False):
+    async def compact_after_answer(
+        self, messages, tools, force=False, already_compacted=False, after_omitted_attempt=False
+    ):
         if messages[-1]["role"] == "assistant":
             yield AgentCompaction(CompactionEntry("Summary", 0, 1000))
             return
-        async for event in compact(self, messages, tools, force=force):
+        async for event in compact(
+            self,
+            messages,
+            tools,
+            force=force,
+            already_compacted=already_compacted,
+            after_omitted_attempt=after_omitted_attempt,
+        ):
             yield event
 
     monkeypatch.setattr(ContextCompactor, "compact", compact_after_answer)

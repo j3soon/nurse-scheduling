@@ -243,7 +243,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 if state == "completed"
                 else "Summarization stopped. The original context was kept."
                 if state == "interrupted"
-                else "Compaction would not reduce context. The original context was kept."
+                else "Nothing to compact. The original context was kept."
                 if state == "skipped"
                 else "Summarization failed. The original context was kept.",
             }
