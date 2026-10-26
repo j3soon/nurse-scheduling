@@ -49,7 +49,11 @@ Use `--repeat 12` to run each selected case twelve times with fresh history and
 sandboxes. Repeated runs share the same concurrency limit and save transcripts
 under separate `run-N/` directories. Any failed run fails the command.
 `--diagnostic-attempts 3` runs three independent attempts when the first fails,
-even if the second passes. Any failure keeps the command failed. Production
+even if the second passes. It also judges the same conversation twice more
+when an assertion's first judge verdict fails or errors. Judge retries do not
+rerun the agent or include earlier verdicts in the judge request. Every verdict
+is saved with its attempt number. Any failure keeps the command failed, even
+when later judges pass. CI uses this option. Production
 provider retries still apply.
 Missing configuration fails the run. Failures include a case, turn, step, and
 observed evidence. Failed attempts print the full conversation to stdout,
@@ -106,6 +110,10 @@ condition. It can be used alone for semantic
 checks such as reply language. A judge-only assertion requires a nonempty reply.
 When phrase matching is also supplied, both matching and the LLM judge must pass.
 The language cases use judge-only assertions for English and Chinese script.
+For a numbered rubric, optional `assistant.count: 12` asks the judge to include
+`N/12` in its explanation and identify omitted or incomplete points by number.
+The entire rubric must still pass. An omitted or null `count` adds no scoring
+instructions. `count` requires `judge` and must be a positive integer or null.
 Chinese replies default to Traditional Chinese, including for Simplified Chinese
 input. Explicit language or script requests override this default. The Simplified
 Chinese case checks that exception. The judge always runs for an

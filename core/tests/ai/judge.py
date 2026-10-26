@@ -37,8 +37,14 @@ Return exactly one JSON object with two fields: "passed" (boolean) and "reason"
 (a nonempty, concise explanation). Do not use Markdown fences or extra text."""
 
 
-async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str) -> dict:
+async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *, count: int | None = None) -> dict:
     """Keep the judge request and raw reply even when grading fails."""
+    if count is not None:
+        rubric += (
+            f"\n\nIn the verdict reason, report the number of fully satisfied points as N/{count}. "
+            "Identify every omitted or incomplete point by number and briefly explain what is missing. "
+            f'If all points are satisfied, say "{count}/{count}. All points are satisfied."'
+        )
     conversation = [
         {
             "user": turn["user"],

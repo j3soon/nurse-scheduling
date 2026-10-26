@@ -11,12 +11,12 @@
     "evidence": [
       {
         "case": "basics/01_already-in-ai-chat.yaml",
-        "input_sha256": "7bfde00a8895afa2213b5bd5755accd147badaa15ff237fa2a6f1bfa9cfc7b12",
+        "input_sha256": "acbcc50710b86a3808d5c3dfb7bd5cae6fc178d9341caa9324aa2101d0c52fa3",
         "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "note": "Full-prompt comparison of the previous and revised identity wording, with three serial repetitions per version. The previous wording gives navigation directions in two replies. The revised wording identifies the current chat in all three replies. Both linked JSON cases also pass 3/3 with the revised full prompt. The JSON cases remain regression controls rather than benefit witnesses."
+        "note": "Regraded the preserved previous-versus-revised identity conversations with the current assertions and judge. Previous replies direct the user elsewhere in two of three conversations. Revised replies identify the current chat in all three. These are fresh grading results on existing agent conversations, not new agent generations."
       }
     ],
     "comparison_mode": "ablation",
@@ -38,7 +38,7 @@
     "evidence": [
       {
         "case": "basics/01_lang_traditional_chinese.yaml",
-        "input_sha256": "fd9066eefee64cdb519e77f4597b913b3c60e5c6c8a95f70a5a6ed647ffd4003",
+        "input_sha256": "71b22d2b8ed3514bb07ab4bbc6e327f905eeb72e15763b97d79a75d228a1bd30",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -46,19 +46,18 @@
         "controls": [
           {
             "case": "basics/01_lang_simplified_chinese.yaml",
-            "input_sha256": "3dbdd3462c16ef0e807c7d870c3adbc9a71363925006a0d55363681bcbd24f3b",
+            "input_sha256": "bb01e02792ec33419d16fa3ba6d80af4ef8db7aef73fbef6b61168f14f830bce",
             "before": "3/3",
-            "after": "3/3",
-            "fingerprint_note": "Removed the AI provenance comment from the reviewed YAML source. Parsed test steps and grading rubrics match the measured snapshot. Historical evaluation counts are unchanged."
+            "after": "3/3"
           },
           {
             "case": "basics/01_lang_english.yaml",
-            "input_sha256": "5dec2dc493b43699e2f204f92b5ce2b0fac199e5176c654b5534ef59706e9f29",
+            "input_sha256": "199564b1901912fec73dbb721fd60420742e65fd2b03d8411409c19d6fa11d96",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt comparison at two concurrent conversations with three repetitions per case. The previous rule matched Simplified Chinese input; all default-Traditional conversations failed. The final rule defaults Chinese prose to Traditional Chinese and checks script consistency before sending. All final conversations passed, including an explicit Simplified-worded request for Simplified Chinese and the English control. An earlier candidate without the final script check passed only 2/3 default-Traditional conversations and is retained as exploratory evidence."
+        "note": "Regraded the preserved paired conversations with the current assertions and judge. The previous policy follows Simplified input. The revised policy defaults Chinese replies to Traditional unless another script is requested. English and explicit Simplified controls remain correct. Two preliminary Traditional regrading batches each had one empty judge response and remain excluded. A final paired Traditional recheck completed without judge errors. Counts use that clean recheck and the unchanged control batch."
       }
     ],
     "comparison_mode": "ablation"
@@ -262,33 +261,22 @@
       "dates-range-renew-custom-group-small",
       "holiday-question-explains-workdays"
     ],
-    "hypothesis": "Explains importing the Taiwan holiday calendar before expanding the range, then generates its groups with the maintained helper while preserving custom-group scope.",
-    "sha256": "530c501b18b7dd041fc0acd26e4fc910f5635e93e644867a4d1048849ec1d0d3",
+    "hypothesis": "Explains Taiwan calendar import during new-schedule intake and before date-range expansion, then generates its groups while preserving custom-group scope.",
+    "sha256": "979f44451281c410ac019d69dfe83825d269e3b51ac62b897027194476f8ad98",
     "evidence": [
       {
         "case": "holiday-question-explains-workdays",
-        "input_sha256": "1406c72e4fe7b86f03e00456d4997c7c4fb2b49a1920b123f7260c98ea043635",
+        "input_sha256": "9ae9ba46f1420899df964a244f2be11711010591207f89a304d36462809092dc",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
-            "case": "dates-range-renew-custom-group-small",
-            "input_sha256": "b9c60e76671b3589bf752b8d9b3cb5fed5b4d69eea9287f27e0fde48c3706def",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
             "case": "dates-range-renew-small",
-            "input_sha256": "76cda2cecc44c9426580037fe3467da9215994ad405d4acef9ef84992773a420",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "holiday-expansion-question-without-reads",
-            "input_sha256": "7e7c6c75ddc15e7b1b976f45d5ca6b82575689be4893461a67a11001faaa68b1",
-            "before": "0/3",
+            "input_sha256": "f624705c56f1e73af9a8a05a755184f602b7d8d65d31d72284582f53fe57c767",
+            "before": "2/3",
             "after": "3/3"
           }
         ],
@@ -302,20 +290,18 @@
           "cases": [
             {
               "case": "dates-range-renew-small",
-              "before": "1/3",
-              "after": "3/3"
-            },
-            {
-              "case": "dates-range-renew-custom-group-small",
-              "before": "1/3",
+              "before": "0/3",
               "after": "3/3"
             }
           ]
         },
-        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. Manual rechecking confirms these counts. The stricter automatic checker recognizes 3/3 ordinary renewals and 1/3 custom-group renewals. The other two custom-group runs use stderr redirection or --help followed by && and require manual verification. This validates the complete policy and its reviewed adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
+        "note": "Full production prompt with and without the complete condensed calendar step, three repetitions per version. The step restores the calendar explanation before tools and preserves date renewal with actual generator use. The reviewed new-schedule information case separately passed 3/3. This validates the complete calendar policy, not an isolated gain from the new intake sentence."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_new-schedule-information.yaml"
+    ]
   },
   {
     "id": "optimizer-start",

@@ -1,0 +1,36 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+steps:
+  - user: Help me create a new schedule. What information should I provide?
+  - tool: read
+    path: /reference/user-guide/build-a-real-schedule.md
+  - assistant:
+      count: 12
+      judge: >-
+        Pass when the reply covers all twelve points below. Accept equivalent
+        wording, any order, and related points combined. Mentioning a topic in
+        a checklist or explanation is sufficient. Direct questions and immediate
+        collection of individual values are not required. Examples are
+        illustrative and do not all need to appear.
+        (1) The scheduling date range.
+        (2) The option to import the Taiwan calendar.
+        (3) Explain that importing the Taiwan calendar creates workday and
+        freeday date groups that account for Taiwan holidays and make-up workdays.
+        (4) The list of people to schedule.
+        (5) Monthly primary or preferred shifts, if applicable. Mentioning
+        groups of people who share a primary shift also satisfies this point.
+        (6) The shift types.
+        (7) Whether any shift types are restricted to qualified people,
+        such as senior nurses.
+        (8) Staffing requirements, including how many people are
+        needed for each shift and whether those counts vary by date.
+        (9) Shift history from the end of the previous month.
+        (10) Individual shift requests, such as requested days off
+        or preferred shifts.
+        (11) Rest rules, including forbidden shift transitions and
+        the maximum number of consecutive workdays.
+        (12) Fairness goals, such as balancing workload, total days
+        off, or days off on freedays.
+  - schedule:
+      unchanged: true

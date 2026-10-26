@@ -140,7 +140,7 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
     elif kind == "assistant":
         if (
             not isinstance(value, dict)
-            or set(value) - {"contains_any", "case_sensitive", "judge"}
+            or set(value) - {"contains_any", "case_sensitive", "judge", "count"}
             or not {"contains_any", "judge"}.intersection(value)
         ):
             raise DefinitionError("assistant requires contains_any, judge, or both")
@@ -152,6 +152,11 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
             raise DefinitionError("case_sensitive must be a boolean")
         if "judge" in value and (not isinstance(value["judge"], str) or not value["judge"].strip()):
             raise DefinitionError("assistant.judge must be a nonempty rubric string")
+        if "count" in value:
+            if "judge" not in value:
+                raise DefinitionError("assistant.count requires judge")
+            if value["count"] is not None and (type(value["count"]) is not int or value["count"] < 1):
+                raise DefinitionError("assistant.count must be a positive integer or null")
     else:
         _schedule(value, fixtures)
     return Step(number, kind, value, options)

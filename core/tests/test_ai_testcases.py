@@ -572,6 +572,7 @@ def test_parallel_repetitions_bound_concurrency_and_retain_failed_attempts(tmp_p
 
         async def attempt(case, *args, transcript_path, **kwargs):
             nonlocal active, peak
+            assert kwargs["judge_attempts"] == 3
             repetition = transcript_path.parent.name
             assert repetition not in running
             running.add(repetition)
@@ -721,6 +722,43 @@ def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
         definition(tmp_path, text)
 
 
+@pytest.mark.parametrize("count", [True, False, 0, -1, 1.5, "12", [], {}])
+def test_invalid_judge_point_counts(tmp_path, count):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "Cover both points.", "count": count}}]})
+    with pytest.raises(DefinitionError, match="count must be a positive integer or null"):
+        definition(tmp_path, text)
+
+
+@pytest.mark.parametrize("count", [None, 2])
+def test_judge_point_count_requires_judge(tmp_path, count):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_any": ["hi"], "count": count}}]})
+    with pytest.raises(DefinitionError, match="count requires judge"):
+        definition(tmp_path, text)
+
+
+@pytest.mark.parametrize("count", [None, 12])
+def test_judge_point_count_reports_missing_points_in_transcript(tmp_path, count):
+    rubric = "Ask for the scheduling information."
+    case = definition(
+        tmp_path,
+        json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": rubric, "count": count}}]}),
+    )
+    reason = "10/12. Points (3) and (4) are missing." if count else "Scheduling information is missing."
+    provider = ScriptedProvider([[TextDelta("What dates should I schedule?"), ResponseEnd("stop")]])
+    judge = ScriptedProvider([[TextDelta(json.dumps({"passed": False, "reason": reason})), ResponseEnd("stop")]])
+    transcript = tmp_path / "attempt.md"
+    assert not asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    )
+    request = json.loads(judge.requests[0][1]["content"])
+    if count is None:
+        assert request["rubric"] == rubric
+    else:
+        assert "N/12" in request["rubric"]
+        assert "omitted or incomplete point by number" in request["rubric"]
+    assert reason in transcript.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     ("reply", "judge_pass", "expected"),
     [
@@ -794,6 +832,46 @@ def test_judge_execution_failures_never_pass(failure):
     result = asyncio.run(evaluate(Provider(), "Current chat.", [], "test"))
     assert result["passed"] is False and result["error"]
     assert result["response"]
+
+
+@pytest.mark.parametrize(
+    "verdicts",
+    [[True], [False, True, True], [False, False, False], [None, True, False]],
+    ids=["first-pass", "later-pass", "all-fail", "first-error"],
+)
+def test_judge_diagnostics_preserve_initial_failure_without_replaying_agent(tmp_path, verdicts):
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {judge: Reply in English.}}]")
+    provider = ScriptedProvider([[TextDelta("Hello."), ResponseEnd("stop")]])
+    judge = ScriptedProvider(
+        [
+            [
+                TextDelta("invalid" if passed is None else json.dumps({"passed": passed, "reason": "Checked."})),
+                ResponseEnd("stop"),
+            ]
+            for passed in verdicts
+        ]
+    )
+    transcript = tmp_path / "conversation.md"
+    assert asyncio.run(
+        run_case(
+            case,
+            provider,
+            settings(),
+            FakeSandboxFactory(),
+            judge_provider=judge,
+            judge_attempts=3,
+            transcript_path=transcript,
+        )
+    ) is (verdicts[0] is True)
+    assert len(provider.requests) == 1
+    assert len(judge.requests) == len(verdicts)
+    assert all(request == judge.requests[0] for request in judge.requests)
+    saved = transcript.read_text(encoding="utf-8")
+    assert saved.count("### Judge\n") == len(verdicts)
+    for attempt, passed in enumerate(verdicts, 1):
+        assert f"Judge attempt: {attempt}." in saved
+        if passed is not True:
+            assert f"(judge): attempt {attempt}:" in saved
 
 
 def test_judge_still_runs_when_agent_execution_fails(capsys):

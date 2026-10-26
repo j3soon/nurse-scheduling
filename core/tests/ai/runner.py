@@ -99,6 +99,7 @@ async def run_case(
     factory: SandboxFactory,
     *,
     judge_provider: Any = None,
+    judge_attempts: int = 1,
     transcript_path: Path | None = None,
 ) -> bool:
     """Execute one isolated conversation and retain all assertions and messages."""
@@ -235,17 +236,23 @@ async def run_case(
         elif step.kind == "assistant" and "judge" in step.value and judge_turn <= len(trace):
             judge = judge_provider if judge_provider is not None else provider
             model = getattr(getattr(judge, "identity", None), "model", settings.provider_model)
-            verdict = await evaluate(judge, step.value["judge"], trace[:judge_turn], model)
-            trace[judge_turn - 1]["events"].append({**verdict, "step": step.number})
-            if not verdict["passed"]:
-                errors.append(
-                    {
-                        "turn": judge_turn,
-                        "step": step.number,
-                        "kind": "judge",
-                        "error": verdict["error"] or verdict["reason"],
-                    }
+            for attempt in range(1, judge_attempts + 1):
+                verdict = await evaluate(
+                    judge, step.value["judge"], trace[:judge_turn], model, count=step.value.get("count")
                 )
+                trace[judge_turn - 1]["events"].append({**verdict, "step": step.number, "attempt": attempt})
+                if not verdict["passed"]:
+                    reason = verdict["error"] or verdict["reason"]
+                    errors.append(
+                        {
+                            "turn": judge_turn,
+                            "step": step.number,
+                            "kind": "judge",
+                            "error": f"attempt {attempt}: {reason}" if judge_attempts > 1 else reason,
+                        }
+                    )
+                if attempt == 1 and verdict["passed"]:
+                    break
     print_attempt(case, errors, trace, settings, transcript_path)
     return not errors
 
@@ -282,7 +289,13 @@ async def run_cases(
                 directory /= f"run-{repetition}"
             transcript_path = output_dir / directory / f"attempt-{attempt}.md" if output_dir is not None else None
             passed = await run_case(
-                case, provider, settings, factory, judge_provider=judge_provider, transcript_path=transcript_path
+                case,
+                provider,
+                settings,
+                factory,
+                judge_provider=judge_provider,
+                judge_attempts=diagnostic_attempts,
+                transcript_path=transcript_path,
             )
             results.append(
                 {
@@ -346,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         choices=range(1, 4),
         default=1,
-        help="total attempts for initially failed cases, without clearing failure (default: 1)",
+        help="total conversation and judge attempts after initial failure, without clearing failure (default: 1)",
     )
     parser.add_argument("--jobs", type=int, help="lower the automatically discovered concurrency limit")
     parser.add_argument("--repeat", type=int, default=1, help="independent runs per testcase (default: 1)")

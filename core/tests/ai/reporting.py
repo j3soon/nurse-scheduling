@@ -60,6 +60,8 @@ def _transcript(record: dict) -> str:
                     )
                 )
             elif event["kind"] == "judge":
+                if "attempt" in event:
+                    lines.append(f"Judge attempt: {event['attempt']}.\n")
                 lines.append(f"Verdict: **{'PASS' if event['passed'] else 'FAIL'}**. Model: `{event['model']}`.\n")
                 lines.extend(["Rubric:\n", _block(event["rubric"]), "Explanation:\n", _block(event["reason"])])
                 if event["error"]:
