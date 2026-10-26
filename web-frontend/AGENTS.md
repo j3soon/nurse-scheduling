@@ -130,6 +130,9 @@ result, check that `fc-match system-ui` reports DejaVu Sans.
 Playwright `fullPage` screenshots under mobile emulation lose coarse-pointer
 styles, so touch-only controls disappear from the image. For a full-height phone
 screenshot, set the viewport height to the page height and take a normal capture.
+When a test compares screenshots of two pages, hide everything except the
+compared element on both pages. Otherwise the GPU renderer on macOS can
+antialias edges differently, depending on what else the page draws.
 
 E2E builds use the checkout's `git describe` version without `-dirty`. A build
 from uncommitted changes otherwise shows a dirty-version warning on every YAML

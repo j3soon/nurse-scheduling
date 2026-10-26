@@ -262,9 +262,12 @@ async function compareTranscript(page: Page, exported: Page, dir: string, state:
           document.body.append(frame);
           frame.append(section);
         }
-        Object.assign(frame.style, {
-          position: 'absolute', top: '0', left: '0', width: `${width}px`, background: 'white', zIndex: '2147483647',
-        });
+        // Hide the rest of the page. Otherwise the live page paints its app into the transcript's layer,
+        // and macOS GPU raster can antialias the transcript differently.
+        for (const child of Array.from(document.body.children)) {
+          if (child !== frame) (child as HTMLElement).style.display = 'none';
+        }
+        Object.assign(frame.style, { position: 'absolute', top: '0', left: '0', width: `${width}px`, background: 'white' });
         Object.assign((section as HTMLElement).style, {
           width: `${width}px`, margin: '0', minHeight: '0', height: 'auto',
         });
