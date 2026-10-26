@@ -692,6 +692,28 @@ def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed
     assert str(transcript) in log
 
 
+@pytest.mark.parametrize(
+    ("reply", "verdict", "expected"),
+    [("你好！可以協助您排班。", True, True), ("English reply.", False, False), ("", True, False)],
+)
+def test_judge_only_assistant_assertions(tmp_path, reply, verdict, expected):
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {judge: Reply in Traditional Chinese.}}]")
+    provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
+    judge = ScriptedProvider(
+        [[TextDelta(json.dumps({"passed": verdict, "reason": "Language checked."})), ResponseEnd("stop")]]
+    )
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is expected
+    assert len(judge.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "assertion", ["{}", "{judge: '', case_sensitive: true}", "{judge: Reply in English., case_sensitive: false}"]
+)
+def test_invalid_judge_only_assertions(tmp_path, assertion):
+    with pytest.raises(DefinitionError):
+        definition(tmp_path, "steps: [{user: hi}, {assistant: " + assertion + "}]")
+
+
 @pytest.mark.parametrize("rubric", ["", None, True, {"contains": "here"}], ids=["empty", "null", "boolean", "mapping"])
 def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
     text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_any": ["hi"], "judge": rubric}}]})

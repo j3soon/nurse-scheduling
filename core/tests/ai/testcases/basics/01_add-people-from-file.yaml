@@ -1,6 +1,5 @@
 # This file is part of Nurse Scheduling Project.
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# This test is mostly AI generated.
 steps:
   - date: 2026-10-25T09:00:00+08:00
   - yaml: empty.yaml

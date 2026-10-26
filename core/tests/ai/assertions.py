@@ -49,11 +49,13 @@ def check_event(step: Step, events: list[dict], cursor: int) -> int:
                 event["kind"] == "tool" and event["name"] == step.value and _partial(step.options, event["arguments"])
             )
         else:
-            expected = step.value["contains_any"]
+            expected = step.value.get("contains_any")
             text = event.get("text", "")
-            if not step.value.get("case_sensitive", False):
+            if expected is not None and not step.value.get("case_sensitive", False):
                 text, expected = text.casefold(), [part.casefold() for part in expected]
-            matched = event["kind"] == "assistant" and any(part in text for part in expected)
+            matched = event["kind"] == "assistant" and (
+                any(part in text for part in expected) if expected is not None else bool(text.strip())
+            )
         if matched:
             return index + 1
     observed = repr([event for event in events[cursor:] if event["kind"] in {"tool", "assistant"}])

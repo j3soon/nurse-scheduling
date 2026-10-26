@@ -697,8 +697,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
-  Keep this tester independent of `ai_eval` and `ai_fixtures`. Inspect failed
-  replies before changing production guidance. Accept equivalent phrasing in
+  Keep this tester independent of `ai_eval` and `ai_fixtures`. Older `ai_eval`
+  code can read reviewed YAML cases for prompt evidence. Do not import `ai_eval`
+  from the reviewed tester. Inspect failed replies before changing production
+  guidance. Accept equivalent phrasing in
   text assertions and require tool calls only when their use is part of the
   intended behavior. Do not weaken assertions to hide a live behavior failure.
 - Use `--show-model-build-stats` when checking or benchmarking model-building

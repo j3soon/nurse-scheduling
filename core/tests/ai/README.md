@@ -73,7 +73,7 @@ as an example. Each step has exactly one primary key:
 | `yaml` | Schedule fixture name relative to `fixtures/`. Replaces current schedule data. |
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
-| `assistant` | Requires `contains_any`, with optional boolean `case_sensitive` and a `judge` rubric. |
+| `assistant` | Requires `contains_any`, a `judge` rubric, or both. Optional `case_sensitive` applies to matching. |
 | `schedule` | Requires `unchanged: true`, an `added` mapping, or `equals: <fixture.yaml>`. |
 
 Unknown fields fail validation, except tool argument fields, which depend on
@@ -101,8 +101,13 @@ Assistant assertions inspect individual completed messages, including text
 before a tool call. They exclude reasoning and failed responses. Matching is
 case-insensitive unless `case_sensitive: true` is set.
 
-The chat-identity case also uses `assistant.judge`, a nonempty rubric string.
-Both phrase matching and the LLM judge must pass. The judge always runs for an
+`assistant.judge` is a nonempty rubric string. Write it as a positive pass
+condition. It can be used alone for semantic
+checks such as reply language. A judge-only assertion requires a nonempty reply.
+When phrase matching is also supplied, both matching and the LLM judge must pass.
+The language cases use judge-only assertions for English and Chinese script.
+Ambiguous Chinese defaults to Traditional Chinese. Clear Simplified Chinese
+input receives Simplified Chinese replies. The judge always runs for an
 executed turn, even when phrase matching or agent execution fails. It reads the
 conversation in a separate request with no tools and returns a boolean verdict
 and explanation. Invalid verdicts, request errors, and its two-minute timeout

@@ -42,11 +42,12 @@ def test_audit_plan_reproduces_declared_contexts_and_only_ladder_cases(tmp_path)
     assert plan["jobs"] == "auto"
     assert all("--jobs" not in cohort["args"] for cohort in plan["cohorts"])
     assert plan["attempts"] == 3 * (2 * sum(len(step.cases) for step in steps) + len(cases))
-    for cohort, step in zip(plan["cohorts"], steps, strict=False):
+    for cohort, step in zip(plan["cohorts"], (step for step in steps if step.cases), strict=False):
         flag = "--prompt-ablate-step" if step.comparison_mode == "ablation" else "--prompt-compare-step"
         assert cohort["args"][0] == flag
         if any("cost_target" in receipt for receipt in step.evidence):
             assert "--cost-ratio" in cohort["args"]
+    assert plan["reviewed_cases"] == {step.id: step.reviewed_cases for step in steps if step.reviewed_cases}
     production = plan["cohorts"][-1]
     assert production["mode"] == "production"
     assert "--full" not in production["args"]

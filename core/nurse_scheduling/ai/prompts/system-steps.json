@@ -31,6 +31,37 @@
     "comparison_mode": "ablation"
   },
   {
+    "id": "response-language",
+    "file": "steps/response-language.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/01_lang_traditional_chinese.yaml",
+      "basics/01_lang_english.yaml"
+    ],
+    "hypothesis": "Defaults ambiguous Chinese to Traditional Chinese, matches clear Chinese script, and preserves English replies.",
+    "sha256": "7c3946476cc4302ee2e26694b689f07bcfe995a0e4ed667dc71ffc098b0fffa3",
+    "evidence": [
+      {
+        "case": "basics/01_lang_traditional_chinese.yaml",
+        "input_sha256": "6a4c8670479470811a58e26fc042c8bd39ab1b9eeb4a5581862468aad3de7932",
+        "before": "0/3",
+        "after": "3/3",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 0,
+        "controls": [
+          {
+            "case": "basics/01_lang_english.yaml",
+            "input_sha256": "2ec360046daf7265d8adea0bc4db993040586944275557023a4d9ba735a75476",
+            "before": "3/3",
+            "after": "3/3"
+          }
+        ],
+        "note": "Full-prompt comparison over three repetitions. Without the clause, ambiguous Chinese greetings received Simplified Chinese replies. With it, ambiguous input uses Traditional Chinese, clear Traditional and Simplified input keep their script, and English remains English. Each reply is checked by the YAML case judge and every turn leaves the schedule unchanged."
+      }
+    ],
+    "comparison_mode": "ablation"
+  },
+  {
     "id": "app-guide",
     "file": "steps/app-guide.md",
     "cases": [
