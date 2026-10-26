@@ -725,6 +725,42 @@ def test_sends_tools_only_when_they_are_offered(monkeypatch: pytest.MonkeyPatch)
     assert "tool_choice" not in without_tools
 
 
+def test_default_output_allowance_leaves_room_for_underestimated_large_input(monkeypatch):
+    requests = []
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        # The real reset case was estimated below 19297 tokens. Reserving nearly
+        # the entire 262144-token context made the endpoint reject the request.
+        if payload["max_tokens"] + 19297 > 262144:
+            return httpx.Response(400, json={"error": "context window exceeded"})
+        return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Done"})))
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider.context_tokens = provider.output_tokens = 262144
+    assert _events(provider.with_output_limit(None, context_used_tokens=15200)) == [
+        TextDelta("Done"),
+        ResponseEnd(None),
+    ]
+    assert requests[0]["max_tokens"] == 32768
+
+
+@pytest.mark.parametrize(
+    ("context", "output", "requested", "expected"),
+    [(262144, 8192, None, 8192), (8192, 8192, None, 4088), (262144, 131072, 65536, 65536)],
+    ids=["model-output-ceiling", "remaining-context", "explicit-larger-allowance"],
+)
+def test_default_allowance_respects_model_limits_and_explicit_requests(
+    monkeypatch, context, output, requested, expected
+):
+    requests = []
+    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": "Done"})), requests)
+    provider.context_tokens, provider.output_tokens = context, output
+    _events(provider.with_output_limit(requested))
+    assert json.loads(requests[0].content)["max_tokens"] == expected
+
+
 def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     requests: list[httpx.Request] = []
     usage = {

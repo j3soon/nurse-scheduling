@@ -48,6 +48,9 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\"'\s,;<}]+)"
 )
+# A request allowance, not a model capability. Avoid reserving the entire
+# context window when token estimates undercount a large tool response.
+DEFAULT_RESPONSE_TOKENS = 32768
 MAX_TOOL_CALLS_PER_RESPONSE = 32
 MAX_TOOL_ARGUMENT_CHARS = 20_000
 MAX_RESPONSE_TEXT_CHARS = 200_000
@@ -379,10 +382,11 @@ class OpenAiCompatibleProvider:
             ),
             None,
         )
+        default_allowance = DEFAULT_RESPONSE_TOKENS if self.context_tokens or self.output_tokens else None
         requested = (
             min(configured, self._max_output_tokens)
             if configured and self._max_output_tokens
-            else configured or self._max_output_tokens
+            else configured or self._max_output_tokens or default_allowance
         )
         limit = response_token_limit(
             used_tokens,
