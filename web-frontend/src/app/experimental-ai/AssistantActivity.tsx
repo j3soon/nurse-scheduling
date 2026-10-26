@@ -47,6 +47,8 @@ export interface ToolEntry {
   ok: boolean;
   state?: 'preparing' | 'running' | 'interrupted';
   argumentsCharacters?: number;
+  // The next model response starts a new assistant message in model context.
+  endsRound?: true;
 }
 
 export interface ScheduleChangeEntry {

@@ -33,7 +33,7 @@ type SavedEvent = { type: string; occurred_at: number; data: Record<string, unkn
 type SavedRun = Omit<typeof fixture.runs[number], 'finished_at'> & { finished_at: number | null };
 type Snapshot = Omit<typeof fixture, 'events' | 'runs'> & { events: SavedEvent[]; runs: SavedRun[] };
 const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'final-truncated',
-  'length-recovery', 'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted',
+  'length-recovery', 'tool-rounds', 'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted',
   'manual-running'] as const;
 
 function scenario(variant: typeof variants[number]): Snapshot {
@@ -103,6 +103,17 @@ function scenario(variant: typeof variants[number]): Snapshot {
       summary: 'Retain Alice and Bob.', keep_messages: 1 });
     append('delta', { text: 'Recovered answer.' });
     append('done');
+  } else if (variant === 'tool-rounds') {
+    // Two tool-only rounds send four model messages. The summary keeps them and compacts the upload notice and question.
+    for (const id of ['first', 'second']) {
+      append('response_end', { stop_reason: 'tool_use' });
+      append('tool_start', { name: 'read', tool_call_id: id, arguments: '{"path":"staff.csv"}' });
+      append('tool', { name: 'read', tool_call_id: id, arguments: '{"path":"staff.csv"}', result: 'Alice,Bob', ok: true });
+    }
+    append('compaction_start', { reason: 'threshold', tokens_before: 25000 });
+    append('compaction_end', { reason: 'threshold', tokens_before: 25000, success: true, aborted: false,
+      summary: 'Retain Alice and Bob.', keep_messages: 4 });
+    append('delta', { text: 'Checked staff.csv twice.' }); append('done');
   } else if (variant === 'empty') append('done');
   const last = snapshot.runs.at(-1)!;
   const terminal = snapshot.events.at(-1)!;
@@ -318,6 +329,11 @@ for (const variant of variants) test(`current Python export follows the live tra
     if (variant === 'length-recovery') {
       for (const current of [page, exported]) {
         await expect(current.getByText('Incomplete response. Omitted from future model context.')).toHaveCount(1);
+      }
+    }
+    if (variant === 'tool-rounds') {
+      for (const current of [page, exported]) {
+        await expect(current.getByText('Compacted out of context.')).toHaveCount(2);
       }
     }
     await Promise.all([

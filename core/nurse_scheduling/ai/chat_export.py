@@ -409,7 +409,7 @@ def _context_message_count(message) -> int:
             if step == "none":
                 count += 1
             count += 1
-            step = "tools"
+            step = "none" if entry.get("endsRound") else "tools"
     return count
 
 

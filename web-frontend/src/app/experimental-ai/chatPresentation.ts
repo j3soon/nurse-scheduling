@@ -53,7 +53,7 @@ function contextMessageCount(message: TranscriptMessage): number {
     } else if (entry.kind === 'tool' && entry.state !== 'preparing') {
       if (step === 'none') count += 1;
       count += 1;
-      step = 'tools';
+      step = entry.endsRound ? 'none' : 'tools';
     }
   }
   return count;

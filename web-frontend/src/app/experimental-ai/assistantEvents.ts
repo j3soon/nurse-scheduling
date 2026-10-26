@@ -106,11 +106,13 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
     case 'response_end': {
       const context = event.stopReason === 'error' || event.stopReason === 'aborted' || event.contextOmitted
         ? 'omitted' : 'complete';
-      const ended = activity.map(entry => (
+      // A new model response follows the latest tool result, which ends its tool round.
+      const roundEnd = activity.findLastIndex(entry => entry.kind === 'tool' && entry.state !== 'preparing');
+      const ended = activity.map((entry, index) => (
         event.contextNote && entry.kind === 'compaction' && entry.state === 'completed'
           ? { ...entry, invalidated: true }
           : (entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === undefined
-          ? { ...entry, context } : entry
+          ? { ...entry, context } : index === roundEnd ? { ...entry, endsRound: true } : entry
       )) as ActivityEntry[];
       if (event.contextNote) {
         ended.push({ kind: 'notice', text: `Sent in future model context: ${event.contextNote}` });

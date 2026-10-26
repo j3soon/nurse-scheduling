@@ -348,6 +348,9 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 activity.append({"kind": entry_kind, "text": text})
             turn["has_output"] |= bool(text)
         elif kind == "response_end":
+            # A new model response follows the latest tool result, which ends its tool round.
+            if tools := [entry for entry in activity if entry["kind"] == "tool" and entry.get("state") != "preparing"]:
+                tools[-1]["endsRound"] = True
             for entry in activity:
                 if entry["kind"] in {"response", "reasoning"} and "context" not in entry:
                     omitted = data["stop_reason"] in {"error", "aborted"} or data.get("context_omitted")

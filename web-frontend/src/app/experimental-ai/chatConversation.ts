@@ -85,6 +85,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
     && (!('state' in value) || value.state === 'preparing' || value.state === 'running' || value.state === 'interrupted')
     && (!('argumentsCharacters' in value) || (Number.isSafeInteger(value.argumentsCharacters) && (value.argumentsCharacters as number) >= 0))
     && (!('replayArguments' in value) || typeof value.replayArguments === 'string')
+    && (!('endsRound' in value) || value.endsRound === true)
     && 'name' in value && typeof value.name === 'string'
     && 'arguments' in value && typeof value.arguments === 'string'
     && 'result' in value && typeof value.result === 'string'
