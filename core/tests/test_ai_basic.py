@@ -1732,9 +1732,9 @@ def test_defensive_bounds_have_optional_environment_overrides(monkeypatch, name)
             AiSettings.from_env()
     docker = Path(__file__).resolve().parents[2] / "docker"
     for path in docker.glob(".env*.example"):
-        assert not re.search(rf"(?m)^\s*{name}[=:]", path.read_text()), path.name
+        assert not re.search(rf"(?m)^\s*{name}[=:]", path.read_text(encoding="utf-8")), path.name
     for path in docker.glob("compose.backend*.yml"):
-        environment = yaml.safe_load(path.read_text())["services"]["ai"]["environment"]
+        environment = yaml.safe_load(path.read_text(encoding="utf-8"))["services"]["ai"]["environment"]
         assert name in environment and environment[name] is None, path.name
 
 

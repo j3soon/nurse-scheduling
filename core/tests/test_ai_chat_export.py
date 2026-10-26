@@ -537,7 +537,7 @@ def test_deep_markdown_is_preserved_as_escaped_text(delimiter):
 
 
 def test_message_uploads_list_matches_the_chat_page_bullet_style():
-    template = (Path(__file__).parent.parent / "nurse_scheduling/ai/chat_styles.css").read_text()
+    template = (Path(__file__).parent.parent / "nurse_scheduling/ai/chat_styles.css").read_text(encoding="utf-8")
     rule = re.search(r"\.attachments \{([^}]*)\}", template)
     assert rule, "chat export stylesheet must style .attachments"
     # The chat page card uses Tailwind list-inside list-disc: the marker sits at

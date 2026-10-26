@@ -67,7 +67,7 @@ E2B_USER = "user"
 E2B_WORKSPACE = "/workspace"
 COMMAND_TIMEOUT_EXIT_CODE = 124
 MAX_COMMAND_REPORT_BYTES = 1024 * 1024
-COMMAND_OUTPUT_SOURCE = Path(__file__).with_name("command_output.py").read_text()
+COMMAND_OUTPUT_SOURCE = Path(__file__).with_name("command_output.py").read_text(encoding="utf-8")
 # E2B pauses the VM when this active timeout expires, and each auto-resume
 # restarts it. One hour is the E2B Hobby tier maximum.
 ACTIVE_TIMEOUT_SECONDS = 3600
