@@ -142,20 +142,21 @@ describe('AssistantActivity', () => {
 
     await user.click(screen.getByText('schedule edit'));
 
-    expect(screen.getByText(/description: ''/)).toHaveClass('text-red-700');
-    expect(screen.getByText(/description: Head/)).toHaveClass('text-green-700');
+    expect(screen.getByText(/description: ''/)).toHaveClass('removed');
+    expect(screen.getByText(/description: Head/)).toHaveClass('added');
   });
 
-  it('reveals long output one chunk at a time', async () => {
+  it.each(['x'.repeat(2500), '😀'.repeat(2001)])('reveals long output in complete Unicode characters', async longResult => {
     const user = userEvent.setup();
-    const longResult = 'x'.repeat(2500);
     render(<AssistantActivity entries={[{ kind: 'tool', name: 'bash', arguments: '{}', result: longResult, ok: true }]} />);
 
     await user.click(screen.getByText('bash'));
 
-    const more = screen.getByRole('button', { name: 'Show more output (500 characters left)' });
+    const remaining = Array.from(longResult).length - 2000;
+    const more = screen.getByRole('button', { name: `Show more output (${remaining} characters left)` });
     await user.click(more);
-    expect(screen.queryByRole('button', { name: /Show more output/ })).not.toBeInTheDocument();
+    expect(more.closest('details')).toHaveAttribute('open');
+    expect(screen.getByText(Array.from(longResult).slice(2000).join(''))).toBeVisible();
   });
 
   it('keeps entries in the order the assistant produced them', () => {

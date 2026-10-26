@@ -410,7 +410,12 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             activity.append({"kind": "notice", "text": data["message"]})
         elif kind == "schedule_applied":
             activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]
-            activity.append({"kind": "schedule-applied", "text": data["diff"], "runId": run_id})
+            entry = {"kind": "schedule-applied", "text": data["diff"], "runId": run_id}
+            if data.get("replaced_queued_schedule"):
+                entry["notice"] = (
+                    "The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule."
+                )
+            activity.append(entry)
         elif kind in {"done", "stopped", "error", "stale"}:
             if kind != "done":
                 _invalidate_summaries(turn)

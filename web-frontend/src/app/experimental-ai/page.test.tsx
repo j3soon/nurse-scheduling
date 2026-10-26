@@ -1192,7 +1192,7 @@ describe('ExperimentalAiPage', () => {
       'Failed\nOutcome: injected\nBackend version: forged',
     );
     expect(screen.getByText('Final score:').tagName).toBe('DT');
-    expect(screen.getByText('Final score:')).toHaveClass('font-semibold');
+    expect(screen.getByText('Final score:')).toHaveClass('optimizer-label');
     expect(optimizerSummary.querySelector('time')).toHaveAttribute('title');
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);

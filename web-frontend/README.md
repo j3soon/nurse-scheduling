@@ -32,6 +32,11 @@ bun run test:coverage
 
 Run frontend browser integration tests:
 
+The chat rendering comparison runs the current Python exporter. Install the
+core runtime dependencies first. On a host, activate the core environment or set
+`AI_EXPORT_PYTHON` to its Python executable. The development container already
+includes these dependencies.
+
 ```sh
 cd web-frontend
 bunx playwright install-deps chromium
@@ -52,6 +57,12 @@ image after Playwright version changes, `bun run test:e2e` and
 inside each new `docker run --rm` container.
 
 In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
+
+`e2e/experimental-ai-rendering.spec.ts` compares the live transcript and fresh
+export HTML from the same conversation events. It checks content, disclosure
+states, and screenshots at desktop and phone widths, including after reload.
+Comparison HTML, screenshots, and visual differences are saved under the
+repository-root `artifacts/chat-rendering/` directory and uploaded by CI.
 
 Generate a separate browser-flow coverage report from Playwright:
 

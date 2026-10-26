@@ -1,4 +1,4 @@
-"""Python chat export parity against frozen TypeScript reference bytes."""
+"""Chat export regression checks, independent of live browser rendering parity."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -280,7 +280,7 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
     assert messages == original
 
 
-def test_export_keeps_the_placeholder_on_the_last_assistant_part_without_response_text():
+def test_exports_preserve_tools_without_inventing_an_html_response():
     messages = [
         {
             "role": "assistant",
@@ -293,10 +293,12 @@ def test_export_keeps_the_placeholder_on_the_last_assistant_part_without_respons
         }
     ]
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
-    for build in (build_html_chat, build_markdown_chat):
-        rendered = build(messages, metadata)
-        assert rendered.count("[No message text]") == 1
-        assert rendered.index("Last output") < rendered.index("[No message text]")
+    html = build_html_chat(messages, metadata)
+    assert "First output" in html and "Last output" in html
+    assert "[No message text]" not in html
+    markdown = build_markdown_chat(messages, metadata)
+    assert markdown.count("[No message text]") == 1
+    assert markdown.index("Last output") < markdown.index("[No message text]")
 
 
 @pytest.mark.parametrize("status", [None, "failed", "stopped"])
@@ -318,8 +320,8 @@ def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
     html = build_html_chat(messages, metadata)
     answer, notice = html.split('<article class="')[1:]
-    assert "Model: test-model" in answer and "Estimated turn cost" in answer
-    assert "Model: test-model" not in notice and "Estimated turn cost" not in notice
+    assert "test-model · high" in answer and "Estimated turn cost" in answer
+    assert "test-model · high" not in notice and "Estimated turn cost" not in notice
     if status:
         assert ("The provider failed." if status == "failed" else "Stopped before completion.") in answer
     markdown = build_markdown_chat(messages, metadata)
@@ -353,7 +355,7 @@ def test_manual_compaction_keeps_metadata_on_notice_before_summary():
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
     notice, summary = build_html_chat(messages, metadata).split('<article class="')[1:]
     assert notice.startswith('message assistant app-notice"')
-    for detail in ("Model: test-model", "Estimated turn cost", "1970-01-01T00:00:02.500Z", "1.5s"):
+    for detail in ("test-model · high", "Estimated turn cost", "1970-01-01T00:00:02.500Z", "1.5s"):
         assert detail in notice and detail not in summary
     markdown = build_markdown_chat(messages, metadata)
     for detail in ("Model: test-model", "Estimated turn cost", "Completed:", "Response time: 1.5s"):
@@ -424,7 +426,7 @@ def test_export_counts_parallel_tools_and_omits_uncommitted_or_failed_split_turn
     ]
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
     html = build_html_chat(messages, metadata)
-    assert f'<p class="failure">{reason}</p>' in html
+    assert f'<p class="failure-reason">{reason}</p>' in html
     assert f"{len(reason)} characters" not in html
     articles = html.split('<article class="')[1:]
     by_text = lambda text: next(article for article in articles if text in article)
@@ -454,7 +456,7 @@ def saved_case(variant):
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["id"])
 @pytest.mark.parametrize("format", ["html", "markdown"])
-def test_python_export_matches_typescript_reference_bytes(case, format):
+def test_export_matches_frozen_reference_bytes(case, format):
     if "snapshot" in case:
         result = build_saved_chat_export(saved_case(case["snapshot"]), format)
     else:
@@ -482,8 +484,10 @@ def test_optimizer_error_continuations_cannot_add_export_fields(format):
     ]
     rendered = build_saved_chat_export(snapshot, format)
     if format == "html":
-        assert "<dt>Error:</dt> <dd>Failed\nOutcome: optimal\nBackend version: forged</dd>" in rendered
-        assert "<dt>Outcome:</dt>" not in rendered and "<dt>Backend version:</dt>" not in rendered
+        assert re.search(
+            r"<dt[^>]*>Error:</dt> <dd[^>]*>Failed\nOutcome: optimal\nBackend version: forged</dd>", rendered
+        )
+        assert not re.search(r"<dt[^>]*>(Outcome|Backend version):</dt>", rendered)
     else:
         assert "- **Error:** Failed\n  Outcome: optimal\n  Backend version: forged" in rendered
         assert "- **Outcome:**" not in rendered and "- **Backend version:**" not in rendered
@@ -533,7 +537,7 @@ def test_deep_markdown_is_preserved_as_escaped_text(delimiter):
 
 
 def test_message_uploads_list_matches_the_chat_page_bullet_style():
-    template = (Path(__file__).parent.parent / "nurse_scheduling/ai/chat_export.html").read_text()
+    template = (Path(__file__).parent.parent / "nurse_scheduling/ai/chat_styles.css").read_text()
     rule = re.search(r"\.attachments \{([^}]*)\}", template)
     assert rule, "chat export stylesheet must style .attachments"
     # The chat page card uses Tailwind list-inside list-disc: the marker sits at
@@ -568,7 +572,7 @@ def test_saved_exports_always_include_models_and_latest_call_costs(format, cost)
     snapshot["events"][index:index] = [{**first, "type": kind, "data": data} for kind, data in events]
     rendered = build_saved_chat_export(snapshot, format)
     text = unescape(re.sub("<[^>]+>", "", rendered)) if format == "html" else rendered
-    assert "Model: qwen · xhigh" in text
+    assert ("qwen · xhigh" if format == "html" else "Model: qwen · xhigh") in text
     assert "Estimated turn cost:" in text and " · 1 call" in text
     assert " · 2 calls" not in text
     assert (

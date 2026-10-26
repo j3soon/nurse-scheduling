@@ -108,7 +108,11 @@ def _render_node(node) -> str:
     if kind in {"fence", "code_block"}:
         language = node.info.split()[0] if node.info.strip() else ""
         attribute = f' class="language-{escape_html(language, react=True)}"' if language else ""
-        return f"<pre><code{attribute}>" + escape_html(node.content, react=True) + "</code></pre>"
+        return (
+            f'<div class="code-container"><pre class="code-block"><code{attribute}>'
+            + escape_html(node.content, react=True)
+            + "</code></pre></div>"
+        )
     if kind == "image":
         alt = "".join(
             item.content if item.type in {"text", "code_inline"} else "" for item in node.walk(include_self=False)
@@ -150,7 +154,8 @@ def _render_node(node) -> str:
                 body = checkbox + body
     else:
         body = render()
-    return f"<{tag}{attrs}>{body}</{tag}>"
+    result = f"<{tag}{attrs}>{body}</{tag}>"
+    return '<div class="table-container">' + result + "</div>" if kind == "table" else result
 
 
 def render_markdown_html(text: str) -> str:
@@ -255,12 +260,45 @@ def _activity_text(entry):
     return entry["text"]
 
 
+def _chunked_text(text, label):
+    chunks = [text[start : start + 2000] for start in range(0, len(text), 2000)] or [""]
+    parts = ['<div><pre class="activity-output">' + escape_html(chunks[0]) + "</pre>"]
+    for index, chunk in enumerate(chunks[1:], 1):
+        remaining = len(text) - index * 2000
+        parts.append(
+            '<details class="more-output"><summary role="button">Show more '
+            + label
+            + f' ({remaining:,} characters left)</summary><pre class="activity-output">'
+            + escape_html(chunk)
+            + "</pre></details>"
+        )
+    return "".join(parts) + "</div>"
+
+
+def _tool_section(title, text, label):
+    return (
+        '<section class="tool-section" aria-label="Tool '
+        + label
+        + '"><h3>'
+        + title
+        + " <span>· "
+        + _count(text)
+        + " characters</span></h3>"
+        + _chunked_text(text, "arguments" if label == "arguments" else "output")
+        + "</section>"
+    )
+
+
 def _activity_html(entry):
     kind = entry["kind"]
     if kind == "notice":
         return '<p class="notice-message" role="status">' + escape_html(entry["text"]) + "</p>"
-    if kind in {"reasoning", "schedule-check", "schedule-applied", "compaction"}:
-        body = '<pre class="activity-output">' + escape_html(_activity_text(entry)) + "</pre>"
+    if kind == "compaction":
+        body = "<p>" + escape_html(entry["text"]) + "</p>"
+        if "summary" in entry:
+            body += _compaction_summary_html(entry)
+    elif kind in {"reasoning", "schedule-check", "schedule-applied"}:
+        body = _chunked_text(entry["text"], "reasoning" if kind == "reasoning" else "details")
     elif kind == "schedule-change":
         before, after = entry["before"].split("\n"), entry["after"].split("\n")
         prefix = 0
@@ -282,34 +320,20 @@ def _activity_html(entry):
         )
     else:
         arguments = (
-            '<section class="tool-section" aria-label="Tool arguments"><h3>'
-            + ("Command" if entry["name"] == "bash" else "Arguments")
-            + " <span>· "
-            + _count(entry["arguments"])
-            + ' characters</span></h3><pre class="activity-output">'
-            + escape_html(entry["arguments"])
-            + "</pre></section>"
+            _tool_section("Command" if entry["name"] == "bash" else "Arguments", entry["arguments"], "arguments")
             if entry.get("arguments") and entry["arguments"] != "{}"
             else ""
         )
-        result = (
-            '<section class="tool-section" aria-label="Tool result"><h3>Result <span>· '
-            + _count(entry["result"])
-            + ' characters</span></h3><pre class="activity-output">'
-            + escape_html(entry["result"])
-            + "</pre></section>"
-            if entry.get("result")
-            else ""
-        )
+        result = _tool_section("Result", entry["result"], "result") if entry.get("result") else ""
         interrupted = (
             '<p class="interrupted">The command did not return before the turn ended.</p>'
             if entry.get("state") == "interrupted" and not entry.get("result")
             else ""
         )
         replay = (
-            '<p>Not executed. Arguments sent in later model context:</p><pre class="activity-output">'
+            '<section class="replay-arguments" aria-label="Arguments sent in model context"><p>Not executed. The original arguments above were truncated. Arguments sent in later model context:</p><pre>'
             + escape_html(entry["replayArguments"])
-            + "</pre>"
+            + "</pre></section>"
             if "replayArguments" in entry
             else ""
         )
@@ -322,7 +346,14 @@ def _activity_html(entry):
         else ""
     )
     opened = " open" if kind == "schedule-check" and not entry["ok"] else ""
-    return f"""<details class="activity-details"{opened}>
+    color = (
+        "activity-success"
+        if kind == "schedule-applied" or (kind == "schedule-check" and entry["ok"])
+        else "activity-error"
+        if kind == "schedule-check"
+        else "activity-muted"
+    )
+    return f"""<details class="activity-details {color}"{opened}>
             <summary>{escape_html(_summary(entry))}</summary>
             {audience}<div class="activity-body">{body}</div>
           </details>"""
@@ -334,7 +365,7 @@ def _timeline(message, *, html=False):
         return entries
     if any(entry["kind"] == "response" for entry in entries):
         return entries
-    if html and not message["content"] and message.get("status") in {"pending", "failed", "stopped"}:
+    if html and not message["content"]:
         return entries
     return [*entries, {"kind": "response", "text": message["content"] or "[No message text]"}]
 
@@ -641,47 +672,96 @@ def _usd(value) -> str:
     return "$" + text
 
 
+def _cost_summary_text(message):
+    summary, calls = message["costSummary"], message.get("providerCalls", [])
+    running = message.get("status") == "pending"
+    known_pending = sum(call["status"] == "pending" and call.get("cost_usd") is not None for call in calls)
+    pending = summary["pending"] if running else 0
+    unavailable = summary["unavailable"] + (0 if running else max(0, summary["pending"] - known_pending))
+    text = f"Estimated turn cost: {_usd(summary['usd'])} · {summary['calls']} "
+    text += "call" if summary["calls"] == 1 else "calls"
+    if pending:
+        text += f" · {pending} pending"
+    if unavailable:
+        text += f" · {unavailable} unavailable"
+    return text
+
+
+def _provider_cost_lines(call, index, running):
+    price = (
+        _usd(call["cost_usd"])
+        if call.get("cost_usd") is not None
+        else "Cost pending"
+        if call["status"] == "pending" and running
+        else "Cost unavailable"
+    )
+    lines = [f"{index}. {call['model']} · {call.get('reasoning', 'default')} · {price}"]
+    if call.get("response_model") and call["response_model"] != call["model"]:
+        lines.append("Reported model: " + call["response_model"])
+    if usage := call.get("usage"):
+        labels = [
+            ("Input", "prompt_tokens"),
+            ("Output", "completion_tokens"),
+            ("Cached input", "cached_prompt_tokens"),
+            ("Reasoning (included in output)", "reasoning_tokens"),
+        ]
+        lines.append(
+            " · ".join(
+                f"{label}: {usage[key]:,}"
+                for label, key in labels
+                if usage.get(key) is not None and (key != "reasoning_tokens" or usage[key])
+            )
+        )
+    lines.append("Call: " + (call.get("provider_call_id") or call["call_id"]))
+    return lines
+
+
 def _model_cost_lines(message) -> list[str]:
     """Always include saved model and cost details, independent of browser settings."""
     lines = []
     if selection := message.get("modelSelection"):
         lines.append(f"Model: {selection['model']} · {selection['reasoning']}")
-    if summary := message.get("costSummary"):
-        calls = message.get("providerCalls", [])
-        running = message.get("status") == "pending"
-        known_pending = sum(call["status"] == "pending" and call.get("cost_usd") is not None for call in calls)
-        pending = summary["pending"] if running else 0
-        unavailable = summary["unavailable"] + (0 if running else max(0, summary["pending"] - known_pending))
-        text = f"Estimated turn cost: {_usd(summary['usd'])} · {summary['calls']} "
-        text += "call" if summary["calls"] == 1 else "calls"
-        if pending:
-            text += f" · {pending} pending"
-        if unavailable:
-            text += f" · {unavailable} unavailable"
-        lines.append(text)
-        for index, call in enumerate(calls, 1):
-            price = (
-                _usd(call["cost_usd"])
-                if call.get("cost_usd") is not None
-                else "Cost pending"
-                if call["status"] == "pending" and running
-                else "Cost unavailable"
-            )
-            lines.append(f"{index}. {call['model']} · {call.get('reasoning', 'default')} · {price}")
-            if call.get("response_model") and call["response_model"] != call["model"]:
-                lines.append("Reported model: " + call["response_model"])
-            if usage := call.get("usage"):
-                labels = [
-                    ("Input", "prompt_tokens"),
-                    ("Output", "completion_tokens"),
-                    ("Cached input", "cached_prompt_tokens"),
-                    ("Reasoning (included in output)", "reasoning_tokens"),
-                ]
-                lines.append(
-                    " · ".join(f"{label}: {usage[key]:,}" for label, key in labels if usage.get(key) is not None)
-                )
-            lines.append("Call: " + (call.get("provider_call_id") or call["call_id"]))
+    if message.get("costSummary"):
+        lines.append(_cost_summary_text(message))
+        for index, call in enumerate(message.get("providerCalls", []), 1):
+            lines.extend(_provider_cost_lines(call, index, message.get("status") == "pending"))
     return lines
+
+
+def _model_cost_html(message):
+    result = ""
+    if message.get("costSummary"):
+        result = (
+            '<details class="cost-details"><summary>'
+            + escape_html(_cost_summary_text(message))
+            + '</summary><ul class="cost-calls" aria-label="Provider call costs">'
+        )
+        for index, call in enumerate(message.get("providerCalls", []), 1):
+            lines = _provider_cost_lines(call, index, message.get("status") == "pending")
+            result += (
+                '<li class="cost-call">'
+                + "".join(
+                    "<div"
+                    + (' class="cost-call-id"' if i == len(lines) - 1 else "")
+                    + ">"
+                    + escape_html(line)
+                    + "</div>"
+                    for i, line in enumerate(lines)
+                )
+                + "</li>"
+            )
+        result += "</ul></details>"
+    if selection := message.get("modelSelection"):
+        reasoning = "Default reasoning" if selection["reasoning"] == "default" else selection["reasoning"]
+        result += '<div class="model-selection">' + escape_html(selection["model"] + " · " + reasoning) + "</div>"
+    return result
+
+
+def _compaction_summary_html(entry):
+    paragraphs, text = _compaction_summary_text(entry).split("\n\n[Conversation summary]\n", 1)
+    return "".join(
+        '<p class="summary-explanation">' + escape_html(line) + "</p>" for line in paragraphs.split("\n")
+    ) + _chunked_text("[Conversation summary]\n" + text, "summary")
 
 
 def build_markdown_chat(messages, metadata):
@@ -774,18 +854,20 @@ def build_html_chat(messages, metadata):
             source += " app-notice"
         files = _message_files(message, urls)
         uploads = (
-            '<ul class="attachments">' + "".join("<li>" + _file_html(file) + "</li>" for file in files) + "</ul>"
+            '<ul class="attachments" aria-label="Uploaded files in this message">'
+            + "".join("<li>" + _file_html(file) + "</li>" for file in files)
+            + "</ul>"
             if files
             else ""
         )
         if compaction:
             timeline = (
-                '<details class="system-prompt"><summary>Conversation summary</summary><pre>'
-                + escape_html(_compaction_summary_text(compaction))
-                + "</pre></details>"
+                '<details class="system-prompt"><summary class="collapsed-summary">Conversation summary</summary>'
+                + _compaction_summary_html(compaction)
+                + "</details>"
             )
         elif presentation == "context":
-            timeline = '<div class="content">' + escape_html(message["content"]) + "</div>"
+            timeline = '<p class="context-content">' + escape_html(message["content"]) + "</p>"
         elif role == "assistant":
             entries, fragments = _timeline(message, html=True), []
             for index, entry in enumerate(entries):
@@ -796,7 +878,7 @@ def build_html_chat(messages, metadata):
                 )
                 content = (
                     '<div class="content">'
-                    + render_markdown_html(_activity_text(entry))
+                    + render_markdown_html(entry["text"])
                     + '</div><p class="character-count">'
                     + _count(entry["text"])
                     + " characters</p>"
@@ -811,40 +893,55 @@ def build_html_chat(messages, metadata):
                     if entry["kind"] in {"schedule-applied", "notice"}
                     else ""
                 )
+                if entry["kind"] in {"response", "reasoning"} and entry.get("context") == "omitted":
+                    content = (
+                        '<p class="omitted-response">Incomplete response. Omitted from future model context.</p>'
+                        + content
+                    )
+                if entry["kind"] == "schedule-applied" and entry.get("notice"):
+                    content = (
+                        '<p role="status" class="schedule-notice">' + escape_html(entry["notice"]) + "</p>" + content
+                    )
                 fragments.append(f'<div class="activity-entry{placement}">' + separator + content + "</div>")
             timeline = (
                 '<div class="assistant-activity" aria-label="Assistant activity">' + "".join(fragments) + "</div>"
             )
         elif role == "system" or message.get("source"):
-            timeline = f'<details class="system-prompt"><summary>{_count(message["content"])} characters</summary><pre>{escape_html(message["content"])}</pre></details>'
+            timeline = f'<details class="system-prompt"><summary class="collapsed-summary">{_count(message["content"])} characters</summary><pre class="collapsed-output">{escape_html(message["content"])}</pre></details>'
         elif role == "optimizer":
             summary, details = _optimizer_parts(message["content"])
             rows = "".join(
-                f"<div><dt>{escape_html(label)}:</dt> <dd>{escape_html(value)}</dd></div>" for label, value in details
+                f'<div class="optimizer-detail"><dt class="optimizer-label">{escape_html(label)}:</dt> <dd class="optimizer-value">{escape_html(value)}</dd></div>'
+                for label, value in details
             )
             timeline = (
-                '<div class="content">'
+                '<p class="plain-content">'
                 + escape_html(summary or "[No message text]")
-                + "</div>"
+                + "</p>"
                 + ('<dl class="optimizer-details">' + rows + "</dl>" if rows else "")
             )
         else:
-            timeline = '<div class="content">' + escape_html(message["content"] or "[No message text]") + "</div>"
+            timeline = '<p class="plain-content">' + escape_html(message["content"] or "[No message text]") + "</p>"
         status, timing = "", ""
         if message.get("status") == "pending" and not message["content"] and not notice:
-            status = '<p class="message-status" role="status">Thinking</p>'
+            timeline += (
+                '<span role="status" aria-label="Thinking" class="thinking"><span>Thinking</span>'
+                '<span aria-hidden="true" class="thinking-dots">'
+                + "".join(
+                    f'<span class="thinking-dot" style="animation-delay:{index * 160}ms"></span>' for index in range(3)
+                )
+                + "</span></span>"
+            )
         elif message.get("status") == "failed":
             reason = message.get("failureReason")
             shown = any(
                 entry["kind"] == "response" and entry["text"] == reason for entry in _timeline(message, html=True)
             )
-            status = (
-                '<p class="failure">'
-                + escape_html(reason if reason and not shown else "This response failed before completion.")
-                + "</p>"
-            )
+            if reason and not shown:
+                status = '<p class="failure-reason">' + escape_html(reason) + "</p>"
+            status += '<p class="failure">This response failed before completion. Send a new message to continue.</p>'
         elif message.get("status") == "stopped":
-            status = '<p class="message-status">Stopped before completion.</p>'
+            status = '<p class="stopped">Stopped before completion.</p>'
         at = message.get("responseCompletedAt", message.get("createdAt"))
         if at is not None:
             iso = _iso(at)
@@ -854,7 +951,7 @@ def build_html_chat(messages, metadata):
                 if "responseStartedAt" in message and "responseCompletedAt" in message
                 else ""
             )
-            timing = f'<time datetime="{iso}" title="{escape_html(display)}">{escape_html(display)}{duration}</time>'
+            timing = f'<time class="message-time" datetime="{iso}" title="{escape_html(display)}">{escape_html(display)}{duration}</time>'
         # Messages reach the model by default, so only exceptions get a status line.
         audience = (
             '<p class="message-status">Omitted from future model context.</p>'
@@ -865,17 +962,17 @@ def build_html_chat(messages, metadata):
             if presentation == "notice" or role == "optimizer"
             else ""
         )
-        model_cost = "".join(
-            '<p class="activity-details" style="overflow-wrap:anywhere">' + escape_html(line) + "</p>"
-            for line in _model_cost_lines(message)
-        )
+        model_cost = _model_cost_html(message)
+        if message.get("truncated"):
+            warning = '<p class="truncated">A response reached the output token limit. Tool calls in that response were not executed.</p>'
+            status = warning + status if message.get("status") == "failed" else status + warning
         rendered.append(f"""
       <article class="message {role}{source}">
         <div class="label">{escape_html(message_label(message))}</div>
         {audience}
         {uploads}
         {timeline}
-        {model_cost}{status}{timing}
+        {model_cost}{timing}{status}
       </article>""")
     uploads = ""
     if metadata.get("uploadedFiles"):
@@ -896,6 +993,7 @@ def build_html_chat(messages, metadata):
             + "</ul>\n    </section>"
         )
     return _template().render(
+        styles=Path(__file__).with_name("chat_styles.css").read_text(encoding="utf-8"),
         exported_at=escape_html(_iso(metadata["exportedAt"])),
         frontend=escape_html(metadata["frontendVersion"]),
         backend=escape_html(metadata.get("backendVersion", "unknown")),

@@ -82,6 +82,13 @@ by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
 Check saved transcript reconstruction against live message order as well as export
 byte parity. Include steering before output and optimizer events between replies.
+Run `experimental-ai-rendering.spec.ts` for transcript, activity, Markdown, cost,
+or shared-style changes. It compares the current page and Python exporter from
+one event scenario, including disclosure behavior and browser screenshots.
+Extend the scenario or its variants when adding a transcript activity kind.
+Use `core/nurse_scheduling/ai/chat_styles.css` for their shared appearance.
+The browser tests require the core Python runtime dependencies. Activate the
+core environment on a host, or set `AI_EXPORT_PYTHON` to its Python executable.
 
 Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to

@@ -27,10 +27,10 @@ export function CostDetails({ summary, calls, running }: {
   const knownPending = calls.filter(call => call.status === 'pending' && call.costUsd !== null).length;
   const displayed = running ? summary : { ...summary, pending: 0,
     unavailable: summary.unavailable + Math.max(0, summary.pending - knownPending) };
-  return <details className="mt-2 text-xs text-gray-600">
-    <summary className="cursor-pointer">Estimated turn cost: {costLabel(displayed)}</summary>
-    <ul className="mt-2 space-y-2" aria-label="Provider call costs">
-      {calls.map((call, index) => <li key={call.callId} className="min-w-0 break-words rounded-lg bg-gray-50 p-2">
+  return <details className="cost-details">
+    <summary className="cost-summary">Estimated turn cost: {costLabel(displayed)}</summary>
+    <ul className="cost-calls" aria-label="Provider call costs">
+      {calls.map((call, index) => <li key={call.callId} className="cost-call">
         <div>{index + 1}. {call.model} · {call.reasoning} · {call.costUsd !== null
           ? formatUsd(call.costUsd) : call.status === 'pending' && running ? 'Cost pending' : 'Cost unavailable'}</div>
         {call.responseModel && call.responseModel !== call.model && <div>Reported model: {call.responseModel}</div>}
@@ -39,7 +39,7 @@ export function CostDetails({ summary, calls, running }: {
           {call.usage.cached_prompt_tokens != null && <> · Cached input: {call.usage.cached_prompt_tokens.toLocaleString()}</>}
           {!!call.usage.reasoning_tokens && <> · Reasoning (included in output): {call.usage.reasoning_tokens.toLocaleString()}</>}
         </div>}
-        <div className="break-all text-gray-400">Call: {call.providerCallId ?? call.callId}</div>
+        <div className="cost-call-id">Call: {call.providerCallId ?? call.callId}</div>
       </li>)}
     </ul>
   </details>;

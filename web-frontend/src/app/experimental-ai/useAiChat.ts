@@ -1136,13 +1136,14 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   };
 
   const restoreConversation = useCallback((storedConversation: StoredChatConversation) => {
-      // Replayed events reconcile onto the unfinished background message by ID, so
-      // restore it before the stream opens. Its tools stopped with the old page.
+      // The server owns background work across reloads. Reconcile its later
+      // events onto the saved pending message instead of declaring it failed.
       if (storedConversation.backgroundAssistantId) {
-        lifecycle.begin('background', storedConversation.backgroundAssistantId, 'interrupted');
+        lifecycle.begin('background', storedConversation.backgroundAssistantId);
       }
       setMessages(storedConversation.messages.map(message => (
         message.status === 'pending' && !message.requestId
+          && (message.runId ?? message.id) !== storedConversation.backgroundAssistantId
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
           : message
       )));

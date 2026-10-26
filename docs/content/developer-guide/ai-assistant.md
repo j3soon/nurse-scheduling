@@ -1036,9 +1036,18 @@ The browser and operator command use the same Python archive writer.
 See [Export saved AI chats](reproduce/core.md#export-saved-ai-chats) for the
 one-command Docker and native database workflow. Export requires PostgreSQL history.
 
-The Python formatter's HTML and Markdown match 52 TypeScript reference
-documents across 26 cases, including the complete saved-event fixture.
-The frozen reference hashes remain in the core export tests.
+The live transcript and offline HTML use the same transcript stylesheet.
+The browser rendering test replays a deterministic conversation through the
+real frontend event handling and compares it with freshly generated Python HTML.
+It checks content, order, disclosure states, computed styles, and screenshots at
+desktop and phone widths, including after reload. Computed styles must match
+exactly. Screenshot comparison allows one RGB level of browser edge rounding.
+Frozen export hashes provide separate output regression checks.
+
+Exports use UTC timestamps and archive-relative file links. Copy buttons and
+session actions remain in the live app.
+Native disclosures keep reasoning, tools, long output, and provider costs
+expandable in offline HTML without scripts.
 
 The Python ZIP writer is available through
 `python -m nurse_scheduling.ai.export_chat SESSION_ID OUTPUT.zip` with

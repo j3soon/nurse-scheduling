@@ -1,6 +1,6 @@
 {
   "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
-  "_comment": "This fixture is mostly AI generated. Expected hashes were captured from the TypeScript exporters at af57b49f. All 52 Python documents matched those exact reference bytes before capture. Later Python-only changes updated the HTML hashes. The AI input and app notice labels, tool sections, and notice activity came from the last TypeScript exporter, and the Python HTML changed exactly as its output did. Saved-case hashes now retain earlier status messages. Other projected messages remain identical.",
+  "_comment": "This test is mostly AI generated. Frozen output regression checks. Live frontend parity is checked by experimental-ai-rendering.spec.ts.",
   "cases": [
     {
       "id": "paragraphs",
@@ -18,7 +18,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "8516cebb662d4e3cc0bf5273477546d9dd702ee12d25df446675e5ff49cea98a",
+        "html": "17fdb67379030c2e9197224bcefbe93c3474d9c6c47d5a14f0f6d72ddbf1eb64",
         "markdown": "3ab568f2d77c5e57cada9aeafe33eac4c69e36df0a1236c884de982cff55ad27"
       }
     },
@@ -38,7 +38,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "de883337dcc39f60e0cddc97c885f4049c8dbb66b1e37c616f5378e018aaead2",
+        "html": "844cb87863aef6a235125d8bff377726ae121db058cdf2ee6162dcdcf80312a5",
         "markdown": "bd53bb253ad28ca6c1d962573f4cdc76a9a0d50846000bbef64f25d0a8a8bc01"
       }
     },
@@ -58,7 +58,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ef8fad5f541cf56ea758d96f2ecba63ecf1e8f21876aa84ea5d26be3740dcf40",
+        "html": "aa6dc6d00571360c95c87877266b6d2afc885797ec3b0540cba1179e4994dde2",
         "markdown": "9e745dca5104871466d393132644fb213c16fc9750cf0bf5ba71aeadc2978b55"
       }
     },
@@ -78,7 +78,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "e602e264ade3e8cb017e7dce00ecc9039d9fdb9fa645b6bad6ad5c68f85eca84",
+        "html": "abe093c67edf61a248aa18434dafa8694d44a3db0403de3a204cd2b61dc7ec97",
         "markdown": "1a307394856b24a568878a39d01e2c75e2e91e46ecff9e8acbb2e0dca182c07e"
       }
     },
@@ -98,7 +98,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "2dc2d7d675815f2dbb8e25f62b615a9c4556e8b6c057eca035d52c13321e3ac2",
+        "html": "bc6e960e3050a3968f0da7569ba59f756a83ffb93a6faa181c9dd9ae55b1928d",
         "markdown": "4619ba46eff3b9bbcd7af6def3a7ba7f325afabe628765e15eb2c114b193ffe9"
       }
     },
@@ -118,7 +118,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "babb726221328646f55c697c988c9d845826f4b0339d1383aed7a65b747dca22",
+        "html": "d2288bc323b2baf6fd5b5b054e86d469be004c7dc93d193030c5d05096769bf8",
         "markdown": "471157fb03c3c08a097f63ffafe1a936ffad75dde73c2bc03c9d2405133ee98c"
       }
     },
@@ -138,7 +138,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "a777d7df175a7925d14277de9506d0dcd8c24b9663819430aff70468e279e8de",
+        "html": "c400b5aa12d5b080ce24b4baa6f2a03c5c18a7aff6e75af9fbab8a13229fde35",
         "markdown": "e02716184c2cb3861d30a0602bc0c32b2ea7609e991e5fc382d438d0b5d22823"
       }
     },
@@ -158,7 +158,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "28d38046f34b153a8e11dd3e2db54967d5c0465604d54e83fb4467ee72cc850c",
+        "html": "82b89586d04d174d91a0a10259a0c8fe1c97965b421aa394aef33324a279fd56",
         "markdown": "637a48f3710a02137d1b98af047b6359341f9855f457ccfb530f2f3f74af2ec9"
       }
     },
@@ -178,7 +178,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "586e85eaab03bea314e42648ab87c0f9e69c9b6ebd834fdf49fa7f72e718272d",
+        "html": "ef9e8ad7120b1d357f54cbd2eed81c4127050db68e6ecb93f3ee5b3d63f92417",
         "markdown": "e94155ae250c153b4279799fbbe5f69797b17aaea7370837597850d1a91e2fdf"
       }
     },
@@ -198,7 +198,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "9fa08057187254febce7c70436041011bf92be3780c91248d3ff8ad044db77bf",
+        "html": "6bc19641373c5569fbed3f5191666eee70c08799cbd741389ac31576b6f1de73",
         "markdown": "acc48bda200b11cad0d1acc351eccffd26c3f62cacdcea2e05b725b513bde5a7"
       }
     },
@@ -218,7 +218,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "96806b1f8003c5c9d7bbfc668079e76462ae1aad0c2d8b29c029e5fdc398a5d6",
+        "html": "d89cf0001bfbd3b4bb058331a7f1faa79549749f789c0462a37e0150f92b1a1c",
         "markdown": "34f55e635920f4a6881800ca3d425adf6082e7eb5d308bcee764b91bfd9e58d8"
       }
     },
@@ -238,7 +238,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "ebf4ccbe4c79a22c952854ad49382c5ddefc2b79e18df8a283143a4cee43312d",
+        "html": "64f625a95df512c6c3d9c2baec1fb1a9be03134d31a66c3030aaff31e1ce13f1",
         "markdown": "c3fe210a0dd10c70c545e02cf9dd05ce42cb5c548b8416695d0880f04949e884"
       }
     },
@@ -258,7 +258,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "f8e160203bbf1ffa3c1273ab62114851b9451453deba5d72ed195c2d06481399",
+        "html": "00e24220f57b71c224e762231ac4b6e0952be2230a6e19bf68a8cd1febe9b8f8",
         "markdown": "71a0d0bb5376f8999c26e92075374bcea258839586fe395e5b568e12dc0db4e9"
       }
     },
@@ -282,7 +282,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "cc1e580708067d914b7e5e70e4c6b40e3d480f7614f69028be6022e66ce1b50c",
+        "html": "2e61e3ef5a7b7deb8f00d0620e1c177ab9d2b474a30cc1b532351abd6fe4a62a",
         "markdown": "e5573d11edcd86d7e2b697b1e593055798b575806ee00b3f5452895425053e21"
       }
     },
@@ -306,7 +306,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "0787997888fc0384f2369b5ea663ff7590e9c2266f3ae36b7372b1cd6e69fb17",
+        "html": "c2a66135192fb1363c1ccdffc7a7bedb51ca978e198c3b9bf0b36551c52daa4c",
         "markdown": "a4107f1035677eca3a99c500489b9ba36f92ce336853b4f937212a6ccbf393e0"
       }
     },
@@ -331,7 +331,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "32132522ddebb55b46a04d8a9867c0423b829dfe3f33367be627410e2e839b5a",
+        "html": "450853331ff37eaf5f9bd8920a4f0d2a2d42db12c5492214b2a93eb30a906efe",
         "markdown": "e817ba96436de8d4c7d0c4c410fe22502c55bf3494c6c4175bad52ced342936e"
       }
     },
@@ -356,7 +356,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "381a88dfe6add1462daff8c59c5ef4dab586decef74f40a527f7c734de69be7a",
+        "html": "1f954ed8ff99e7b8eb0da27fe57e67be322d2c1bde911ac05d8bbb78cf533e13",
         "markdown": "343155fe7cd5d28c8359b1a146af78f95eb94b3f8a79044d18b401f2f55d1185"
       }
     },
@@ -381,7 +381,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "03c255f0e66c403c13970e33cbc22801a0a7588234743f082a4ade5d2b59d871",
+        "html": "2c94a4ef7936d504efb81f98f2b2fe065e37b89be20754a3798eebb6b976d4ba",
         "markdown": "409486fdfebffb790603fb28c4f4d2510c078d2e320c77d6910d9dbbb2025e18"
       }
     },
@@ -406,7 +406,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "f72637d94275c1857f38cbf15d7f720603efdbbd9a776cca623362f1af091c97",
+        "html": "3e72b687c8d3b17c7fe5d785dd6371f0628929f38d165b8cb8ca6f6c44296b67",
         "markdown": "77082ebf12e03eed2539f1253af2316c2e28a028069ad5f3ad80918cc87ba27d"
       }
     },
@@ -431,7 +431,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "33eb521dc6ff925f2dce24c2c0247d80ceb4fe55e850a4138f891f17137a94e0",
+        "html": "fad02d55798ce8b887c6a8ae65a1a73f26f08f134030db0db387c3b2df8150ba",
         "markdown": "403893489e4277dc32bf3aad59037bf1cd879dd98a0c08a16b3873742a2d29a6"
       }
     },
@@ -456,7 +456,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "a70835be8b546d5828946b718b52fbe5ec41f3870b2ad3da63790d235219b015",
+        "html": "ed097b8343f62b8240ee74aa022128af785eeea34f9d587c8684b8951b72fe68",
         "markdown": "6392b2daa84dd3e4288bde583eaeb7fd5d5c8ec2c0d8ebcefc53b17328b55fc1"
       }
     },
@@ -552,7 +552,7 @@
         }
       ],
       "sha256": {
-        "html": "f6a333537eccab92ce786436b8236edaf7debc0503a894d128bc4ec78f8d72bf",
+        "html": "f5cf1edbae84cc7ffe7065cdf214c38b5f932bd0eef9be5d5408a31861c5487e",
         "markdown": "f165faf8312df3098a6826fff261787a7efd9df00cc534de0900a836de2fa5bb"
       }
     },
@@ -560,7 +560,7 @@
       "id": "saved-rich",
       "snapshot": "saved-rich",
       "sha256": {
-        "html": "e8ff0d736c97052fa7308f1faca5d7dc71c159751066959924366e33f886e47d",
+        "html": "781dd9ccf684f88f3b1613ccfad83a38d0a8b783de9368f09c0c0c14565030f4",
         "markdown": "a45390b86b5066a50d323d5fa5787b993771e6f997e35ca11882f5bec4f2a26b"
       }
     },
@@ -568,7 +568,7 @@
       "id": "early-steering",
       "snapshot": "early-steering",
       "sha256": {
-        "html": "86a6c9af811dbe72c55685c167a93360b0c74690833b7b9cc5f1cbafc508a8a6",
+        "html": "dad95b8dba040bc8c34cc035cc6f3141afac01c6b340565597e0f18958f7500b",
         "markdown": "04c680e725a7ba16675d280cc762b930e8792ad5c6ec268f5dc48dd3522105e2"
       }
     },
@@ -576,7 +576,7 @@
       "id": "missing-terminal",
       "snapshot": "missing-terminal",
       "sha256": {
-        "html": "f0dec3cd7e91fa2c5a542afc625cfd24aadae27a912dfdf5db9726d97974c828",
+        "html": "ebc23e55c0f7b35af0b0b6bead11cd48cfa65411a1b6b64836f2b865b9427555",
         "markdown": "85bf9fb2ce4ebca92810adcfd48ab8d423782121bdaa407a92a6b3399698c85f"
       }
     },
@@ -584,7 +584,7 @@
       "id": "changed-system",
       "snapshot": "changed-system",
       "sha256": {
-        "html": "5f54152b75f27e7f2bf0704be388321988c8ab3b56646afd41aa1b90fd5ec9b3",
+        "html": "21c907cdab91c54113371d2f1df7fd525b686a8ff03ae94f6296cee838eafce6",
         "markdown": "260c7f81eb6c4c8880550f6ef579ef16a72c705bc3bb387d746cf751944c309b"
       }
     },
@@ -623,7 +623,7 @@
         "timeZone": "UTC"
       },
       "sha256": {
-        "html": "58c3a38a5699aa80a966e177f72e00659c68c7e86ce2cbcbf47d1af27437762d",
+        "html": "112c850407d5bac29ebc5e5b1ee8682761045bf022993dbee8a23638b046dde6",
         "markdown": "c9e6d0e56fc7030c8d47329b9f4ceca3590d2ef05aa8dfe7aa5cef93be0420b8"
       }
     }

@@ -1,0 +1,500 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
+  "_comment": "This test is mostly AI generated. Deterministic events for live frontend and current Python export comparisons.",
+  "schema_version": 1,
+  "session_id": "rendering-session",
+  "snapshot_at": 1793012438250,
+  "frontend_version": "test",
+  "metadata": {
+    "endpoint": "http://example.test/ai",
+    "backend_version": "test",
+    "uploaded_files": [
+      {
+        "filename": "staff.csv",
+        "bytes": 1000
+      },
+      {
+        "filename": "ward.png",
+        "bytes": 255
+      }
+    ]
+  },
+  "runs": [
+    {
+      "id": "rendering-run-1",
+      "kind": "foreground",
+      "prompt": "Inspect staff.csv and ward.png, then prepare schedule data.",
+      "started_at": 1793012410000,
+      "status": "completed",
+      "finished_at": 1793012415000
+    },
+    {
+      "id": "rendering-run-2",
+      "kind": "background",
+      "prompt": "The optimizer completed with score 42. Review its schedule workbook.",
+      "started_at": 1793012425250,
+      "status": "completed",
+      "finished_at": 1793012426000
+    },
+    {
+      "id": "rendering-run-3",
+      "kind": "foreground",
+      "prompt": "Summarize earlier context and continue.",
+      "started_at": 1793012436000,
+      "status": "completed",
+      "finished_at": 1793012438250
+    }
+  ],
+  "events": [
+    {
+      "type": "run_start",
+      "data": {
+        "run_id": "rendering-run-1",
+        "trigger": "user"
+      },
+      "occurred_at": 1793012410000
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "run_id": "rendering-run-1",
+        "system": "You help prepare schedule data.\nTreat uploads as source materials.",
+        "messages": [
+          {
+            "kind": "app",
+            "index": 0,
+            "title": "Files Uploaded",
+            "content": "[App event] The user uploaded files: [{\"filename\":\"staff.csv\",\"bytes\":1000},{\"filename\":\"ward.png\",\"bytes\":255}]"
+          },
+          {
+            "kind": "question",
+            "content": "Inspect staff.csv and ward.png, then prepare schedule data."
+          }
+        ],
+        "schedule_yaml": ""
+      },
+      "occurred_at": 1793012410250
+    },
+    {
+      "type": "model_selection",
+      "data": {
+        "run_id": "rendering-run-1",
+        "model": "test/model-long-name",
+        "reasoning": "high"
+      },
+      "occurred_at": 1793012410500
+    },
+    {
+      "type": "provider_call",
+      "data": {
+        "run_id": "rendering-run-1",
+        "call_id": "call-0",
+        "model": "test/model-long-name",
+        "reasoning": "high",
+        "status": "reported",
+        "cost_usd": "0.000000001",
+        "provider_call_id": "provider-0",
+        "response_model": "reported/model",
+        "usage": {
+          "prompt_tokens": 19621,
+          "completion_tokens": 578,
+          "total_tokens": 20199,
+          "cached_prompt_tokens": 17600,
+          "reasoning_tokens": 514
+        }
+      },
+      "occurred_at": 1793012410750
+    },
+    {
+      "type": "provider_call",
+      "data": {
+        "run_id": "rendering-run-1",
+        "call_id": "call-1",
+        "model": "test/model-long-name",
+        "reasoning": "high",
+        "status": "reported",
+        "cost_usd": "0.01234",
+        "provider_call_id": "provider-1",
+        "response_model": null,
+        "usage": {
+          "prompt_tokens": 19621,
+          "completion_tokens": 578,
+          "total_tokens": 20199,
+          "cached_prompt_tokens": 17600,
+          "reasoning_tokens": 0
+        }
+      },
+      "occurred_at": 1793012411000
+    },
+    {
+      "type": "provider_call",
+      "data": {
+        "run_id": "rendering-run-1",
+        "call_id": "call-2",
+        "model": "test/model-long-name",
+        "reasoning": "high",
+        "status": "unavailable",
+        "cost_usd": null,
+        "provider_call_id": "provider-2",
+        "response_model": null,
+        "usage": {
+          "prompt_tokens": 19621,
+          "completion_tokens": 578,
+          "total_tokens": 20199,
+          "cached_prompt_tokens": 17600,
+          "reasoning_tokens": 0
+        }
+      },
+      "occurred_at": 1793012411250
+    },
+    {
+      "type": "cost_summary",
+      "data": {
+        "run_id": "rendering-run-1",
+        "conversation": {
+          "usd": "0.012340001",
+          "calls": 3,
+          "pending": 0,
+          "unavailable": 1
+        },
+        "run": {
+          "usd": "0.012340001",
+          "calls": 3,
+          "pending": 0,
+          "unavailable": 1
+        }
+      },
+      "occurred_at": 1793012411500
+    },
+    {
+      "type": "reasoning",
+      "data": {
+        "run_id": "rendering-run-1",
+        "text": "I will inspect the files, validate schedule data, and explain the changes. 新😀"
+      },
+      "occurred_at": 1793012411750
+    },
+    {
+      "type": "tool_start",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "read",
+        "name": "read",
+        "arguments": "{\"path\":\"staff.csv\"}"
+      },
+      "occurred_at": 1793012412000
+    },
+    {
+      "type": "tool",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "read",
+        "name": "read",
+        "arguments": "{\"path\":\"staff.csv\"}",
+        "result": "name,role\nAlice,nurse\nBob,nurse\nExtra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. Extra staff notes. ",
+        "ok": true
+      },
+      "occurred_at": 1793012412250
+    },
+    {
+      "type": "delta",
+      "data": {
+        "run_id": "rendering-run-1",
+        "text": "The staff file contains two nurses."
+      },
+      "occurred_at": 1793012412500
+    },
+    {
+      "type": "tool",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "write",
+        "name": "write",
+        "arguments": "{\"path\":\"schedule.yaml\",\"content\":\"people: [Alice, Bob]\"}",
+        "result": "Saved schedule.yaml.",
+        "ok": true,
+        "schedule_check": {
+          "ok": false,
+          "text": "A date range is required."
+        }
+      },
+      "occurred_at": 1793012412750
+    },
+    {
+      "type": "schedule_change",
+      "data": {
+        "run_id": "rendering-run-1",
+        "schedule_yaml": "people:\n  - Alice\n  - Bob\n"
+      },
+      "occurred_at": 1793012413000
+    },
+    {
+      "type": "tool",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "edit",
+        "name": "edit",
+        "arguments": "{\"path\":\"schedule.yaml\",\"oldText\":\"people:\",\"newText\":\"# Staff\\npeople:\"}",
+        "result": "Updated schedule.yaml.",
+        "ok": true,
+        "schedule_check": {
+          "ok": true,
+          "text": "Schedule data is valid."
+        }
+      },
+      "occurred_at": 1793012413250
+    },
+    {
+      "type": "tool",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "bash",
+        "name": "bash",
+        "arguments": "{\"command\":\"cat missing.txt\"}",
+        "result": "cat: missing.txt: No such file or directory",
+        "ok": false
+      },
+      "occurred_at": 1793012413500
+    },
+    {
+      "type": "tool",
+      "data": {
+        "run_id": "rendering-run-1",
+        "tool_call_id": "repaired",
+        "name": "bash",
+        "arguments": "{\"command\":",
+        "replay_arguments": "{}",
+        "result": "Not executed.",
+        "ok": false
+      },
+      "occurred_at": 1793012413750
+    },
+    {
+      "type": "provider_retry",
+      "data": {
+        "run_id": "rendering-run-1",
+        "message": "The provider is busy. Retrying."
+      },
+      "occurred_at": 1793012414000
+    },
+    {
+      "type": "delta",
+      "data": {
+        "run_id": "rendering-run-1",
+        "text": "# Schedule review\n\nUse **Alice** on days and *Bob* on nights. Keep `schedule.yaml`.\n\n> Review these assignments.\n\n- [x] Read the source materials\n- [ ] Confirm dates\n  - Check holidays\n\n1. Review\n2. Apply\n\n| Person | Shift |\n| --- | --- |\n| Alice | Day |\n| Bob | Night |\n\n[Documentation](https://example.test/docs)\n\n![Ward diagram](https://example.test/ward.png)\n\n```yaml\npeople:\n  - Alice\n  - Bob\n```\n\n---\n\nNo changes were applied without validation."
+      },
+      "occurred_at": 1793012414250
+    },
+    {
+      "type": "schedule_applied",
+      "data": {
+        "run_id": "rendering-run-1",
+        "schedule_yaml": "people: []\n",
+        "diff": "+ Alice\n+ Bob",
+        "replaced_queued_schedule": true
+      },
+      "occurred_at": 1793012414500
+    },
+    {
+      "type": "response_end",
+      "data": {
+        "run_id": "rendering-run-1",
+        "stop_reason": "stop"
+      },
+      "occurred_at": 1793012414750
+    },
+    {
+      "type": "download",
+      "occurred_at": 1793012414999,
+      "data": {
+        "run_id": "rendering-run-1",
+        "download_id": "generated-files"
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "run_id": "rendering-run-1"
+      },
+      "occurred_at": 1793012415000
+    },
+    {
+      "type": "optimization",
+      "data": {
+        "job_id": "optimizer-1",
+        "state": "completed",
+        "terminal": true,
+        "downloadable": false,
+        "result": {
+          "outcome": "optimal",
+          "score": 42,
+          "solver_status": "OPTIMAL",
+          "termination_reason": "completed"
+        },
+        "request": {
+          "solver": "ortools/cp-sat",
+          "timeout_seconds": 10
+        },
+        "backend": {
+          "url": "https://optimizer.example.test",
+          "app_version": "test",
+          "api_version": "v1",
+          "service_name": "Optimizer",
+          "deployment_id": "test",
+          "instance_id": "test",
+          "request_timeout_seconds": 30
+        }
+      },
+      "occurred_at": 1793012415250
+    },
+    {
+      "type": "optimization",
+      "occurred_at": 1793012415251,
+      "data": {
+        "job_id": "optimizer-error",
+        "state": "failed",
+        "terminal": true,
+        "downloadable": false,
+        "error": {
+          "code": "solver-error",
+          "message": "Solver unavailable.\nOutcome: cannot be forged."
+        }
+      }
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "run_id": "rendering-run-2",
+        "trigger": "optimizer"
+      },
+      "occurred_at": 1793012425250
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "run_id": "rendering-run-2",
+        "system": "You help prepare schedule data.\nTreat uploads as source materials.",
+        "messages": [
+          {
+            "kind": "optimizer",
+            "content": "The optimizer completed with score 42. Review its schedule workbook."
+          }
+        ],
+        "schedule_yaml": ""
+      },
+      "occurred_at": 1793012425500
+    },
+    {
+      "type": "delta",
+      "data": {
+        "run_id": "rendering-run-2",
+        "text": "The optimized schedule meets the constraints."
+      },
+      "occurred_at": 1793012425750
+    },
+    {
+      "type": "done",
+      "data": {
+        "run_id": "rendering-run-2"
+      },
+      "occurred_at": 1793012426000
+    },
+    {
+      "type": "run_start",
+      "data": {
+        "run_id": "rendering-run-3",
+        "trigger": "user"
+      },
+      "occurred_at": 1793012436000
+    },
+    {
+      "type": "model_input",
+      "data": {
+        "run_id": "rendering-run-3",
+        "system": "You help prepare schedule data.\nTreat uploads as source materials.",
+        "messages": [
+          {
+            "kind": "question",
+            "content": "Summarize earlier context and continue."
+          }
+        ],
+        "schedule_yaml": ""
+      },
+      "occurred_at": 1793012436250
+    },
+    {
+      "type": "compaction_start",
+      "data": {
+        "run_id": "rendering-run-3",
+        "reason": "threshold",
+        "tokens_before": 25000
+      },
+      "occurred_at": 1793012436500
+    },
+    {
+      "type": "generation_progress",
+      "data": {
+        "run_id": "rendering-run-3",
+        "kind": "compaction",
+        "characters": 40,
+        "step": 1
+      },
+      "occurred_at": 1793012436750
+    },
+    {
+      "type": "compaction_end",
+      "data": {
+        "run_id": "rendering-run-3",
+        "reason": "threshold",
+        "tokens_before": 25000,
+        "success": true,
+        "aborted": false,
+        "summary": "Alice works days. Bob works nights. Confirm dates.",
+        "keep_messages": 2,
+        "characters": 48,
+        "step": 1
+      },
+      "occurred_at": 1793012437000
+    },
+    {
+      "type": "delta",
+      "data": {
+        "run_id": "rendering-run-3",
+        "text": "I retained the staffing decisions."
+      },
+      "occurred_at": 1793012437250
+    },
+    {
+      "type": "steering",
+      "data": {
+        "run_id": "rendering-run-3",
+        "message_id": "steering-1",
+        "message": "Also keep weekends free."
+      },
+      "occurred_at": 1793012437500
+    },
+    {
+      "type": "delta",
+      "data": {
+        "run_id": "rendering-run-3",
+        "text": "I will preserve weekends."
+      },
+      "occurred_at": 1793012437750
+    },
+    {
+      "type": "response_end",
+      "data": {
+        "run_id": "rendering-run-3",
+        "stop_reason": "stop"
+      },
+      "occurred_at": 1793012438000
+    },
+    {
+      "type": "done",
+      "data": {
+        "run_id": "rendering-run-3"
+      },
+      "occurred_at": 1793012438250
+    }
+  ]
+}

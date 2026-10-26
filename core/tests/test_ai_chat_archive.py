@@ -334,7 +334,7 @@ def test_upload_events_link_their_own_version_of_a_reused_filename(postgres_hist
     with ZipFile(io.BytesIO(exported.content)) as archive:
         html = archive.read("chat.html").decode()
         paths = {file["source_id"]: file["path"] for file in json.loads(archive.read("manifest.json"))["files"]}
-    uploaded = [block.split('href="', 1)[1].split('"', 1)[0] for block in html.split('<ul class="attachments">')[1:]]
+    uploaded = [block.split('href="', 1)[1].split('"', 1)[0] for block in html.split('<ul class="attachments"')[1:]]
     assert uploaded == [paths[first], paths[second]]
 
 
