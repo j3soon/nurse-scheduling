@@ -668,12 +668,10 @@ They did not submit optimizer jobs or establish a token or latency saving.
 The Nurse Scheduling adapter delegates file and command operations to
 `SandboxBackend`. `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS` defaults to 60 seconds
 and caps each command at that duration. The agent can run many commands within
-the separate turn deadline. E2B
-returns completed stdout and stderr separately, so the adapter concatenates
-them and cannot reproduce Pi's live
-stream interleaving exactly. Nonzero and missing command exit codes produce
-failed tool results that the agent can read before continuing. GIF detection
-requires a complete GIF87a or GIF89a signature.
+the separate turn deadline. The E2B command wrapper combines stdout and stderr
+as they arrive, as Pi's live output stream does. Nonzero and missing command
+exit codes produce failed tool results that the agent can read before
+continuing. GIF detection requires a complete GIF87a or GIF89a signature.
 
 The v1.0.0 comparison covers all four tools, image detection and processing,
 and head/tail truncation. Edit/write execution and image processing are unchanged
