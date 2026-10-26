@@ -1838,9 +1838,13 @@ def test_compose_exposes_the_ai_session_byte_budget(monkeypatch: pytest.MonkeyPa
         ai_environment = compose["services"]["ai"]["environment"]
         assert ai_environment["AI_MAX_SESSION_BYTES"] == f"${{AI_MAX_SESSION_BYTES:-{default}}}", name
 
+    reference_ai = [
+        line for line in (docker_dir / ".env.example").read_text("utf-8").splitlines() if line.startswith("AI_")
+    ]
     for name in (".env.example", ".env.gpu.example", ".env.staging.example"):
         contents = (docker_dir / name).read_text("utf-8")
         assert re.search(rf"(?m)^AI_MAX_SESSION_BYTES={default}$", contents), name
+        assert [line for line in contents.splitlines() if line.startswith("AI_")] == reference_ai, name
 
 
 def test_defensive_history_limit_rejects_new_work_without_dropping_the_chat():
