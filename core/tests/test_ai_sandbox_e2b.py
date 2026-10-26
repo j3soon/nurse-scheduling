@@ -931,6 +931,43 @@ def test_failed_timeout_snapshot_is_an_infrastructure_error(report):
 
 
 @pytest.mark.parametrize("exception", [TimeoutException, TimeoutError])
+def test_slow_timeout_snapshot_keeps_the_stopped_sandbox(exception):
+    async def exercise():
+        sandbox = FakeE2BSandbox()
+        stopped = asyncio.Event()
+
+        async def wait():
+            await stopped.wait()
+            raise CommandExitException(stdout="", stderr="", exit_code=137, error=None)
+
+        sandbox.handle.wait.side_effect = wait
+
+        async def run(command, **kwargs):
+            if kwargs.get("background"):
+                return sandbox.handle
+            if "snapshot" in command:
+                raise exception("The log is too large to read before the deadline.")
+            stopped.set()
+            return SimpleNamespace(exit_code=0)
+
+        sandbox.commands.run.side_effect = run
+        backend = make_backend(sandbox)
+        try:
+            result = await backend.run("yes", timeout_seconds=0.001)
+            assert await backend.read_file("/workspace/schedule.yaml") == b"schedule"
+            sandbox.kill.assert_not_awaited()
+        finally:
+            await backend.close()
+        return result
+
+    result = asyncio.run(exercise())
+    assert result.exit_code == COMMAND_TIMEOUT_EXIT_CODE
+    assert result.timed_out
+    assert not result.sandbox_terminated
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("exception", [TimeoutException, TimeoutError])
 def test_stream_timeout_is_an_infrastructure_failure_and_does_not_replay_the_command(exception):
     async def exercise():
         sandbox = FakeE2BSandbox()

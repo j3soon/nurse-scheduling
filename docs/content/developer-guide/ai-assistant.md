@@ -478,7 +478,9 @@ writes the full log inside the sandbox. It retains a bounded UTF-8 tail and
 sends that tail with line and byte counts through the SDK. The `bash` adapter
 keeps the last 2,000 lines or 50 KiB and links the full log when truncated.
 Small logs are deleted after capture. A command timeout preserves partial logs
-when process cleanup succeeds. Logs live until the disposable sandbox closes.
+when process cleanup succeeds. If the log is too large to read before the
+control deadline, the result has no output, and the sandbox remains available.
+Logs live until the disposable sandbox closes.
 Command output has no separate capture ceiling. Sandbox disk capacity and
 execution deadlines bound resource use. A 1 MiB transport bound protects the
 small JSON report, independently of the log's size.

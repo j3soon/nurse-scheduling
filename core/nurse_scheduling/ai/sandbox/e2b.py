@@ -45,6 +45,7 @@ from e2b.exceptions import (
     SandboxException,
     SandboxNotFoundException,
     TemplateException,
+    TimeoutException,
 )
 from e2b.sandbox.commands.command_handle import CommandExitException
 from e2b.sandbox.filesystem.filesystem import WriteEntry
@@ -574,6 +575,11 @@ class E2BSandboxBackend:
                             )
                     except CommandExitException as exc:
                         raise SandboxError("E2B could not recover sandbox command output.") from exc
+                    except (TimeoutError, TimeoutException):
+                        # A large log can outlast the snapshot deadline. The command group already stopped.
+                        return CommandResult(
+                            "", "", COMMAND_TIMEOUT_EXIT_CODE, duration_seconds=duration, timed_out=True
+                        )
                     prepared = _prepare_output_report(partial.stdout)
                     return CommandResult(
                         prepared.truncation.content,
