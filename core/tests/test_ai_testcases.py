@@ -113,6 +113,67 @@ def test_duplicate_fixture_keys_fail_without_credentials(tmp_path):
         load_case(path, fixtures=tmp_path)
 
 
+def test_reset_reuses_solver_fixture_and_requires_complete_empty_schedule():
+    case = load_case(TESTCASES / "basics" / "01_reset-schedule.yaml")
+    source = case.steps[0].value
+    assert source == TESTCASES.parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
+    before = source.read_text(encoding="utf-8")
+    assert len(load_yaml(before)["people"]["items"]) == 87
+    expected = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
+    checks = [case.steps[-1]]
+    check_schedule(checks, before, "# Reformat\n" + expected)
+    omitted_defaults = expected.replace("  groups: []\n", "").replace(
+        "dates:\n  range: {}\n  items: []", "dates:\n  range: {}"
+    )
+    check_schedule(checks, before, omitted_defaults)
+    check_schedule(checks, before, expected + "export: {formatting: [], extraColumns: [], extraRows: []}\n")
+    for version in ("test", "null", "42"):
+        check_schedule(checks, before, expected + f"appVersion: {version}\n")
+    for after in (
+        before,
+        expected.replace("people:\n  items: []", "people:\n  items: [{id: Alice}]"),
+        expected.replace("preferences:\n  - type: at most one shift per day", "preferences: []"),
+        expected + "extra: true\n",
+        expected.replace("range: {}", "range: {startDate: '2025-11-01', endDate: '2025-11-30'}"),
+        expected.replace("  groups: []", "  groups: [{id: leftover, members: []}]", 1),
+    ):
+        with pytest.raises(AssertionError, match="schedule does not equal fixture"):
+            check_schedule(checks, before, after)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "steps: [{yaml: ../../../AGENTS.md}, {user: hi}]",
+        "steps: [{user: hi, attachment: ../../testcases/real/large-ward-with-87-people-2025-11.yaml}]",
+        "steps: [{user: hi}, {schedule: {equals: absent.yaml}}]",
+        "steps: [{user: hi}, {schedule: {equals: people.txt}}]",
+        "steps: [{user: hi}, {schedule: {equals: 42}}]",
+        "steps: [{user: hi}, {schedule: {equals: empty.yaml}}, {schedule: {unchanged: true}}]",
+        "steps: [{user: hi}, {schedule: {equals: empty.yaml}}, {schedule: {equals: empty.yaml}}]",
+        "steps: [{user: hi}, {schedule: {equals: empty.yaml, unchanged: true}}]",
+        "steps: [{user: hi}, {schedule: {equals: empty.yaml}}, {schedule: {added: {people.items: [{id: Alice}]}}}]",
+    ],
+)
+def test_invalid_schedule_fixtures_and_equality_combinations(tmp_path, text):
+    with pytest.raises(DefinitionError):
+        definition(tmp_path, text)
+
+
+def test_production_execution_checks_schedule_equality():
+    case = load_case(TESTCASES / "basics" / "01_reset-schedule.yaml")
+    expected = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
+    provider = ScriptedProvider(
+        [
+            [tool_call("reset", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": expected}))],
+            [TextDelta("Reset complete."), ResponseEnd("stop")],
+        ]
+    )
+    assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory()))
+    unchanged = ScriptedProvider([[TextDelta("Reset complete."), ResponseEnd("stop")]])
+    assert not asyncio.run(run_case(case, unchanged, settings(), FakeSandboxFactory()))
+
+
 def test_ordered_events_and_case_matching():
     tool = Step(2, "tool", "read", {"path": "/guide"})
     answer = Step(3, "assistant", {"contains_any": ["already here"]}, {})

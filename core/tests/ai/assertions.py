@@ -1,4 +1,4 @@
-"""Check turn events and exact schedule additions."""
+"""Check turn events and exact schedule changes."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -83,10 +83,38 @@ def _normalize_schedule_defaults(schedule: Any) -> Any:
     return schedule
 
 
+def _normalize_fixture_defaults(schedule: Any) -> Any:
+    """Compare optional empty fields as the frontend's defaults."""
+    if not isinstance(schedule, dict):
+        return schedule
+    schedule.pop("appVersion", None)
+    if schedule.get("description") in (None, ""):
+        schedule.pop("description", None)
+    for name in ("dates", "people", "shiftTypes", "export"):
+        container = schedule.get(name)
+        if not isinstance(container, dict):
+            continue
+        keys = {"export": ("formatting", "extraColumns", "extraRows"), "dates": ("items", "groups")}.get(
+            name, ("groups",)
+        )
+        for key in keys:
+            if container.get(key) == []:
+                container.pop(key)
+        if name == "export" and not container:
+            schedule.pop(name)
+    return schedule
+
+
 def check_schedule(steps: list[Step], before: str, after: str) -> None:
-    """Remove exactly declared additions, then require the original schedule."""
+    """Require a fixture, or remove declared additions and compare with the original."""
+    expected = next((step.value["equals"] for step in steps if "equals" in step.value), None)
+    if expected is not None:
+        before = expected.read_text(encoding="utf-8")
     original = _normalize_schedule_defaults(load_yaml(before))
     remaining = _normalize_schedule_defaults(load_yaml(after))
+    if expected is not None:
+        original = _normalize_fixture_defaults(original)
+        remaining = _normalize_fixture_defaults(remaining)
     for step in steps:
         for path, objects in step.value.get("added", {}).items():
             target = remaining
@@ -112,9 +140,15 @@ def check_schedule(steps: list[Step], before: str, after: str) -> None:
     if not _partial(original, remaining) or not _partial(remaining, original):
         diff = "".join(
             unified_diff(
-                before.splitlines(keepends=True), after.splitlines(keepends=True), fromfile="before", tofile="after"
+                before.splitlines(keepends=True),
+                after.splitlines(keepends=True),
+                fromfile="expected" if expected else "before",
+                tofile="after",
             )
         )
-        raise AssertionError(
-            f"unexpected schedule changes beyond declared additions (unchanged is the default):\n{diff}"
+        message = (
+            f"schedule does not equal fixture {expected}"
+            if expected
+            else "unexpected schedule changes beyond declared additions (unchanged is the default)"
         )
+        raise AssertionError(f"{message}:\n{diff}")

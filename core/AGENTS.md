@@ -520,7 +520,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   comments and key order, stays unchanged. Report the restoration to the model
   and user. Keep the workspace, inspection context, preview and optimizer input
   on the same validated text. Do not auto-repair optional staffing, rest,
-  eligibility or preference rules.
+  eligibility or preference rules. Test edits after a reset when changing
+  validation. Empty editor schedule data must not require optimization dates.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.

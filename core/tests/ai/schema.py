@@ -62,13 +62,23 @@ def load_yaml(text: str) -> Any:
     return yaml.load(text)
 
 
-def fixture_path(name: Any, fixtures: Path = FIXTURES) -> Path:
-    """Resolve a fixture below the shared fixture directory."""
+def fixture_path(name: Any, fixtures: Path = FIXTURES, *, root: Path | None = None) -> Path:
+    """Resolve a fixture within its permitted root."""
     if not isinstance(name, str) or not name.strip():
         raise DefinitionError("fixture names must be nonempty strings")
     path = (fixtures / name).resolve()
-    if not path.is_relative_to(fixtures.resolve()) or not path.is_file():
-        raise DefinitionError(f"fixture does not exist inside {fixtures}: {name}")
+    root = (root or fixtures).resolve()
+    if not path.is_relative_to(root) or not path.is_file():
+        raise DefinitionError(f"fixture does not exist inside {root}: {name}")
+    return path
+
+
+def schedule_fixture(name: Any, fixtures: Path) -> Path:
+    """Reuse schedule YAML within core/tests, keeping attachments in fixtures."""
+    root = ROOT.parent if fixtures.resolve() == FIXTURES.resolve() else fixtures
+    path = fixture_path(name, fixtures, root=root)
+    if not isinstance(load_yaml(path.read_text(encoding="utf-8")), dict):
+        raise DefinitionError("schedule fixture must contain a YAML mapping")
     return path
 
 
@@ -77,12 +87,14 @@ def _strings(value: Any, label: str) -> None:
         raise DefinitionError(f"{label} must be a nonempty list of nonempty strings")
 
 
-def _schedule(value: Any) -> None:
+def _schedule(value: Any, fixtures: Path) -> None:
     if not isinstance(value, dict) or len(value) != 1:
-        raise DefinitionError("schedule requires exactly one of unchanged or added")
+        raise DefinitionError("schedule requires exactly one of unchanged, added, or equals")
     if "unchanged" in value:
         if value["unchanged"] is not True:
             raise DefinitionError("schedule.unchanged must be true")
+    elif "equals" in value:
+        value["equals"] = schedule_fixture(value["equals"], fixtures)
     elif "added" in value:
         added = value["added"]
         if not isinstance(added, dict) or not added:
@@ -116,9 +128,7 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
         if value.utcoffset() is None:
             raise DefinitionError("date must include a timezone")
     elif kind == "yaml":
-        value = fixture_path(value, fixtures)
-        if not isinstance(load_yaml(value.read_text(encoding="utf-8")), dict):
-            raise DefinitionError("schedule fixture must contain a YAML mapping")
+        value = schedule_fixture(value, fixtures)
     elif kind in {"user", "tool"}:
         if not isinstance(value, str) or not value.strip():
             raise DefinitionError(f"{kind} must be a nonempty string")
@@ -140,7 +150,7 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
         if "judge" in value and (not isinstance(value["judge"], str) or not value["judge"].strip()):
             raise DefinitionError("assistant.judge must be a nonempty rubric string")
     else:
-        _schedule(value)
+        _schedule(value, fixtures)
     return Step(number, kind, value, options)
 
 
@@ -169,8 +179,10 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
             elif step.kind == "schedule":
                 schedule_modes.update(step.value)
                 schedule_count += 1
-                if len(schedule_modes) > 1 or ("unchanged" in schedule_modes and schedule_count > 1):
-                    raise DefinitionError("schedule.unchanged cannot be combined with other schedule assertions")
+                if len(schedule_modes) > 1 or (schedule_modes != {"added"} and schedule_count > 1):
+                    raise DefinitionError(
+                        "schedule.unchanged and schedule.equals cannot be combined with other schedule assertions"
+                    )
             steps.append(step)
         if not has_user or steps[-1].kind in {"date", "yaml"}:
             raise DefinitionError("testcase must contain a user turn and cannot end with configuration")

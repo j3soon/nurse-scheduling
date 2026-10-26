@@ -36,6 +36,33 @@ def test_accepts_frontend_generated_schedule():
     assert result.render() == "The schedule is valid for the web frontend editor."
 
 
+def test_empty_editor_state_requires_explicit_allowance():
+    from tests.ai.schema import FIXTURES
+
+    empty = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
+    assert validate_frontend_schedule_yaml(empty, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    omitted_defaults = empty.replace("  groups: []\n", "").replace(
+        "dates:\n  range: {}\n  items: []", "dates:\n  range: {}"
+    )
+    assert validate_frontend_schedule_yaml(omitted_defaults, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    # The optimizer still needs complete dates, even for an accepted editor reset.
+    assert not validate_frontend_schedule_yaml(empty, SCHEDULE_BYTE_LIMIT).valid
+    for invalid in (
+        empty.replace("people:\n  items: []", "people:\n  items: [{id: 123}]"),
+        empty.replace("range: {}", "range: {startDate: '2026-01-01'}"),
+        empty.replace("preferences:\n  - type: at most one shift per day", "preferences: []"),
+        empty + "unknown: true\n",
+        empty + "export: {formatting: [{people: [missing]}]}\n",
+        empty + "appVersion: 123\n",
+    ):
+        assert not validate_frontend_schedule_yaml(invalid, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    assert validate_frontend_schedule_yaml(
+        empty + "appVersion: test\nexport: {formatting: [], extraColumns: [], extraRows: []}\n",
+        SCHEDULE_BYTE_LIMIT,
+        allow_empty=True,
+    ).valid
+
+
 def test_rejects_backend_only_shape_the_editor_cannot_represent():
     payload = base_schedule_payload()
     payload["preferences"].append(

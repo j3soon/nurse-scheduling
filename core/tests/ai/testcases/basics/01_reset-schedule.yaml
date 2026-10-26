@@ -1,0 +1,10 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+steps:
+  - yaml: ../../testcases/real/large-ward-with-87-people-2025-11.yaml
+  - user: >-
+      I want to start a new schedule. Reset the schedule to empty.
+      Directly modify without confirming.
+  - schedule:
+      equals: empty.yaml

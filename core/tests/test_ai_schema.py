@@ -50,6 +50,8 @@ class ReferenceTopic:
 
 
 def _list_below(section: str, heading: str) -> tuple[str, ...]:
+    if heading == "Fields" and "Fields for a configured range:\n" in section:
+        heading = "Fields for a configured range"
     marker = f"{heading}:\n"
     if marker not in section:
         return ()

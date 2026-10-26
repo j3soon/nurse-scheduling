@@ -67,11 +67,12 @@ as an example. Each step has exactly one primary key:
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
 | `assistant` | Requires `contains_any`, with optional boolean `case_sensitive` and a `judge` rubric. |
-| `schedule` | Requires `unchanged: true` or `added` mapping dotted list paths to exact objects. |
+| `schedule` | Requires `unchanged: true`, an `added` mapping, or `equals: <fixture.yaml>`. |
 
 Unknown fields fail validation, except tool argument fields, which depend on
-the tool being asserted. Fixtures must exist inside `fixtures/`. Schedule
-fixtures must contain YAML mappings. Duplicate YAML keys are rejected.
+the tool being asserted. Attachments must exist inside `fixtures/`. Schedule
+fixtures can reference existing files within `core/tests/`, relative to
+`fixtures/`, and must contain YAML mappings. Duplicate YAML keys are rejected.
 
 Configuration affects the next user turn. Finish a turn's assertions before
 its next `date` or `yaml` step. Conversation history survives replacements.
@@ -110,10 +111,15 @@ change. Each listed object must match exactly, including all of its fields.
 For `people.items`, omitted `history`, `history: null`, and `history: []` are equivalent.
 Omitted `description`, `description: null`, and `description: ''` are also equivalent.
 Nonempty values and all other fields must match exactly.
-Additional fields, additions, removals, edits, and reordered existing items
-fail. New items can appear anywhere in the target list. `unchanged: true`
-cannot be combined with another schedule assertion. Only list additions are
-supported initially. Add other operators when a reviewed case requires them.
+For additions, extra fields, additions, removals, edits, and reordered existing
+items fail. New items can appear anywhere in the target list.
+
+`equals: empty.yaml` requires the complete schedule to match that fixture,
+including the mandatory one-shift-per-day rule. It ignores `appVersion` metadata.
+Optional empty groups, date items, description, and export settings can be omitted.
+Mapping-key order and formatting do not matter. Neither `unchanged` nor `equals` can be combined with another
+schedule assertion. See `testcases/basics/01_reset-schedule.yaml` for reuse of
+the existing 87-person solver fixture without duplication.
 
 When a date is configured, the tester sets and verifies the E2B system clock
 immediately after sandbox creation, before hydration. Time then advances
