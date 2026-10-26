@@ -357,6 +357,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 activity.append({"kind": "notice", "text": f"Sent in future model context: {data['context_note']}"})
             if data["stop_reason"] == "length":
                 assistant["truncated"] = True
+        elif kind == "truncated":
+            assistant["truncated"] = True
         elif kind in {"tool_start", "tool"}:
             entry = {
                 "kind": "tool",

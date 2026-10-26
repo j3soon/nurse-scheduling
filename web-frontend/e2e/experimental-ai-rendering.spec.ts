@@ -32,8 +32,9 @@ const storageKey = 'nurse-scheduling-ai-conversation';
 type SavedEvent = { type: string; occurred_at: number; data: Record<string, unknown> };
 type SavedRun = Omit<typeof fixture.runs[number], 'finished_at'> & { finished_at: number | null };
 type Snapshot = Omit<typeof fixture, 'events' | 'runs'> & { events: SavedEvent[]; runs: SavedRun[] };
-const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'length-recovery',
-  'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted', 'manual-running'] as const;
+const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'final-truncated',
+  'length-recovery', 'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted',
+  'manual-running'] as const;
 
 function scenario(variant: typeof variants[number]): Snapshot {
   const snapshot: Snapshot = structuredClone(fixture);
@@ -91,6 +92,9 @@ function scenario(variant: typeof variants[number]): Snapshot {
     append('response_end', { stop_reason: 'length' });
     if (variant === 'failed-truncated') append('error', { message: 'The follow-up provider request failed.' });
     else append('done');
+  } else if (variant === 'final-truncated') {
+    append('delta', { text: 'The final answer reached its token limit.' });
+    append('truncated'); append('done');
   } else if (variant === 'length-recovery') {
     append('delta', { text: 'Partial plan before the length stop.' });
     append('response_end', { stop_reason: 'length', context_omitted: true });
