@@ -106,8 +106,9 @@ condition. It can be used alone for semantic
 checks such as reply language. A judge-only assertion requires a nonempty reply.
 When phrase matching is also supplied, both matching and the LLM judge must pass.
 The language cases use judge-only assertions for English and Chinese script.
-Ambiguous Chinese defaults to Traditional Chinese. Clear Simplified Chinese
-input receives Simplified Chinese replies. The judge always runs for an
+Chinese replies default to Traditional Chinese, including for Simplified Chinese
+input. Explicit language or script requests override this default. The Simplified
+Chinese case checks that exception. The judge always runs for an
 executed turn, even when phrase matching or agent execution fails. It reads the
 conversation in a separate request with no tools and returns a boolean verdict
 and explanation. Invalid verdicts, request errors, and its two-minute timeout

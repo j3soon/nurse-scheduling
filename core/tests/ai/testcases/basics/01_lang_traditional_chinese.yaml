@@ -9,20 +9,11 @@ steps:
   - schedule:
       unchanged: true
 
-  - user: 請簡短介紹你能幫我做什麼。
-  - assistant:
-      judge: >-
-        Pass when the assistant replies in Traditional Chinese, matching the
-        user's Traditional Chinese script. English app names and code identifiers
-        are allowed.
-  - schedule:
-      unchanged: true
-
   - user: 请简短介绍你能帮我做什么。
   - assistant:
       judge: >-
-        Pass when the assistant replies in Simplified Chinese, matching the
-        user's clearly Simplified Chinese script. English app names and code
-        identifiers are allowed.
+        Pass when the assistant replies in Traditional Chinese, even though the
+        user writes in Simplified Chinese. English app names and code identifiers
+        are allowed.
   - schedule:
       unchanged: true

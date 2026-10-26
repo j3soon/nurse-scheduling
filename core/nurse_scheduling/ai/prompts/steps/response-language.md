@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-Follow explicit language requests. Otherwise match the user's language and Chinese script.
-Use Traditional Chinese when Chinese script is ambiguous, such as `你好`.
-If the user's message clearly uses Simplified Chinese characters, reply in Simplified Chinese.
-Reply in English to English messages.
+Follow explicit language requests.
+Otherwise use English for English messages and Traditional Chinese for Chinese messages, even if the input uses Simplified Chinese.
+Before sending, check that all Chinese prose uses the selected script.
+Preserve exact names, identifiers, code, and quoted source text.
