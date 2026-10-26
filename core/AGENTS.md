@@ -78,6 +78,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   barriers when a test needs task ordering instead of an elapsed duration.
 - Bound polling by elapsed time or wait for a completion event with a timeout.
   Do not derive a waiting budget from a fixed number of sleeps.
+- For a timeout test that targets a later phase, arm the real deadline after
+  that phase starts. Do not make unrelated setup fit a short wall-clock budget.
 
 ## Dependencies
 - `requirements.txt` is the minimal runtime set. Deployment images install only
