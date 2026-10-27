@@ -758,6 +758,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   text hashes or their fixtures, cover LF and CRLF inputs and check that changed
   content is rejected. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.
+  Serialize paths used as fingerprint keys with `Path.as_posix()` so Windows
+  path separators do not change the hash.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the

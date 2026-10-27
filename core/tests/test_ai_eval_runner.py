@@ -27,7 +27,7 @@ import sys
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 
 import httpx
@@ -176,6 +176,20 @@ def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence(tmp_p
         monkeypatch.setitem(workspace.REFERENCE_ATTACHMENT_TOOLS, destination, helper)
     assert _reference_digests() == digests
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+@pytest.mark.parametrize("path_type", [PurePosixPath, PureWindowsPath], ids=["posix", "windows"])
+def test_reviewed_prompt_evidence_uses_portable_fixture_paths(monkeypatch, path_type):
+    from tests.ai import schema
+
+    class FixturePath(type(schema.FIXTURES)):
+        def relative_to(self, other):
+            return path_type(*super().relative_to(other).parts)
+
+    monkeypatch.setattr(schema, "FIXTURES", FixturePath(schema.FIXTURES))
+    steps = tuple(step for step in load_prompt_steps() if step.reviewed_cases)
+    assert steps
+    validate_prompt_evidence(steps, CASE_BY_ID, FIXTURE_DIGESTS)
 
 
 def test_prompt_evidence_accepts_reviewed_cases_and_rejects_stale_inputs(tmp_path, monkeypatch):

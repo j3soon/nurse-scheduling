@@ -294,7 +294,7 @@ def reviewed_input_digest(step: PromptStep, name: str) -> str:
         "clause": step.sha256,
         "case": path.read_text(encoding="utf-8"),
         "fixtures": {
-            str(file.relative_to(ROOT.parent)): hashlib.sha256(
+            file.relative_to(ROOT.parent).as_posix(): hashlib.sha256(
                 file.read_text(encoding="utf-8").encode()
                 if file.suffix in {".yaml", ".yml", ".txt", ".md", ".csv", ".json"}
                 else file.read_bytes()
