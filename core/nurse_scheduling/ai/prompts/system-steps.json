@@ -7,7 +7,7 @@
       "colleague-open-ai-chat"
     ],
     "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
-    "sha256": "b6cc02c4673ff253f280f0a8c32c63bf6711125e78e926c00dabad5211824c64",
+    "sha256": "ae297fc7a5b24e76ffa88714c26e1e3adbe87be43bc6444b44ba6acf7a1c2c1e",
     "evidence": [
       {
         "case": "basics/01_already-in-ai-chat.yaml",
@@ -1008,7 +1008,7 @@
     "file": "steps/autonomous-roster-validation.md",
     "cases": [],
     "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit schedule data. Optimization-loop coverage awaits optimizer support in the new tester.",
-    "sha256": "7bb8116be6a667330f1faaae1d3c526aee87f9d373b57d93cb946bc64cf83084",
+    "sha256": "82f2c53ec6852f5fc95177e9e5c7159c3c48a813f37c7d2b6206703bdd2cac9e",
     "evidence": [],
     "comparison_mode": "ablation",
     "reviewed_cases": [

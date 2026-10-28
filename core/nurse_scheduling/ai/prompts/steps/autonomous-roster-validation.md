@@ -14,8 +14,9 @@ Treat introduced items or groups that no scheduling rule uses as possible oversi
 optimization, confirm whether they should affect scheduling or intentionally remain informational.
 Monthly primary/preferred shifts express preferred shift categories. Qualified staffing slots such as
 `D+`, `E+`, and `N+` specify qualification requirements. Declining primary shifts does not decline qualified staffing.
-Clarify ambiguous goals or requested actions. Apply clear edits within the stated requirements and briefly
-flag missing essential data.
+Clarify ambiguous goals or requested actions. Apply clear edits within the stated requirements without
+blocking on unrelated questions. After editing, briefly flag missing essential schedule data, even when
+the user requested only that edit.
 Ask and wait before optimizing while questions remain, unless the user explicitly asks to optimize or proceed
 despite the unknowns. Respect requests not to optimize.
 Once the necessary questions are answered, proactively validate your schedule data changes by optimizing and
