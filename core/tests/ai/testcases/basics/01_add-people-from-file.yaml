@@ -1,8 +1,6 @@
 # This file is part of Nurse Scheduling Project.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 steps:
-  - date: 2026-10-25T09:00:00+08:00
-  - yaml: empty.yaml
   - user: >-
       Add people from the attached files. Directly modify the schedule without confirming.
     attachment: people.txt

@@ -32,7 +32,13 @@ from pathlib import Path
 from typing import Any
 
 from nurse_scheduling.ai.agent import Agent
-from nurse_scheduling.ai.agent_types import AgentMessageEnd, AgentProposal, AgentToolStart, AgentToolUse
+from nurse_scheduling.ai.agent_types import (
+    AgentMessageEnd,
+    AgentProposal,
+    AgentToolOutcome,
+    AgentToolStart,
+    AgentToolUse,
+)
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     SCHEDULE_CHANGED_EVENT,
@@ -116,6 +122,9 @@ async def run_case(
     pending = False
     errors = []
 
+    async def unsupported_optimizer(schedule_yaml: str, arguments: str) -> AgentToolOutcome:
+        return AgentToolOutcome("Optimizer execution is not supported by this testcase runner.", False)
+
     def assert_schedule():
         try:
             check_schedule(checks, before, schedule)
@@ -181,6 +190,9 @@ async def run_case(
                     attachments=attachments,
                     analysis=analysis,
                     timezone=_timezone(clock.date),
+                    execute_optimizer=(
+                        unsupported_optimizer if any(item.kind == "optimizer" for item in case.steps) else None
+                    ),
                 )
                 last_response = None
                 async with aclosing(stream):

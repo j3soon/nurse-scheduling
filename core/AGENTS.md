@@ -147,6 +147,12 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- AI test migration: follow the root `AGENTS.md` transition policy. Use only
+  focused, human-reviewed cases in `tests/ai/` for new behavior checks.
+  `tests/ai_eval/` and its ladder and receipt workflows below are legacy and
+  are not maintenance requirements for this branch. Remove the legacy tests,
+  references, and these transition instructions in the dedicated removal
+  branch after this branch is merged.
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Follow Pi agent v1.0.0 across all aspects of AI agent design and behavior.
   Add a limit or restriction only when a concrete service requirement makes it

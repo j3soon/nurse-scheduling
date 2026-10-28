@@ -30,7 +30,7 @@ from ruamel.yaml.error import YAMLError
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "fixtures"
 TESTCASES = ROOT / "testcases"
-KINDS = {"date", "yaml", "user", "tool", "assistant", "schedule"}
+KINDS = {"date", "yaml", "user", "tool", "assistant", "schedule", "optimizer"}
 
 
 class DefinitionError(ValueError):
@@ -89,10 +89,13 @@ def _strings(value: Any, label: str) -> None:
 
 def _schedule(value: Any, fixtures: Path) -> None:
     if not isinstance(value, dict) or len(value) != 1:
-        raise DefinitionError("schedule requires exactly one of unchanged, added, or equals")
+        raise DefinitionError("schedule requires exactly one of unchanged, added, equals, or allow_changes")
     if "unchanged" in value:
         if value["unchanged"] is not True:
             raise DefinitionError("schedule.unchanged must be true")
+    elif "allow_changes" in value:
+        if value["allow_changes"] is not True:
+            raise DefinitionError("schedule.allow_changes must be true")
     elif "equals" in value:
         value["equals"] = schedule_fixture(value["equals"], fixtures)
     elif "added" in value:
@@ -114,7 +117,9 @@ def _schedule(value: Any, fixtures: Path) -> None:
 
 def _step(number: int, raw: Any, fixtures: Path) -> Step:
     if not isinstance(raw, dict) or len(KINDS.intersection(raw)) != 1:
-        raise DefinitionError("each step requires exactly one of date, yaml, user, tool, assistant, schedule")
+        raise DefinitionError(
+            "each step requires exactly one of date, yaml, user, tool, assistant, schedule, optimizer"
+        )
     kind = next(iter(KINDS.intersection(raw)))
     value = raw[kind]
     options = {key: item for key, item in raw.items() if key != kind}
@@ -137,6 +142,9 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
             names = [names] if isinstance(names, str) else names
             _strings(names, "attachment")
             options["attachment"] = tuple(fixture_path(name, fixtures) for name in names)
+    elif kind == "optimizer":
+        if not isinstance(value, dict) or set(value) != {"invoked"} or value["invoked"] is not False:
+            raise DefinitionError("optimizer currently requires invoked: false. Optimizer execution is not supported.")
     elif kind == "assistant":
         if (
             not isinstance(value, dict)
@@ -188,9 +196,7 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
                 schedule_modes.update(step.value)
                 schedule_count += 1
                 if len(schedule_modes) > 1 or (schedule_modes != {"added"} and schedule_count > 1):
-                    raise DefinitionError(
-                        "schedule.unchanged and schedule.equals cannot be combined with other schedule assertions"
-                    )
+                    raise DefinitionError("schedule assertions cannot be combined unless all use added")
             steps.append(step)
         if not has_user or steps[-1].kind in {"date", "yaml"}:
             raise DefinitionError("testcase must contain a user turn and cannot end with configuration")

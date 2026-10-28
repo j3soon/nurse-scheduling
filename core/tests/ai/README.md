@@ -87,12 +87,20 @@ as an example. Each step has exactly one primary key:
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
 | `assistant` | Requires `contains_any`, a `judge` rubric, or both. Optional `case_sensitive` applies to matching. |
-| `schedule` | Requires `unchanged: true`, an `added` mapping, or `equals: <fixture.yaml>`. |
+| `schedule` | Requires `unchanged: true`, an `added` mapping, `equals: <fixture.yaml>`, or `allow_changes: true`. |
+| `optimizer` | Requires `invoked: false` to forbid optimizer calls during the preceding user turn. |
 
 Unknown fields fail validation, except tool argument fields, which depend on
 the tool being asserted. Attachments must exist inside `fixtures/`. Schedule
 fixtures can reference existing files within `core/tests/`, relative to
 `fixtures/`, and must contain YAML mappings. Duplicate YAML keys are rejected.
+
+Cases with an `optimizer` assertion expose the production optimizer tool.
+`optimizer: {invoked: false}` checks the entire preceding turn, regardless of
+assertion order. Any attempted optimizer call fails, including rejected calls
+and status requests. This assertion does not consume a chronological event.
+The runner returns an explicit unsupported-execution error if the tool is called.
+It does not launch solver jobs. `invoked: true` is not supported yet.
 
 Configuration affects the next user turn. Finish a turn's assertions before
 its next `date` or `yaml` step. Conversation history survives replacements.
@@ -137,7 +145,10 @@ the same provider. Other cases have no judge unless their assertion requests one
 
 Schedule assertions compare parsed YAML at the beginning and end of the turn.
 Formatting and mapping-key order do not matter. Without a schedule assertion,
-no schedule change is allowed. Multiple `added` steps combine into one expected
+no schedule change is allowed. `allow_changes: true` permits edits or unchanged
+data without checking the final contents. Production schedule validation still
+applies. It cannot be combined with other schedule assertions in the same turn.
+Multiple `added` steps combine into one expected
 change. Each listed object must match exactly, including all of its fields.
 For `people.items`, omitted `history`, `history: null`, and `history: []` are equivalent.
 Omitted `description`, `description: null`, and `description: ''` are also equivalent.

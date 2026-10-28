@@ -23,6 +23,8 @@ from copy import deepcopy
 from difflib import unified_diff
 from typing import Any
 
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL
+
 from .schema import Step, load_yaml
 
 
@@ -42,6 +44,13 @@ def _partial(expected: Any, observed: Any) -> bool:
 
 def check_event(step: Step, events: list[dict], cursor: int) -> int:
     """Consume the next matching event, allowing unrelated events in between."""
+    if step.kind == "optimizer":
+        calls = [event for event in events if event["kind"] == "tool" and event["name"] == OPTIMIZER_TOOL]
+        if calls:
+            raise AssertionError(
+                f"step {step.number}: expected no optimizer calls during this turn; observed {calls!r}"
+            )
+        return cursor
     for index in range(cursor, len(events)):
         event = events[index]
         if event["kind"] == "assistant" and (
@@ -113,6 +122,8 @@ def _normalize_fixture_defaults(schedule: Any) -> Any:
 
 def check_schedule(steps: list[Step], before: str, after: str) -> None:
     """Require a fixture, or remove declared additions and compare with the original."""
+    if any(step.value.get("allow_changes") is True for step in steps):
+        return
     expected = next((step.value["equals"] for step in steps if "equals" in step.value), None)
     if expected is not None:
         before = expected.read_text(encoding="utf-8")

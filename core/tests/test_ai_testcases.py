@@ -259,6 +259,101 @@ def settings():
     )
 
 
+@pytest.mark.parametrize(
+    "value", ["null", "{}", "{invoked: true}", "{invoked: 'false'}", "{invoked: 0}", "{invoked: false, typo: 1}"]
+)
+def test_invalid_optimizer_assertions(tmp_path, value):
+    with pytest.raises(DefinitionError, match="optimizer currently requires invoked: false"):
+        definition(tmp_path, f"steps: [{{user: hi}}, {{optimizer: {value}}}]")
+
+
+@pytest.mark.parametrize("value", ["false", "0", "'true'", "null"])
+def test_allow_schedule_changes_requires_true(tmp_path, value):
+    with pytest.raises(DefinitionError, match="schedule.allow_changes must be true"):
+        definition(tmp_path, f"steps: [{{user: hi}}, {{schedule: {{allow_changes: {value}}}}}]")
+
+
+@pytest.mark.parametrize(
+    "other", ["{unchanged: true}", "{added: {people.items: [{id: Alice}]}}", "{allow_changes: true}"]
+)
+def test_allow_schedule_changes_cannot_mix_assertions(tmp_path, other):
+    with pytest.raises(DefinitionError, match="cannot be combined"):
+        definition(tmp_path, f"steps: [{{user: hi}}, {{schedule: {{allow_changes: true}}}}, {{schedule: {other}}}]")
+
+
+@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("second_changes", [False, True])
+def test_allow_schedule_changes_is_optional_and_resets_each_turn(tmp_path, changed, second_changes):
+    case = definition(
+        tmp_path,
+        "steps: [{user: Edit if needed.}, {schedule: {allow_changes: true}}, {user: Do nothing.}]",
+    )
+    initial = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
+    edited = initial.replace("people:\n  items: []", "people:\n  items: [{id: Alice}]")
+    responses = []
+    if changed:
+        responses.append([tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))])
+    responses.append([TextDelta("Done."), ResponseEnd("stop")])
+    if second_changes:
+        responses.append(
+            [
+                tool_call(
+                    "write-2",
+                    "write",
+                    json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited.replace("Alice", "Bob")}),
+                )
+            ]
+        )
+    responses.append([TextDelta("Done."), ResponseEnd("stop")])
+    assert (
+        asyncio.run(run_case(case, ScriptedProvider(responses), settings(), FakeSandboxFactory())) is not second_changes
+    )
+    with pytest.raises(AssertionError, match="unexpected schedule changes"):
+        check_schedule([], initial, edited)
+
+
+@pytest.mark.parametrize("action", [None, "start", "status", "finish_now"])
+def test_optimizer_absence_checks_entire_turn_without_consuming_events(action):
+    step = Step(3, "optimizer", {"invoked": False}, {})
+    events = [{"kind": "assistant", "text": "Done."}]
+    assert check_event(step, events, 1) == 1
+    arguments = {} if action is None else {"action": action}
+    events.insert(0, {"kind": "tool", "name": "optimizer", "arguments": arguments})
+    with pytest.raises(AssertionError, match="expected no optimizer calls"):
+        check_event(step, events, len(events))
+
+
+@pytest.mark.parametrize("invoke", [False, True])
+def test_optimizer_absence_exposes_tool_and_rejects_attempts(tmp_path, capsys, invoke):
+    case = definition(
+        tmp_path,
+        """steps:
+  - user: Do not optimize.
+  - assistant: {contains_any: [Done]}
+  - optimizer: {invoked: false}
+  - user: Still do not optimize.
+  - optimizer: {invoked: false}
+""",
+    )
+
+    class Provider(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            assert any(tool["function"]["name"] == "optimizer" for tool in tools)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    responses = []
+    if invoke:
+        responses.append([tool_call("optimize", "optimizer", '{"action": "start"}')])
+    responses.extend([[TextDelta("Done."), ResponseEnd("stop")], [TextDelta("Done."), ResponseEnd("stop")]])
+    assert asyncio.run(run_case(case, Provider(responses), settings(), FakeSandboxFactory())) is not invoke
+    output = capsys.readouterr().out
+    if invoke:
+        assert "expected no optimizer calls during this turn" in output
+        assert "Optimizer execution is not supported" in output
+        assert "turn 2, step" not in output
+
+
 def test_production_execution_keeps_schedule_history_and_attachments(tmp_path):
     case = definition(
         tmp_path,
@@ -799,7 +894,8 @@ def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsy
         assert log == f"PASS {case.path} (1 turns); transcript: {transcript}\n"
     else:
         assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
-        assert case.steps[2].value["judge"] in log
+        rubric = next(step.value["judge"] for step in case.steps if step.kind == "assistant" and "judge" in step.value)
+        assert rubric in log
         assert "Semantic verdict." in log and "Judge request:" in log
     assert len(judge.requests) == 1
     assert all("current-schedule.yaml" not in str(message) for message in judge.requests[0])

@@ -1,0 +1,28 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - date: 2026-10-28T09:00:00+08:00
+  - user: >-
+      Build schedule data for next month. People are P1-P10.
+      A/D/E/N need 1/2/2/2 people daily. P1 is the head nurse and P2-P5 are
+      seniors. No primary shifts, histories, requests or holiday import.
+      Forbid N to D and N to E, limit consecutive workdays to five, and
+      balance total days off and days off on free days equally across people.
+  - schedule:
+      allow_changes: true
+  - optimizer:
+      invoked: false
+  - assistant:
+      count: 3
+      judge: >-
+        Pass when the response identifies and seeks clarification on all three
+        unresolved requirements:
+        (1) Whether the head nurse role implies scheduling rules or is information only.
+        (2) Whether senior status implies staffing or eligibility rules, such as
+        a minimum number of seniors per shift, or is information only.
+        (3) Whether any shift eligibility restrictions apply. A broad question
+        about role-based rules with eligibility examples satisfies this point.
+        Do not require a separate question for every person or shift.
+        Combined questions may satisfy multiple points. The response may include explanations,
+        options, other relevant questions, and suggested next steps.
+        Do not require a question-only response or exact wording.

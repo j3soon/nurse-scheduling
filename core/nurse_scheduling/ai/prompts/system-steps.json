@@ -715,47 +715,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "optimizer-goal",
-    "file": "steps/optimizer-goal.md",
-    "cases": [
-      "optimizer-goal-preserves-policy",
-      "optimizer-authorized-policy-change",
-      "optimizer-independent-request-check"
-    ],
-    "hypothesis": "Starts optimization goals with unchanged policy directly, while handling explicit edits and independent checks first.",
-    "sha256": "ef108b52850ee85e05e28427bcac9e28b7dbce0a2a04afd70691b15f0c0b9ece",
-    "evidence": [
-      {
-        "case": "optimizer-goal-preserves-policy",
-        "input_sha256": "5cbf9d428efcf194443b94f022a5d0a33ea307c3bea5542843ae0c2186e7b476",
-        "before": "3/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.31278434281673984,
-        "cost_target": 0.8,
-        "controls": [
-          {
-            "case": "optimizer-authorized-policy-change",
-            "input_sha256": "5abd93f7a9cbccdbbedc552c277a34ae18c2049dd98aaccbc48c1a9c2ebf9c60",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimizer-independent-request-check",
-            "input_sha256": "43d90a0587b1ef850759cc22c595bc54a034c7baeb9d58e626bdeca2a2cbcf2c",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
-      }
-    ]
-  },
-  {
     "id": "generated-downloads",
     "file": "steps/generated-downloads.md",
     "cases": [
@@ -1047,73 +1006,14 @@
   {
     "id": "autonomous-roster-validation",
     "file": "steps/autonomous-roster-validation.md",
-    "cases": [
-      "optimization-loop-outcome-after-edit",
-      "optimization-loop-offer-after-edit",
-      "optimization-loop-offer-accepted",
-      "optimization-loop-offer-declined",
-      "optimization-loop-outcome-holdout",
-      "new-schedule-policy-declined",
-      "result-policy-misses",
-      "optimization-loop-authorized-retry"
-    ],
-    "hypothesis": "Proposes or starts optimization and inspection for schedule outcomes, offers the loop after edits, and continues once authorized.",
-    "sha256": "90ec9f03e78eded9b7c6bde234570a1d2af7f3ea9edbdbfdd155d40381de63e9",
-    "evidence": [
-      {
-        "case": "optimization-loop-offer-after-edit",
-        "input_sha256": "d65e0f0370adc42cec1d2a93ad46fd5848bff01cbe22cae504e2f85d9887230f",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "comparison_passed": true,
-        "controls": [
-          {
-            "case": "new-schedule-policy-declined",
-            "input_sha256": "1c80ad006bb7d98953f8d0dbb4f72a9dcaf6f0901157bb94837a918b20340f75",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-authorized-retry",
-            "input_sha256": "b4477054f49e13bd73ba37e34b3bc596c0df9082fc4dba9cff998e123f6a4659",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-offer-accepted",
-            "input_sha256": "dede43d322fdf4b044309a450edd9fd41a0206c9964ed08344a83eecb30cd885",
-            "before": "0/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-offer-declined",
-            "input_sha256": "1af84f8fddccc52c48b1b72d0b93f5be5b4b6401ea51e5b064ba3cd7941367d1",
-            "before": "0/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-outcome-after-edit",
-            "input_sha256": "63dc71a507c930d963588391238aeba13367f7a484539baeb114022691c88353",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-outcome-holdout",
-            "input_sha256": "29645a231952da0d52b9492f21f44b5fbcb6f1f4dc4daf8c91175452443cf9db",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "result-policy-misses",
-            "input_sha256": "340c9a6cd2e4dfdcf63f62c2821fc3ade39208a4012d1f8c046be1156fbc2a57",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Offers to optimize the changed schedule instead of the proposal."
-      }
+    "cases": [],
+    "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit schedule data. Optimization-loop coverage awaits optimizer support in the new tester.",
+    "sha256": "7bb8116be6a667330f1faaae1d3c526aee87f9d373b57d93cb946bc64cf83084",
+    "evidence": [],
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/02_schedule-data-guidance.yaml",
+      "basics/02_explicit-people-edit.yaml"
     ]
   },
   {

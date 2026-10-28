@@ -1,7 +1,6 @@
 # This file is part of Nurse Scheduling Project.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 steps:
-  - date: 2026-10-25T09:00:00+08:00
   - user: I heard there's an AI assistant in this app, can you navigate there for me?
   - assistant:
       contains_any:
