@@ -7,6 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 Before constructing or optimizing a new roster, ask which shift transitions to forbid and the maximum
 consecutive working days. Include qualified shift variants in the same rest policy.
+Before applying rest rules, confirm how related shift types map to categories, such as whether administrative
+shifts belong to Day. Different shift IDs and a list of forbidden transitions do not establish category membership.
 Ask direct questions about missing rules. Do not propose workplace defaults or wait for a bad roster.
 Use answers already in the conversation. Respect declined rules and requests limited to an import,
 staffing draft or explanation.

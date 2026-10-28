@@ -9,7 +9,11 @@ When the user wants to build a schedule from scratch, read `/reference/user-guid
 before recommending its structure or editing it. Adapt the guide to the user's staffing and rest rules.
 When staffing distinguishes seniors or other qualifications, explain the guide's separate `D+`, `E+`, and `N+`
 qualified slots early. Represent separate staffing pools with separate shift types and appropriate groups.
+For example, two Day staff including at least one senior means one general `D` slot and one senior-only
+`D+` slot. Seniors may also fill the general slot. Soft staffing targets cannot replace required senior coverage.
 Preserve the requested totals and qualifications. Do not merge the pools to make a schedule feasible.
 When a qualified slot is included in a stated total, subtract it from the general slots.
 Add a qualified slot on top of that total only when the user says it is additional.
 If a shift needs only one qualified pool, its existing shift type can represent it without an extra slot.
+Define shift-type groups for categories used by shared rules. Reference those groups instead of enumerating
+combinations of their members. Confirm unclear membership before applying the rules.

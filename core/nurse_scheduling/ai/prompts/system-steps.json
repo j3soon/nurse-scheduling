@@ -807,7 +807,7 @@
       "senior-additional-day-slot"
     ],
     "hypothesis": "Reads the real-schedule guide, explains qualified slots, and preserves stated totals when a qualified slot is included.",
-    "sha256": "88b5ef7a73a54753ff5cbc6083b17d80426ea1fe9e2e14f0aed418aafab27391",
+    "sha256": "b8abcb9d7227d6b195ced9ee9b3aee6a2a37aafb69c04d1e28a45ce084d4e730",
     "evidence": [
       {
         "case": "senior-included-in-day-total",
@@ -834,6 +834,9 @@
         "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
         "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
       }
+    ],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
     ]
   },
   {
@@ -909,7 +912,7 @@
       "new-schedule-policy-declined"
     ],
     "hypothesis": "Asks about missing rest rules before building a roster without inventing workplace defaults.",
-    "sha256": "783fdb4a391187e258298fbb49c474d4bbce9472b7e298af0f1644c132692ef9",
+    "sha256": "3be98edce4a4f318f209db58e47e4e0223f629bb250f40d05a72cc6fe68d177f",
     "evidence": [
       {
         "case": "new-schedule-rest-intake",
@@ -929,7 +932,21 @@
         "note": "Full-prompt ablation of this step only. Saved outputs were regraded after requiring a direct question about the consecutive-work limit. Original testcase and fixture fingerprints were verified first. Questions, prompts, tools and raw measurements are unchanged. The baseline suggests defaults or asks only whether to add rest rules. Real provider and E2B commands, four case jobs, no optimizer jobs or cost claim."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ]
+  },
+  {
+    "id": "new-roster-shift-stability",
+    "file": "steps/new-roster-shift-stability.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ],
+    "hypothesis": "Clarifies optional same-category succession rewards independently of monthly primary shifts and workload balance.",
+    "sha256": "610bfda32b9481ac2effbf00df4e9c44deda207a423b61b9b1c5a86b3e6de76b",
+    "evidence": []
   },
   {
     "id": "new-roster-fairness-intake",

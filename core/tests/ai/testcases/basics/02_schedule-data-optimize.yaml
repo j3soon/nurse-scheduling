@@ -1,0 +1,25 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - date: 2026-10-28T09:00:00+08:00
+  - user: >-
+      Build schedule data for next month. People are P1-P10.
+      A/D/E/N need 1/2/2/2 people daily. P1 and P2 are head nurses and P3-P6 are
+      seniors. No primary shifts, histories, requests or holiday import.
+      Forbid N to D and N to E, limit consecutive workdays to five, and
+      balance total days off and days off on free days equally across people.
+      A is restricted to head nurses, D/E/N each requires at least one senior nurse.
+  - schedule:
+      allow_changes: true
+  - optimizer:
+      invoked: false
+  - assistant:
+      count: 2
+      judge: >-
+        Pass when the response seeks clarification on both points:
+        (1) Whether A counts as Day for the rest rules, including the forbidden
+        transition after a Night shift.
+        (2) Whether to encourage consecutive days in the same shift category,
+        even though the user declined monthly primary shifts. This must be an
+        optional preference, not an invented hard ban on switching shifts.
+        Combined questions are fine. Do not require exact wording or question-only replies.
