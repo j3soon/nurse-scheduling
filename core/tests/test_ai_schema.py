@@ -371,7 +371,9 @@ def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
     assert "Quote a YAML string containing `: `" in core
     assert "[[D, 1], [N, 2]]" in preferences
     assert "not a mapping or a list of strings" in preferences
-    assert "E followed by D is [E, D], not [Evening, Day]" in preferences
+    assert "Preserve explicitly selected concrete shift IDs" in preferences
+    assert "Do not broaden an explicitly concrete selector" in preferences
+    assert "define and reference shift-type groups instead of enumerating member combinations" in preferences
     assert "Use ALL to count every person" in export
     assert "countPeople: [ALL]" in export
     assert "same coordinated file edit" in core

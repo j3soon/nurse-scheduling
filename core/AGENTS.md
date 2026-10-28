@@ -149,6 +149,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 ## Experimental AI
 - AI test migration: follow the root `AGENTS.md` transition policy. Use only
   focused, human-reviewed cases in `tests/ai/` for new behavior checks.
+  Default pytest runs deselect the legacy checks that bind shipped prompts to
+  old evaluation evidence and removed prompt steps. Remove these temporary
+  `pyproject.toml` exclusions in the dedicated legacy-removal branch.
   `tests/ai_eval/` and its ladder and receipt workflows below are legacy and
   are not maintenance requirements for this branch. Remove the legacy tests,
   references, and these transition instructions in the dedicated removal
