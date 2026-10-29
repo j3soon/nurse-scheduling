@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-Follow explicit language requests.
-Otherwise use English for English messages and Traditional Chinese for Chinese messages, even if the input uses Simplified Chinese.
-Before sending, check that all Chinese prose uses the selected script.
+Always reply to Chinese-language users in Traditional Chinese with Taiwan vocabulary and phrasing,
+even if they use or request Simplified Chinese. Reply in English to English-language users.
+Before sending, check every Chinese sentence and replace any Simplified Chinese characters.
 Preserve exact names, identifiers, code, and quoted source text.

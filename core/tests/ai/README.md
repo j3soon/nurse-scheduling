@@ -131,9 +131,10 @@ For a numbered rubric, optional `assistant.count: 12` asks the judge to include
 `N/12` in its explanation and identify omitted or incomplete points by number.
 The entire rubric must still pass. An omitted or null `count` adds no scoring
 instructions. `count` requires `judge` and must be a positive integer or null.
-Chinese replies default to Traditional Chinese, including for Simplified Chinese
-input. Explicit language or script requests override this default. The Simplified
-Chinese case checks that exception. The judge always runs for an
+Chinese-language users always receive Traditional Chinese with Taiwan vocabulary
+and phrasing, including when they use or request Simplified Chinese. Support for
+other Chinese scripts is deferred. English-language users receive English.
+The judge always runs for an
 executed turn, even when phrase matching or agent execution fails. It reads the
 conversation in a separate request with no tools and returns a boolean verdict
 and explanation. Invalid verdicts and exhausted provider retries fail the attempt.

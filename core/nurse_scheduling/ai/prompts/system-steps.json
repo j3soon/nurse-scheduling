@@ -30,37 +30,21 @@
     "cases": [],
     "reviewed_cases": [
       "basics/01_lang_traditional_chinese.yaml",
-      "basics/01_lang_simplified_chinese.yaml",
       "basics/01_lang_english.yaml"
     ],
-    "hypothesis": "Uses Traditional Chinese for Chinese input unless another language or script is explicitly requested, while preserving English replies.",
-    "sha256": "322849b57d3429a2f7bc8415bf0511846c5ebf5170e7c906a771f720e8c65941",
+    "hypothesis": "Always uses Taiwan Traditional Chinese for Chinese-language users, including Simplified Chinese requests, while preserving English replies.",
+    "sha256": "85a0dbdb50ef021a1410b6c713d1d9aff8ebe0dbda280247760367c59b104523",
     "evidence": [
       {
         "case": "basics/01_lang_traditional_chinese.yaml",
-        "input_sha256": "e6566356b1456fbfe9efee274b207a8e3917797e638a9638b9a6132d20e4f8e4",
-        "before": "0/3",
-        "after": "3/3",
+        "input_sha256": "890d005312dd05ca0befad64125df61e16c472d2b08ed1c492a883ace5dfc213",
+        "before": "14/24",
+        "after": "16/24",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "basics/01_lang_simplified_chinese.yaml",
-            "input_sha256": "64c2a8f8562e545a50cfbbc37909975f97ff19a6efb6aa6f5db3963ab4109152",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "basics/01_lang_english.yaml",
-            "input_sha256": "438fd9cd9af1f5fb9f9b194868a963382a752c0a72070f2fe7d093211248a857",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Regraded six preserved conversations per case with the current assertions and judge after fixing provider retries. Traditional Chinese improves from 0/3 to 3/3. English and explicit Simplified Chinese controls remain 3/3 in both versions. No new agent rollouts or judge request errors."
+        "infrastructure_errors": 3,
+        "note": "Fixed 24 conversations per revision. Before: 14 pass, 7 script failures, 3 judge/provider errors. After: 16 pass, 8 script failures, no errors. Fully graded pass rates are both 66.7%, two-sided Fisher exact p=1.0. English control passes 3/3 after. Retained as an explicit policy change, not a demonstrated reliability improvement. Baseline concurrency up to eight, follow-up four because secondary health changed. No performance claim."
       }
-    ],
-    "comparison_mode": "ablation"
+    ]
   },
   {
     "id": "app-guide",
