@@ -21,7 +21,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { applyOptimizationEvent, appendOptimizationResult } from './optimizerEvents';
-import { parseOptimizerMessage } from './optimizerMessage';
+import { optimizationMessage, parseOptimizerMessage } from './optimizerMessage';
 import type { SessionEvent } from './sessionEvents';
 
 describe('optimizer event projection', () => {
@@ -33,10 +33,15 @@ describe('optimizer event projection', () => {
     const early = applyOptimizationEvent(null, progress);
     const active = applyOptimizationEvent(early, {
       type: 'optimization',
-      activity: { jobId: 'job-1', state: 'running', terminal: false, downloadable: false },
+      activity: { jobId: 'job-1', state: 'running', terminal: false, downloadable: false,
+        startedAt: '2026-10-30T00:00:00Z', finishNowRequestedBy: 'user', earlyCompletionAvailable: false },
     });
 
     expect(active?.points).toEqual([progress.activity.point]);
+    expect(applyOptimizationEvent(active, { ...progress, activity: { ...progress.activity,
+      point: { currentBestScore: 1, elapsedSeconds: 3 } } })).toMatchObject({
+      startedAt: '2026-10-30T00:00:00Z', finishNowRequestedBy: 'user', earlyCompletionAvailable: false,
+    });
     expect(applyOptimizationEvent(active, progress)).toBe(active);
     expect(applyOptimizationEvent(active, {
       type: 'optimization_progress',
@@ -72,4 +77,16 @@ describe('optimizer event projection', () => {
       ...completion, activity: { ...completion.activity, jobId: 'new-job' },
     })).toBeNull();
   });
+});
+
+it('shows final elapsed time and request attribution separately from the actual termination reason', () => {
+  const message = optimizationMessage({ jobId: 'job-1', state: 'completed', terminal: true, downloadable: true,
+    elapsedSeconds: 83.9, finishNowRequestedBy: 'user',
+    result: { outcome: 'optimal', terminationReason: 'optimality_proven' } });
+  expect(parseOptimizerMessage(message).details).toEqual([
+    { label: 'Elapsed time', value: '1m 23s' },
+    { label: 'Finish now requested by', value: 'user' },
+    { label: 'Outcome', value: 'optimal' },
+    { label: 'Termination reason', value: 'optimality_proven' },
+  ]);
 });

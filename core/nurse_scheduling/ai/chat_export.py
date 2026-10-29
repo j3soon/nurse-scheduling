@@ -619,6 +619,8 @@ def _message_files(message, urls=None):
 
 
 _DETAIL_LABELS = {
+    "Elapsed time",
+    "Finish now requested by",
     "Outcome",
     "Final score",
     "Solver",

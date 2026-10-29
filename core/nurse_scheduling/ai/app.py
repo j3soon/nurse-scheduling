@@ -864,6 +864,26 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    @app.post(
+        "/sessions/{session_id}/optimizations/{job_id}/finish-now",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Depends(require_auth), Depends(restore_session)],
+    )
+    async def finish_optimization_now(
+        session_id: str,
+        job_id: str,
+        owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
+    ) -> Response:
+        """Request early completion for the displayed job and identify the user trigger."""
+        store.require_owned(session_id, owner)
+        try:
+            await session_optimizer.finish_now(session_id, job_id, requested_by="user")
+        except OptimizerJobUnavailable as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OptimizerError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
     @app.get(
         "/sessions/{session_id}/optimizations/{job_id}/xlsx",
         dependencies=[Depends(require_auth), Depends(restore_session)],

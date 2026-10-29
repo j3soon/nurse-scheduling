@@ -875,6 +875,8 @@ describe('AI client', () => {
   it('decodes optimizer provenance and preserves a zero final score', async () => {
     const payload = {
       job_id: 'opt-1', state: 'completed', terminal: true, downloadable: true,
+      started_at: '2026-10-30T00:00:10Z', finished_at: '2026-10-30T00:01:33Z',
+      elapsed_seconds: 83, finish_now_requested_by: 'user', controls: { early_completion_available: false },
       result: { outcome: 'optimal', score: 0, solver_status: 'OPTIMAL', termination_reason: 'completed' },
       request: { solver: 'ortools/cp-sat', timeout_seconds: 300 },
       backend: { url: 'http://optimizer:8000', app_version: 'v0.4.3', request_timeout_seconds: 30,
@@ -886,6 +888,8 @@ describe('AI client', () => {
     const onEvent = vi.fn();
     await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
     expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'optimization', activity: expect.objectContaining({
+      startedAt: '2026-10-30T00:00:10Z', finishedAt: '2026-10-30T00:01:33Z',
+      elapsedSeconds: 83, finishNowRequestedBy: 'user', earlyCompletionAvailable: false,
       result: { outcome: 'optimal', score: 0, solverStatus: 'OPTIMAL', terminationReason: 'completed' },
       request: { solver: 'ortools/cp-sat', timeoutSeconds: 300 },
       backend: expect.objectContaining({ url: 'http://optimizer:8000', appVersion: 'v0.4.3', requestTimeoutSeconds: 30,
@@ -917,7 +921,7 @@ describe('AI client', () => {
 
     expect(eventIds).toEqual([1, 2, 3, 4, 5]);
     expect(events).toEqual([
-      { type: 'optimization', activity: { jobId: 'opt-1', state: 'running', terminal: false, downloadable: false } },
+      { type: 'optimization', activity: { jobId: 'opt-1', state: 'running', terminal: false, downloadable: false, earlyCompletionAvailable: false } },
       { type: 'optimization_progress', activity: {
         jobId: 'opt-1', point: { currentBestScore: 23, elapsedSeconds: 2, source: 'solver', solutionIndex: null, commentCount: null },
       } },

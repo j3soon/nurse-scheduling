@@ -49,8 +49,9 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 
 import { retentionLabel } from './chatPresentation';
+import OptimizationElapsed from './OptimizationElapsed';
 
-import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, getChatExportUrl, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
+import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, finishOptimizationNow, getChatExportUrl, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
 
 import { messageId } from './assistantEvents';
 
@@ -230,6 +231,7 @@ export default function ExperimentalAiPage() {
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [cancellingOptimizationId, setCancellingOptimizationId] = useState<string | null>(null);
+  const [finishingOptimizationId, setFinishingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -285,6 +287,7 @@ export default function ExperimentalAiPage() {
   const resetChatUi = useCallback(() => {
     setDownloadingOptimizationId(null);
     setCancellingOptimizationId(null);
+    setFinishingOptimizationId(null);
     setIsExportingChat(false);
     setChatExportNotice(null);
     chatExportFrameRef.current?.remove();
@@ -336,6 +339,7 @@ export default function ExperimentalAiPage() {
     // Reset the pending request when the server reports a different optimizer job.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCancellingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
+    setFinishingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
   }, [activeOptimization?.jobId]);
 
   useTabSwitchWarning(draft.trim().length > 0 || selectedAttachments.length > 0);
@@ -852,6 +856,20 @@ export default function ExperimentalAiPage() {
       }
     }
   };
+  const finishActiveOptimization = async () => {
+    const session = captureSession();
+    if (session === null || activeOptimization === null || finishingOptimizationId !== null) return;
+    const jobId = activeOptimization.jobId;
+    setFinishingOptimizationId(jobId);
+    try {
+      await finishOptimizationNow(session.id, jobId, authToken, session.endpoint);
+    } catch (finishError) {
+      if (session.ownsConversation()) {
+        setFinishingOptimizationId(current => current === jobId ? null : current);
+        reportRequestError(finishError, 'The optimizer could not finish early.');
+      }
+    }
+  };
   const toggleDictation = () => {
     if (isListening) {
       speechRecognitionRef.current?.stop();
@@ -1332,6 +1350,7 @@ export default function ExperimentalAiPage() {
           >
             <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
             <span>Optimizer running in the background · {activeOptimization.state}</span>
+            <OptimizationElapsed key={activeOptimization.jobId} createdAt={activeOptimization.createdAt} startedAt={activeOptimization.startedAt} />
             {activeOptimization.points.length > 0 && (
               <div className="ml-auto flex items-center gap-2 text-violet-800">
                 <span className="font-semibold tabular-nums">
@@ -1344,9 +1363,19 @@ export default function ExperimentalAiPage() {
             )}
             <button
               type="button"
+              onClick={() => void finishActiveOptimization()}
+              disabled={!activeOptimization.earlyCompletionAvailable || Boolean(activeOptimization.finishNowRequestedBy)
+                || finishingOptimizationId === activeOptimization.jobId || cancellingOptimizationId === activeOptimization.jobId
+                || activeOptimization.state === 'cancelling' || isReconnecting}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+            >
+              {finishingOptimizationId === activeOptimization.jobId || activeOptimization.finishNowRequestedBy ? 'Finishing…' : 'Finish now'}
+            </button>
+            <button
+              type="button"
               onClick={() => void cancelActiveOptimization()}
               disabled={cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' || isReconnecting}
-              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
             >
               <FiSquare aria-hidden="true" className="h-3 w-3" />
               {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? 'Cancelling optimizer…' : 'Cancel optimizer'}

@@ -90,7 +90,12 @@ async function renderingRequest(request: Record<string, unknown>, timeoutMs = 15
 
 function scenario(variant: typeof variants[number]): Snapshot {
   const snapshot: Snapshot = structuredClone(fixture);
-  if (variant === 'rich') return snapshot;
+  if (variant === 'rich') {
+    const completion = snapshot.events.find(event => event.type === 'optimization')!;
+    Object.assign(completion.data, { elapsed_seconds: 83, finish_now_requested_by: 'user',
+      started_at: '2026-10-30T00:00:10Z', finished_at: '2026-10-30T00:01:33Z' });
+    return snapshot;
+  }
   const run = snapshot.runs[0];
   snapshot.runs = [run];
   snapshot.events = snapshot.events.slice(0, snapshot.events.findIndex(event => event.type === 'reasoning'));

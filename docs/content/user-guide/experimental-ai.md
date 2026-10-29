@@ -47,12 +47,15 @@ Ask the assistant to optimize the current schedule and describe the result or
 improve a specific outcome. The assistant starts the run in the background, so
 you can continue chatting while it solves.
 
-- Ask it to **finish now** to request the best solution currently available.
-- A small status indicator remains above the message box while optimization is
-  running.
+- Click **Finish now** in the optimizer status box, or ask the assistant to
+  finish now, to request the best solution currently available. The button shows
+  **Finishing…** while the optimizer prepares its output. **Cancel optimizer**
+  cancels the job instead.
+- The status box shows elapsed running time. Queued jobs show waiting time.
 - Foreground commands such as `bash` appear in the answer activity. The status
   indicator above the message box is reserved for optimizer runs.
-- When the run ends, the chat records its outcome, score, solver and timeout,
+- When the run ends, the chat records its elapsed time, who requested early
+  completion, its termination reason, outcome, score, solver and timeout,
   backend URL and version, and any claimed performance. It offers the result
   workbook as a download. The
   assistant receives the score and a copy of the workbook in its workspace. It

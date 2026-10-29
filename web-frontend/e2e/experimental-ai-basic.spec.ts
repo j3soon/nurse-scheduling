@@ -21,7 +21,8 @@
 
 import { expect, Page, test } from '@playwright/test';
 import { createServer, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 const FRONTEND_TIMEZONE = 'America/Los_Angeles';
@@ -1027,6 +1028,75 @@ test('downloads a completed background optimization from chat', async ({ page })
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('optimized-schedule--browser.xlsx');
   expect(await readFile(await download.path())).toEqual(workbookBytes);
+});
+
+for (const touch of [false, true]) test.describe(touch ? 'phone optimizer controls' : 'desktop optimizer controls', () => {
+  if (touch) test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('finishes the background optimizer early and retains timing and user intent after reload', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-30T00:00:20Z') });
+    const running = {
+      job_id: 'opt-finish', state: 'running', terminal: false, downloadable: false,
+      created_at: '2026-10-30T00:00:00Z', started_at: '2026-10-30T00:00:10Z',
+      controls: { early_completion_available: true },
+    };
+    const backend = await mockAiBackend(page, ['Optimization started.'], false, 'finish-token', [{ type: 'optimization', data: running }]);
+    let requests = 0;
+    await page.route('**/ai/sessions/*/optimizations/opt-finish/finish-now', async route => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers().authorization).toBe('Bearer finish-token');
+      requests += 1;
+      if (requests === 1) {
+        await route.fulfill({ status: 502, json: { detail: 'The optimizer did not accept the finish-now request.' } });
+        return;
+      }
+      backend.publishEvent('optimization', { ...running, finish_now_requested_by: 'user', controls: { early_completion_available: false } });
+      await route.fulfill({ status: 202 });
+    });
+    await page.goto('/experimental-ai');
+    await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+    await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('finish-token');
+    await page.getByRole('checkbox', { name: /remember on this device/i }).check();
+    await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const finish = page.getByRole('button', { name: 'Finish now', exact: true });
+    await expect(finish).toBeEnabled();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await expect(page.getByText('Elapsed: 10s', { exact: true })).toBeVisible();
+    await page.clock.runFor(2000);
+    await expect(page.getByText('Elapsed: 12s', { exact: true })).toBeVisible();
+    const artifactDir = path.resolve(__dirname, '../../artifacts/ai-optimizer', test.info().project.name, touch ? 'phone' : 'desktop');
+    await mkdir(artifactDir, { recursive: true });
+    await page.getByRole('button', { name: 'Cancel optimizer' }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifactDir, 'running.png') });
+    if (touch) await finish.tap(); else await finish.click();
+    await expect(page.getByText('The optimizer did not accept the finish-now request.', { exact: true })).toBeVisible();
+    await expect(finish).toBeEnabled();
+    if (touch) await finish.tap(); else await finish.click();
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Cancel optimizer' })).toBeEnabled();
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
+    await expect.poll(() => backend.hasWaitingReader()).toBe(true);
+    backend.publishEvent('optimization', { ...running, state: 'completed', terminal: true, downloadable: true,
+      finished_at: '2026-10-30T00:01:33Z', elapsed_seconds: 83, finish_now_requested_by: 'user',
+      controls: { early_completion_available: false }, request: { timeout_seconds: 300 },
+      result: { outcome: 'feasible', score: 17, solver_status: 'FEASIBLE', termination_reason: 'user_requested' } });
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toHaveCount(0);
+    const block = page.locator('article').filter({ hasText: 'Optimization finished. Download' });
+    await expect(block).toContainText('Elapsed time: 1m 23s');
+    await expect(block).toContainText('Finish now requested by: user');
+    await expect(block).toContainText('Termination reason: user_requested');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await block.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifactDir, 'completed.png') });
+    await page.clock.runFor(3000);
+    await expect(block).toContainText('Elapsed time: 1m 23s');
+    expect(requests).toBe(2);
+    expect(backend.messageBodies).toHaveLength(1);
+  });
 });
 
 test('cancels the background optimizer from its status box without asking the agent', async ({ page }) => {

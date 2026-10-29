@@ -213,6 +213,18 @@ updates and the cancellation summary arrive on the session stream. Cancellation
 uses no model call or sandbox, and cancelled jobs do not start a result review.
 It leaves an active chat response running.
 
+**Finish now** posts to `/sessions/{id}/optimizations/{job_id}/finish-now` through
+that same transport. The agent uses `optimizer(action="finish_now")`. Both paths
+record `finish_now_requested_by` as `user` or `agent` for the result review and
+chat archive. The solver's `termination_reason` remains authoritative, including
+when it finishes before the control request returns. A failed request allows a
+retry. Repeated requests do not resubmit an accepted control.
+
+Status events retain backend creation, start, and finish timestamps. The widget
+updates elapsed running time locally each second and shows waiting time before
+a job starts. Completion events, agent reviews, and exports include
+`elapsed_seconds`, measured from the backend start to finish timestamps.
+
 <figure markdown="1" id="ai-optimizer">
 
 **Figure 5. Independent optimization and serialized result review.**

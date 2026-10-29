@@ -62,6 +62,12 @@ export interface OptimizationActivity {
   state: string;
   terminal: boolean;
   downloadable: boolean;
+  createdAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  elapsedSeconds?: number;
+  finishNowRequestedBy?: 'user' | 'agent';
+  earlyCompletionAvailable?: boolean;
   result?: { outcome?: string; score?: number; solverStatus?: string; terminationReason?: string };
   error?: { code?: string; message?: string };
   request?: { solver?: string; timeoutSeconds?: number };
@@ -285,6 +291,12 @@ interface SsePayload {
   request?: unknown;
   backend?: unknown;
   progress?: unknown;
+  created_at?: unknown;
+  started_at?: unknown;
+  finished_at?: unknown;
+  elapsed_seconds?: unknown;
+  finish_now_requested_by?: unknown;
+  controls?: unknown;
   used_chars?: unknown;
   max_chars?: unknown;
   dropped?: unknown;
@@ -492,7 +504,15 @@ function optimizationDetails(payload: SsePayload): Partial<OptimizationActivity>
   const backend = record(payload.backend);
   const claimed = record(backend.claimed_performance);
   const score = numberField(claimed.score);
+  const timestamp = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined;
   return {
+    createdAt: timestamp(payload.created_at),
+    startedAt: timestamp(payload.started_at),
+    finishedAt: timestamp(payload.finished_at),
+    elapsedSeconds: numberField(payload.elapsed_seconds),
+    finishNowRequestedBy: payload.finish_now_requested_by === 'user' || payload.finish_now_requested_by === 'agent'
+      ? payload.finish_now_requested_by : undefined,
+    earlyCompletionAvailable: record(payload.controls).early_completion_available === true,
     ...(payload.result ? { result: {
       outcome: textField(result.outcome),
       score: numberField(result.score),
@@ -997,6 +1017,18 @@ export async function cancelOptimization(
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken),
+  });
+  if (!response.ok) throw await responseError(response);
+}
+
+export async function finishOptimizationNow(
+  sessionId: string,
+  jobId: string,
+  authToken: string | null,
+  endpoint = getAiBaseUrl(),
+): Promise<void> {
+  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/finish-now`, {
+    method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
 }

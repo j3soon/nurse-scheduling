@@ -55,6 +55,7 @@ export function applyOptimizationEvent(
     ? previous.filter((_, index) => index % 2 === 0 || index === previous.length - 1)
     : previous;
   return {
+    ...current,
     jobId,
     state: current?.state ?? 'running',
     terminal: false,

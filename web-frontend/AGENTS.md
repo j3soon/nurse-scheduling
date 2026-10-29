@@ -238,6 +238,8 @@ A cursor-only event need not rerender the chat or restart its debounced save.
 When adding AI session events, update the SSE decoder, chat hook callback dispatch,
 assistant reducer, saved transcript projection, and exports together. Check the
 visible browser result because decoder and reducer tests do not cover dispatch.
+Optimizer progress events must preserve the current job's timestamps, controls,
+and early-completion request attribution.
 When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 `chatConversation.ts`. Otherwise a reload discards the saved browser chat.
 
