@@ -247,6 +247,7 @@ export default function ExperimentalAiPage() {
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
   const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
   const [selection, setSelection] = useState<ModelSelection>();
+  const [modelControlsKey, setModelControlsKey] = useState(0);
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
   const [chatExportNotice, setChatExportNotice] = useState<string | null>(null);
@@ -676,6 +677,7 @@ export default function ExperimentalAiPage() {
       const entry = readChatHistory().find(entry => chatKey(entry.conversation) === key);
       if (!entry || (entry.conversation.sessionId === activeSessionId && entry.conversation.endpoint === aiEndpoint)) return;
       if (!discardDraft()) return;
+      setModelControlsKey(key => key + 1);
       restoreConversation(entry.conversation, true);
       activateAiEndpoint(entry.conversation.endpoint);
       if (entry.conversation.endpoint !== aiEndpoint) setBackendVersion(entry.conversation.backendVersion);
@@ -697,6 +699,7 @@ export default function ExperimentalAiPage() {
     if (isStreaming || !discardDraft()) return;
     if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
     optimizationDownloadUrlRef.current = null;
+    setModelControlsKey(key => key + 1);
     newConversation();
   };
 
@@ -1424,6 +1427,7 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
+          key={modelControlsKey}
           endpoint={aiEndpoint} token={authToken} sessionId={activeSessionId} disabled={conversationUnavailable}
           modelLocked={messages.some(message => message.request?.active)} runActive={isStreaming}
           onChange={setSelection}

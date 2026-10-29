@@ -247,6 +247,8 @@ Store AI chat history with the saving frontend `appVersion`, without a separate
 numeric storage version.
 
 When switching saved AI chats, preserve browser schedule data during event replay.
+Reset pending model and reasoning choices on explicit chat switches. Preserve
+choices made while the current conversation creates its first session.
 Keep local history expiry separate from backend session expiry. Test that forgetting
 an open chat also prevents later saves and pagehide from recreating its record.
 Scope transcript assertions to the Chat messages region when history titles repeat

@@ -35,10 +35,18 @@ for (const phone of [false, true]) {
       if (request.method() !== 'GET') writes.push(`${request.method()} ${path}`);
       const json = (body: unknown) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
       if (path.endsWith('/capabilities')) return json({
-        app_version: 'test', session_retention_seconds: 2592000,
+        app_version: 'test', session_retention_seconds: 2592000, model_selection: true,
         auth: { required: false },
         file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
       });
+      if (path.endsWith('/models')) return json({ default_model: 'fast', models: [
+        { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }] },
+        { id: 'deep', name: 'Deep', default_reasoning: 'high', reasoning_options: [{ id: 'high', label: 'High' }] },
+      ] });
+      if (path.endsWith('/model-selection')) {
+        if (request.method() === 'PUT') return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ detail: 'Model is fixed' }) });
+        return json({ model: 'fast', reasoning: 'default', locked: true });
+      }
       if (path.endsWith('/uploads')) return json([]);
       if (path.endsWith('/events')) {
         if (replayed) return route.fulfill({ contentType: 'text/event-stream', body: ': heartbeat\n\n' });
@@ -71,9 +79,16 @@ for (const phone of [false, true]) {
       })) }));
     });
     await page.goto(`${baseURL}/experimental-ai`);
+    await expect(page.getByLabel('AI model')).toBeEnabled();
+    await page.getByLabel('AI model').selectOption('deep');
     const history = page.getByRole('complementary', { name: 'Recent chats' });
     if (phone) await history.getByRole('button', { name: 'Recent chats (2)' }).click();
     await history.getByRole('button', { name: /^Review Ward A/ }).click();
+    await expect(page.getByLabel('AI model')).toHaveValue('fast');
+    await expect(page.getByLabel('AI model')).toBeDisabled();
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue this chat.');
+    await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).clear();
     await expect(page.getByText('Earlier answer for Ward A.')).toBeVisible();
     await expect.poll(() => page.evaluate(() => (
       JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!).appVersion

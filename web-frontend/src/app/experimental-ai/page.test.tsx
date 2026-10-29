@@ -235,6 +235,33 @@ describe('ExperimentalAiPage', () => {
     return conversation;
   };
 
+  it.each(['model', 'reasoning'])('restores a recent chat without saving an unsent %s choice', async choice => {
+    seedRecentChat();
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
+    mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [
+        { id: 'default', label: 'Default' }, { id: 'high', label: 'High' },
+      ] },
+      { id: 'deep', name: 'Deep', default_reasoning: 'high', reasoning_options: [{ id: 'high', label: 'High' }] },
+    ] });
+    mockGetSessionModelSelection.mockResolvedValue({ selection: { model: 'fast', reasoning: 'default' }, locked: true });
+    mockUpdateSessionModelSelection.mockRejectedValue(new MockAiHttpError('Model is fixed', 409));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText(choice === 'model' ? 'AI model' : 'Reasoning'), choice === 'model' ? 'deep' : 'high');
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(within(history).getByRole('button', { name: /^Review older-session/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('AI model')).toHaveValue('fast');
+      expect(screen.getByLabelText('AI model')).toBeDisabled();
+      expect(screen.getByLabelText('Reasoning')).toHaveValue('default');
+    });
+    expect(mockUpdateSessionModelSelection).not.toHaveBeenCalled();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue this chat.');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+
   it('selects a recent chat without uploading or replacing browser schedule data, then syncs on send', async () => {
     const chat = seedRecentChat();
     const user = userEvent.setup();
