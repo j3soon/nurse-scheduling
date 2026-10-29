@@ -1233,9 +1233,11 @@ describe('provider cost events', () => {
   it('decodes provider-reported costs and reasoning usage without adding output tokens', () => {
     const events = decodeEvent('provider_call', { run_id: 'r', call_id: 'c', model: 'alias', reasoning: 'high',
       status: 'reported', cost_usd: '0.000123', provider_call_id: 'gateway-c', response_model: 'actual',
+      streaming_seconds: 0.2, time_to_first_output_seconds: 0.5,
       usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } });
     expect(events.at(-1)).toMatchObject({ type: 'provider_call', runId: 'r', call: {
       callId: 'c', costUsd: '0.000123', usage: { completion_tokens: 20, reasoning_tokens: 10 },
+      streamingSeconds: 0.2, timeToFirstOutputSeconds: 0.5,
     } });
     expect(decodeEvent('cost_summary', { conversation: totals, run: totals }).at(-1))
       .toEqual({ type: 'cost_summary', conversation: totals, run: totals });

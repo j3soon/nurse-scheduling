@@ -96,8 +96,10 @@ function scenario(variant: typeof variants[number]): Snapshot {
   snapshot.events = snapshot.events.slice(0, snapshot.events.findIndex(event => event.type === 'reasoning'));
   if (variant === 'pending' || variant === 'empty') {
     const call = snapshot.events.findLast(event => event.type === 'provider_call')!;
-    Object.assign(call.data, { status: 'pending', cost_usd: null, usage: null, provider_call_id: null });
-    const totals = { usd: '0.012340001', calls: 3, pending: 1, unavailable: 0 };
+    Object.assign(call.data, { status: 'pending', cost_usd: null, usage: null, provider_call_id: null,
+      streaming_seconds: null, time_to_first_output_seconds: null });
+    const totals = { usd: '0.012340001', calls: 3, pending: 1, unavailable: 0,
+      streaming: { calls: 1, output_tokens: 578, seconds: 2.89 } };
     const summary = snapshot.events.find(event => event.type === 'cost_summary')!;
     Object.assign(summary.data, { conversation: totals, run: totals });
     snapshot.events.find(event => event.type === 'model_selection')!.data.reasoning = 'default';
@@ -376,7 +378,7 @@ for (const variant of variants) test(`current Python export follows the live tra
     await page.clock.setFixedTime(snapshot.runs[0].started_at);
     await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
     await page.goto('/experimental-ai');
-    for (const name of ['Show reasoning', 'Show tool activity', 'Show turn costs', 'Show models']) {
+    for (const name of ['Show reasoning', 'Show tool activity', 'Show turn details', 'Show models']) {
       await page.getByRole('checkbox', { name, exact: true }).check();
     }
     await replay(page, snapshot, backend);
@@ -400,11 +402,11 @@ for (const variant of variants) test(`current Python export follows the live tra
       writeFile(path.join(dir, 'export-original.html'), await exported.content()),
       writeFile(path.join(dir, 'snapshot.json'), JSON.stringify(snapshot, null, 2)),
     ]);
-    const cost = exported.locator('details').filter({ has: exported.locator('summary', { hasText: /^Estimated turn cost:/ }) }).first();
+    const cost = exported.locator('details').filter({ has: exported.locator('summary', { hasText: /^Turn details ·/ }) }).first();
     await expect(cost).toHaveCount(1);
     await expect(cost).not.toHaveAttribute('open', '');
     await cost.locator('summary').click();
-    await expect(cost.getByRole('list', { name: 'Provider call costs' })).toBeVisible();
+    await expect(cost.getByRole('list', { name: 'Provider calls' })).toBeVisible();
     await cost.locator('summary').click();
     await compareTranscript(page, exported, dir, 'collapsed');
     for (const current of [page, exported]) {

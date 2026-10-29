@@ -122,7 +122,9 @@
           "total_tokens": 20199,
           "cached_prompt_tokens": 17600,
           "reasoning_tokens": 0
-        }
+        },
+        "streaming_seconds": 2.89,
+        "time_to_first_output_seconds": 1.2345
       },
       "occurred_at": 1793012411000
     },
@@ -143,7 +145,9 @@
           "total_tokens": 20199,
           "cached_prompt_tokens": 17600,
           "reasoning_tokens": 0
-        }
+        },
+        "streaming_seconds": 2.89,
+        "time_to_first_output_seconds": 1.2345
       },
       "occurred_at": 1793012411250
     },
@@ -155,13 +159,23 @@
           "usd": "0.012340001",
           "calls": 3,
           "pending": 0,
-          "unavailable": 1
+          "unavailable": 1,
+          "streaming": {
+            "calls": 2,
+            "output_tokens": 1156,
+            "seconds": 5.78
+          }
         },
         "run": {
           "usd": "0.012340001",
           "calls": 3,
           "pending": 0,
-          "unavailable": 1
+          "unavailable": 1,
+          "streaming": {
+            "calls": 2,
+            "output_tokens": 1156,
+            "seconds": 5.78
+          }
         }
       },
       "occurred_at": 1793012411500

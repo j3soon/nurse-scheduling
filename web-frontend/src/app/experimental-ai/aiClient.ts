@@ -252,6 +252,8 @@ interface SsePayload {
   usage?: unknown;
   provider_call_id?: unknown;
   response_model?: unknown;
+  streaming_seconds?: unknown;
+  time_to_first_output_seconds?: unknown;
   conversation?: unknown;
   run?: unknown;
   cost_summary?: unknown;
@@ -613,7 +615,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
   } else if (eventType === 'provider_call') {
     const call = { callId: payload.call_id, model: payload.model, reasoning: payload.reasoning,
       status: payload.status, costUsd: payload.cost_usd, usage: payload.usage,
-      providerCallId: payload.provider_call_id, responseModel: payload.response_model };
+      providerCallId: payload.provider_call_id, responseModel: payload.response_model,
+      ...(payload.streaming_seconds === undefined ? {} : { streamingSeconds: payload.streaming_seconds }),
+      ...(payload.time_to_first_output_seconds === undefined ? {} : { timeToFirstOutputSeconds: payload.time_to_first_output_seconds }) };
     if (!isProviderCallCost(call)) throw new Error('The AI backend returned invalid provider cost details.');
     emit({ type: 'provider_call', call });
   } else if (eventType === 'cost_summary') {

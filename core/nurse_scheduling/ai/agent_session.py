@@ -423,7 +423,7 @@ class AgentSession:
             cost_totals=CostTotals.restored(state.get("cost_totals")),
             cost_totals_version=state.get("cost_totals_version", 0),
             pending_provider_calls={
-                call["id"]: ProviderCall(**call) for call in state.get("pending_provider_calls", [])
+                call["id"]: ProviderCall.restored(call) for call in state.get("pending_provider_calls", [])
             },
             frontend_version=state.get("frontend_version"),
             frontend_timezone=state.get("frontend_timezone", "UTC"),

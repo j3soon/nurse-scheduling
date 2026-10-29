@@ -263,7 +263,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Preserve reported subnormal costs and keep decimal summaries within the client
   length limit. Test Stop while cost checkpoints are pending. Version cost
   snapshots by their cost publication, because unrelated stream events can advance
-  while a checkpoint waits.
+  while a checkpoint waits. Keep provider streaming durations on the same call
+  records. Aggregate speed from matched output-token and duration sums, and keep
+  missing speed measurements separate from missing prices.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
@@ -608,6 +610,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   changing retry behavior. Preserve finish reasons in evaluation reports. A reply
   ending mid-word does not prove a transport failure when the provider reports
   completion. Keep response content and credentials out of diagnostic logs.
+  After changing provider stream handling or usage metadata, run a live session
+  turn with a tool follow-up when credentials are available. State whether
+  provider validation used live requests or mocks.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   omit the failed attempt from model context and retry the original request.
   Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed

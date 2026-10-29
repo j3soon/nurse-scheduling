@@ -435,7 +435,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         if turn["calls"]:
             totals = CostTotals()
             for call in turn["calls"].values():
-                totals.update(ProviderCall(call["call_id"], call["model"], call["status"], call.get("cost_usd")))
+                totals.update(ProviderCall.restored(call))
             turn["cost_assistant"]["costSummary"] = totals.public()
             turn["cost_assistant"]["providerCalls"] = list(turn["calls"].values())
         run = runs.get(run_id, {})

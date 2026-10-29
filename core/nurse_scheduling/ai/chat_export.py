@@ -679,13 +679,45 @@ def _cost_summary_text(message):
     known_pending = sum(call["status"] == "pending" and call.get("cost_usd") is not None for call in calls)
     pending = summary["pending"] if running else 0
     unavailable = summary["unavailable"] + (0 if running else max(0, summary["pending"] - known_pending))
-    text = f"Estimated turn cost: {_usd(summary['usd'])} · {summary['calls']} "
+    price = _usd(summary["usd"])
+    price = price if price.startswith("<") else "~" + price
+    streaming = summary.get("streaming", {})
+    speed = _streaming_speed(streaming.get("output_tokens"), streaming.get("seconds"))
+    text = f"Turn details · {price} · {speed} · {summary['calls']} "
     text += "call" if summary["calls"] == 1 else "calls"
     if pending:
         text += f" · {pending} pending"
     if unavailable:
-        text += f" · {unavailable} unavailable"
+        text += f" · {unavailable} cost unavailable"
     return text
+
+
+def _metric_number(value, places):
+    rounded = Decimal(str(value)).quantize(Decimal(10) ** -places, rounding=ROUND_HALF_UP)
+    return f"{rounded:,f}".rstrip("0").rstrip(".")
+
+
+def _streaming_speed(tokens, seconds):
+    return _metric_number(tokens / seconds, 1) + " tok/s" if tokens and seconds else "Speed unavailable"
+
+
+def _seconds(seconds):
+    return _metric_number(seconds, 3) + "s"
+
+
+def _turn_measurement_lines(summary):
+    streaming = summary.get("streaming", {})
+    count = summary["calls"]
+    return [
+        f"Estimated cost: {_usd(summary['usd'])}",
+        "Provider streaming speed: " + _streaming_speed(streaming.get("output_tokens"), streaming.get("seconds")),
+        f"Speed measured for {streaming.get('calls', 0)} of {count} {'call' if count == 1 else 'calls'}.",
+        (
+            "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. "
+            "Excludes time to first output, tool execution, VM work, and retry delays. "
+            "Provider buffering can affect this estimate."
+        ),
+    ]
 
 
 def _provider_cost_lines(call, index, running):
@@ -713,6 +745,14 @@ def _provider_cost_lines(call, index, running):
                 if usage.get(key) is not None and (key != "reasoning_tokens" or usage[key])
             )
         )
+    speed = "Provider streaming speed: " + _streaming_speed(
+        (call.get("usage") or {}).get("completion_tokens"), call.get("streaming_seconds")
+    )
+    if call.get("streaming_seconds") is not None:
+        speed += " · Streaming: " + _seconds(call["streaming_seconds"])
+    if call.get("time_to_first_output_seconds") is not None:
+        speed += " · Time to first output: " + _seconds(call["time_to_first_output_seconds"])
+    lines.append(speed)
     lines.append("Call: " + (call.get("provider_call_id") or call["call_id"]))
     return lines
 
@@ -724,6 +764,7 @@ def _model_cost_lines(message) -> list[str]:
         lines.append(f"Model: {selection['model']} · {selection['reasoning']}")
     if message.get("costSummary"):
         lines.append(_cost_summary_text(message))
+        lines.extend(_turn_measurement_lines(message["costSummary"]))
         for index, call in enumerate(message.get("providerCalls", []), 1):
             lines.extend(_provider_cost_lines(call, index, message.get("status") == "pending"))
     return lines
@@ -735,7 +776,11 @@ def _model_cost_html(message):
         result = (
             '<details class="cost-details"><summary>'
             + escape_html(_cost_summary_text(message))
-            + '</summary><ul class="cost-calls" aria-label="Provider call costs">'
+            + '</summary><div class="turn-metrics">'
+            + "".join(
+                "<div>" + escape_html(line) + "</div>" for line in _turn_measurement_lines(message["costSummary"])
+            )
+            + '</div><ul class="cost-calls" aria-label="Provider calls">'
         )
         for index, call in enumerate(message.get("providerCalls", []), 1):
             lines = _provider_cost_lines(call, index, message.get("status") == "pending")

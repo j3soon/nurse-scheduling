@@ -387,7 +387,9 @@ def test_retry_budget_ends_retries_before_the_attempt_limit(monkeypatch):
         clock[0] += delay
 
     monkeypatch.setattr(provider_module.asyncio, "sleep", advance)
-    monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0], perf_counter=time.perf_counter)
+    )
     assert time.monotonic is real_monotonic
     with pytest.raises(ProviderError, match="HTTP 503"):
         _events(_transport_provider(monkeypatch, handle))
@@ -425,7 +427,9 @@ def test_retry_budget_interrupts_a_stalled_request(monkeypatch, partial_text, co
     if coarse_clock:
         # A deadline timer can fire before a coarse clock reaches the deadline.
         # Replace only the provider clock so asyncio's timers still advance.
-        monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: 0.0))
+        monkeypatch.setattr(
+            provider_module, "time", SimpleNamespace(monotonic=lambda: 0.0, perf_counter=time.perf_counter)
+        )
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
 
     async def run():
@@ -449,7 +453,9 @@ def test_expired_retry_budget_does_not_send_another_request(monkeypatch, expired
             return httpx.Response(503)
         return httpx.Response(200, text=_sse_body(_delta_chunk({"content": "Too late"})))
 
-    monkeypatch.setattr(provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        provider_module, "time", SimpleNamespace(monotonic=lambda: clock[0], perf_counter=time.perf_counter)
+    )
     provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
 
     async def run():
@@ -1102,11 +1108,46 @@ def test_completion_is_checked_before_releasing_tool_calls(monkeypatch, finish_r
         ]
 
 
-@pytest.mark.parametrize("chunk", [[], {"choices": [None]}, {"choices": [{"delta": None}]}])
-def test_malformed_stream_shapes_raise_provider_error(monkeypatch, chunk):
+@pytest.mark.parametrize(
+    ("chunk", "reason"),
+    [
+        ([], "Stream event must be an object"),
+        ({}, "choices"),
+        ({"choices": None}, "Stream choices must be an array"),
+        ({"choices": [None]}, "Stream choice must be an object"),
+        ({"choices": [{}]}, "delta"),
+        ({"choices": [{"delta": None}]}, "Stream delta must be an object"),
+    ],
+)
+def test_malformed_stream_shapes_raise_provider_error(monkeypatch, caplog, chunk, reason):
     provider = _streaming_provider(monkeypatch, _sse_body(chunk))
     with pytest.raises(ProviderError, match="invalid stream"):
         _events(provider)
+    record = next(record for record in caplog.records if "AI provider stream failed" in record.message)
+    assert record.exc_info is not None
+    assert reason in str(record.exc_info[1].__cause__)
+
+
+def test_invalid_stream_logs_the_gateway_call_and_cause_without_content_or_credentials(monkeypatch, caplog):
+    private_content = "PRIVATE-RESPONSE-CONTENT"
+
+    def handle(request):
+        return httpx.Response(
+            200,
+            headers={"x-litellm-call-id": "gateway-invalid-stream"},
+            text="data: {" + private_content + "}\n\n",
+        )
+
+    provider = _transport_provider(monkeypatch, handle)
+    provider._include_costs = True
+    with pytest.raises(ProviderError, match="invalid stream") as error:
+        _events(provider)
+    record = next(record for record in caplog.records if "AI provider stream failed" in record.message)
+    assert "provider_call_id=gateway-invalid-stream" in record.message
+    assert isinstance(record.exc_info[1].__cause__, json.JSONDecodeError)
+    assert error.value is record.exc_info[1]
+    assert private_content not in caplog.text
+    assert provider._settings.provider_api_key not in caplog.text
 
 
 @pytest.mark.parametrize("initial_reason", ["length", "content_filter", "tool_calls"])

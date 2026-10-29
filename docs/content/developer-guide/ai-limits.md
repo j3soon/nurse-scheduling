@@ -174,4 +174,29 @@ For failure ordering, persistence, and event behavior, see
 Compose variants expose the runtime controls. In Compose, the optimizer timeout
 follows `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` so both services share the same default.
 
+## Provider streaming measurements
+
+Turn details show estimated provider cost, output tokens per second, call count,
+and missing prices. Provider call records retain streaming duration and time to
+first output when measurable. Streaming duration runs from the first nonempty
+output chunk to the last. Output includes text, reasoning, and tool-call generation.
+Time to first output starts when the backend begins the HTTP request.
+
+Speed uses provider-reported completion tokens, including reasoning tokens once.
+It excludes input tokens, time to first output, tool execution, VM work, retry
+backoff, and gaps between calls. A call needs reported positive output usage and
+at least two output chunks with distinct arrival times. Missing or incomplete
+measurements remain unavailable. Cost availability is independent of speed.
+
+Run and conversation totals divide measured output tokens by measured streaming
+seconds. They do not average individual speeds. Turn details report how many
+calls contributed. Recovery and exports retain the same measurements.
+These are backend-observed delivery speeds. Provider buffering, hidden reasoning,
+network delays, and stream-consumer delays can affect the estimate.
+
+Provider protocol failures log the underlying exception and gateway call ID
+when available.
+Use the call ID in turn details to find the matching backend log. Diagnostic
+logs omit provider response content and credentials.
+
 [pi]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32

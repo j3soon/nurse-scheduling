@@ -212,6 +212,24 @@ class ProviderCall:
     usage: TokenUsage | None = None
     provider_call_id: str | None = None
     response_model: str | None = None
+    streaming_seconds: float | None = None
+    time_to_first_output_seconds: float | None = None
+
+    @classmethod
+    def restored(cls, data: dict[str, Any]) -> "ProviderCall":
+        """Read a saved call from session state or a public event."""
+        usage = data.get("usage")
+        return cls(
+            id=data.get("id", data.get("call_id")),
+            model=data.get("model", ""),
+            status=data["status"],
+            cost_usd=data.get("cost_usd"),
+            usage=TokenUsage(**usage) if usage is not None else None,
+            provider_call_id=data.get("provider_call_id"),
+            response_model=data.get("response_model"),
+            streaming_seconds=data.get("streaming_seconds"),
+            time_to_first_output_seconds=data.get("time_to_first_output_seconds"),
+        )
 
 
 @dataclass(frozen=True)
@@ -219,6 +237,8 @@ class ProviderResponseMetadata:
     provider_call_id: str | None = None
     response_model: str | None = None
     cost_usd: str | None = None
+    streaming_seconds: float | None = None
+    time_to_first_output_seconds: float | None = None
 
 
 ChatStreamEvent = (
@@ -571,10 +591,18 @@ class OpenAiCompatibleProvider:
                                 provider_call_id=event.provider_call_id or call.provider_call_id,
                                 response_model=event.response_model or call.response_model,
                                 cost_usd=event.cost_usd if event.cost_usd is not None else call.cost_usd,
+                                streaming_seconds=event.streaming_seconds or call.streaming_seconds,
+                                time_to_first_output_seconds=(
+                                    event.time_to_first_output_seconds
+                                    if event.time_to_first_output_seconds is not None
+                                    else call.time_to_first_output_seconds
+                                ),
                             )
                             if updated != call:
                                 call = updated
-                                yield call
+                                # Timing belongs to the terminal call update, avoiding an extra checkpoint.
+                                if event.time_to_first_output_seconds is None:
+                                    yield call
                             continue
                         if isinstance(event, TokenUsage):
                             call = replace(call, usage=event)
@@ -589,6 +617,14 @@ class OpenAiCompatibleProvider:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
             except (ProviderError, httpx.HTTPError, TimeoutError) as exc:
+                if isinstance(exc, ProviderError) and not isinstance(
+                    exc, (_RetryableProviderError, ProviderContextOverflowError)
+                ):
+                    logger.exception(
+                        "AI provider stream failed call_id=%s provider_call_id=%s",
+                        call.id,
+                        call.provider_call_id or "unknown",
+                    )
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 if isinstance(exc, ProviderError) and not isinstance(exc, _RetryableProviderError):
@@ -654,6 +690,9 @@ class OpenAiCompatibleProvider:
         payload: dict[str, Any],
     ) -> AsyncIterator[ChatStreamEvent]:
         """Run one HTTP stream attempt without replay policy."""
+        request_started = time.perf_counter()
+        first_output: float | None = None
+        last_output: float | None = None
         async with (
             httpx.AsyncClient(timeout=timeout) as client,
             client.stream(
@@ -715,13 +754,15 @@ class OpenAiCompatibleProvider:
                     break
                 if not raw_data:
                     continue
+                # Capture arrival before yielding metadata to persistence consumers.
+                received_at = time.perf_counter()
                 try:
                     event = json.loads(raw_data)
                     if not isinstance(event, dict):
-                        raise TypeError
+                        raise TypeError("Stream event must be an object")
                     choices = event["choices"]
                     if not isinstance(choices, list):
-                        raise TypeError
+                        raise TypeError("Stream choices must be an array")
                     usage = event.get("usage")
                     if self._include_costs:
                         yield ProviderResponseMetadata(
@@ -736,10 +777,10 @@ class OpenAiCompatibleProvider:
                         continue
                     choice = choices[0]
                     if not isinstance(choice, dict):
-                        raise TypeError
+                        raise TypeError("Stream choice must be an object")
                     delta = choice["delta"]
                     if not isinstance(delta, dict):
-                        raise TypeError
+                        raise TypeError("Stream delta must be an object")
                     content = delta.get("content")
                     reported_reason = choice.get("finish_reason")
                     if finish_reason is not None:
@@ -763,6 +804,11 @@ class OpenAiCompatibleProvider:
                         finish_reason = reported_reason
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
+                reasoning_size = _merge_reasoning(native_reasoning, delta)
+                if content or reasoning_size or delta.get("tool_calls"):
+                    if first_output is None:
+                        first_output = received_at
+                    last_output = received_at
                 if isinstance(content, str) and content:
                     text_chars += len(content)
                     yield TextDelta(content)
@@ -771,7 +817,6 @@ class OpenAiCompatibleProvider:
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
-                _merge_reasoning(native_reasoning, delta)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
                 if delta.get("tool_calls"):
                     yield ToolCallProgress(sum(len(partial.arguments) for partial in partial_calls.values()))
@@ -790,6 +835,13 @@ class OpenAiCompatibleProvider:
             if finish_reason is not None and finish_reason not in SUPPORTED_FINISH_REASONS:
                 raise ProviderError.for_user(
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
+                )
+            if self._include_costs and first_output is not None:
+                yield ProviderResponseMetadata(
+                    streaming_seconds=(
+                        last_output - first_output if last_output is not None and last_output > first_output else None
+                    ),
+                    time_to_first_output_seconds=first_output - request_started,
                 )
             if native_reasoning:
                 yield ReasoningReplay(native_reasoning, self.identity)

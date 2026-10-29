@@ -3390,7 +3390,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Cost question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await screen.findByText('Estimated turn cost: $0.1000 · 1 call');
+    await screen.findByText('Turn details · ~$0.1000 · Speed unavailable · 1 call');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     act(() => {
       stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false } });
@@ -3401,7 +3401,7 @@ describe('ExperimentalAiPage', () => {
         run: { usd: '0.2', calls: 1, pending: 0, unavailable: 0 } });
       stream.onEvent({ type: 'done', runId: 'user-run-1' });
     });
-    expect(screen.getByText('Estimated turn cost: $0.2000 · 1 call')).toBeInTheDocument();
+    expect(screen.getByText('Turn details · ~$0.2000 · Speed unavailable · 1 call')).toBeInTheDocument();
     expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
     expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });

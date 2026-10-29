@@ -646,7 +646,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
   const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
-  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.getByText(/^Turn details ·/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
   await page.getByText('Conversation summary', { exact: true }).click();
@@ -656,7 +656,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.reload();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true })).toBeVisible();
-  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.getByText(/^Turn details ·/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
 });
@@ -1720,13 +1720,13 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
     await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
       { type: 'model_selection', data: { model: 'deep', reasoning: 'high' } },
       { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
-        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep', streaming_seconds: 0.2, time_to_first_output_seconds: 0.5,
         usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
       { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
-        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep', streaming_seconds: 0.2, time_to_first_output_seconds: 0.5,
         usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
-      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0 },
-        run: { usd: cost, calls: 1, pending: 0, unavailable: 0 } } },
+      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } },
+        run: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } } } },
     ]);
     await page.goto('/experimental-ai');
     await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Cost question');
@@ -1742,23 +1742,23 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
         && !!(element.compareDocumentPosition(cost) & Node.DOCUMENT_POSITION_FOLLOWING);
     }, `Est. cost: ${display}`)).toBe(true);
     await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
-    await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
-    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn details' }).uncheck();
+    await expect(page.getByText(/^Turn details ·/)).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
     await expect(page.getByText('deep · high', { exact: true })).toHaveCount(0);
     await expect(conversationCost).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('checkbox', { name: 'Show turn costs' })).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Show turn details' })).not.toBeChecked();
     await expect(page.getByRole('checkbox', { name: 'Show models', exact: true })).not.toBeChecked();
-    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
-    await page.getByRole('checkbox', { name: 'Show turn costs' }).check();
+    await expect(page.getByText(/^Turn details ·/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn details' }).check();
     await page.getByRole('checkbox', { name: 'Show models', exact: true }).check();
     await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
-    await page.getByText(`Estimated turn cost: ${display} · 1 call`).click();
+    await page.getByText(`Turn details · ${display.startsWith('<') ? display : '~' + display} · 100 tok/s · 1 call`).click();
     await expect(page.getByText('Call: gateway-one')).toHaveCount(1);
     await expect(page.getByText(/Reasoning \(included in output\): 10/)).toBeVisible();
     await page.reload();
     await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
-    await expect(page.getByText(`Estimated turn cost: ${display} · 1 call`)).toBeVisible();
+    await expect(page.getByText(`Turn details · ${display.startsWith('<') ? display : '~' + display} · 100 tok/s · 1 call`)).toBeVisible();
   });
 }

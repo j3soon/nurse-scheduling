@@ -1134,7 +1134,7 @@ export default function ExperimentalAiPage() {
                 <input type="checkbox" checked={showCosts}
                   onChange={event => rememberPreferences({ showCosts: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
-                Show turn costs
+                Show turn details
               </label>
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input type="checkbox" checked={showModels}

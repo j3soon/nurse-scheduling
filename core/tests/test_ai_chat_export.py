@@ -351,13 +351,13 @@ def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
     html = build_html_chat(messages, metadata)
     answer, notice = html.split('<article class="')[1:]
-    assert "test-model · high" in answer and "Estimated turn cost" in answer
-    assert "test-model · high" not in notice and "Estimated turn cost" not in notice
+    assert "test-model · high" in answer and "Turn details" in answer
+    assert "test-model · high" not in notice and "Turn details" not in notice
     if status:
         assert ("The provider failed." if status == "failed" else "Stopped before completion.") in answer
     markdown = build_markdown_chat(messages, metadata)
     assert markdown.index("Model: test-model") < markdown.index("## App notice")
-    assert markdown.index("Estimated turn cost") < markdown.index("## App notice")
+    assert markdown.index("Turn details") < markdown.index("## App notice")
 
 
 def test_manual_compaction_keeps_metadata_on_notice_before_summary():
@@ -386,10 +386,10 @@ def test_manual_compaction_keeps_metadata_on_notice_before_summary():
     metadata = {"exportedAt": 1792919105509, "frontendVersion": "test", "endpoint": "https://ai.example"}
     notice, summary = build_html_chat(messages, metadata).split('<article class="')[1:]
     assert notice.startswith('message assistant app-notice"')
-    for detail in ("test-model · high", "Estimated turn cost", "1970-01-01T00:00:02.500Z", "1.5s"):
+    for detail in ("test-model · high", "Turn details", "1970-01-01T00:00:02.500Z", "1.5s"):
         assert detail in notice and detail not in summary
     markdown = build_markdown_chat(messages, metadata)
-    for detail in ("Model: test-model", "Estimated turn cost", "Completed:", "Response time: 1.5s"):
+    for detail in ("Model: test-model", "Turn details", "Completed:", "Response time: 1.5s"):
         assert markdown.index(detail) < markdown.index("## User · Conversation summary")
     assert messages == original
 
@@ -590,9 +590,11 @@ def test_saved_exports_always_include_models_and_latest_call_costs(format, cost)
         "model": "qwen",
         "reasoning": "xhigh",
         "provider_call_id": "gateway-cost-call",
+        "streaming_seconds": 0.2,
+        "time_to_first_output_seconds": 0.5,
         "status": "pending",
         "cost_usd": None,
-        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "reasoning_tokens": 10},
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120, "reasoning_tokens": 10},
     }
     events = [
         ("model_selection", {"run_id": run_id, "model": "qwen", "reasoning": "xhigh"}),
@@ -604,7 +606,7 @@ def test_saved_exports_always_include_models_and_latest_call_costs(format, cost)
     rendered = build_saved_chat_export(snapshot, format)
     text = unescape(re.sub("<[^>]+>", "", rendered)) if format == "html" else rendered
     assert ("qwen · xhigh" if format == "html" else "Model: qwen · xhigh") in text
-    assert "Estimated turn cost:" in text and " · 1 call" in text
+    assert "Turn details ·" in text and " · 1 call" in text
     assert " · 2 calls" not in text
     assert (
         "1. qwen · xhigh · "
@@ -621,3 +623,6 @@ def test_saved_exports_always_include_models_and_latest_call_costs(format, cost)
     )
     assert "Input: 100 · Output: 20 · Reasoning (included in output): 10" in text
     assert "Call: gateway-cost-call" in text
+    assert "100 tok/s" in text
+    assert "Speed measured for 1 of 1 call." in text
+    assert "Streaming: 0.2s · Time to first output: 0.5s" in text

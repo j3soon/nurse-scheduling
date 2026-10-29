@@ -115,7 +115,7 @@ async function openChat(page: Page, backend: ExportBackend, options: { saved?: b
 
 test('one Export Chat control downloads the server ZIP without changing its bytes', async ({ page, backend }) => {
   const requests = await openChat(page, backend);
-  await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
+  await page.getByRole('checkbox', { name: 'Show turn details' }).uncheck();
   await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();

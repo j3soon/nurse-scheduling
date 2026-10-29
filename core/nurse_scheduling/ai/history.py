@@ -377,7 +377,7 @@ class ChatHistory:
             # later publications, replacing calls that were pending in that snapshot.
             version = row[0].get("cost_totals_version", -1)
             totals = CostTotals.restored(row[0].get("cost_totals") if version >= 0 else None)
-            pending = {call["id"]: ProviderCall(**call) for call in row[0].get("pending_provider_calls", [])}
+            pending = {call["id"]: ProviderCall.restored(call) for call in row[0].get("pending_provider_calls", [])}
             costs = connection.execute(
                 "WITH calls AS (SELECT DISTINCT ON (data->>'call_id') event_id, data "
                 "FROM chat_session_events WHERE session_id = %s AND type = 'provider_call' "
@@ -387,7 +387,7 @@ class ChatHistory:
             ).fetchall()
             for event_id, data in costs:
                 call_id, amount = data["call_id"], data.get("cost_usd")
-                final = ProviderCall(call_id, "", "reported" if amount is not None else "unavailable", amount)
+                final = replace(ProviderCall.restored(data), status="reported" if amount is not None else "unavailable")
                 totals.update(final, pending.pop(call_id, None))
                 version = max(version, event_id)
             for call in pending.values():
