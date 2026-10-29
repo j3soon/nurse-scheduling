@@ -241,6 +241,15 @@ visible browser result because decoder and reducer tests do not cover dispatch.
 When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 `chatConversation.ts`. Otherwise a reload discards the saved browser chat.
 
+Store AI chat history with the saving frontend `appVersion`, without a separate
+numeric storage version.
+
+When switching saved AI chats, preserve browser schedule data during event replay.
+Keep local history expiry separate from backend session expiry. Test that forgetting
+an open chat also prevents later saves and pagehide from recreating its record.
+Scope transcript assertions to the Chat messages region when history titles repeat
+the same question.
+
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,
 and `done`. Isolated server and UI mocks can both pass while their contracts differ.

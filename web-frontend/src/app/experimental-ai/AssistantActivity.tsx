@@ -64,9 +64,10 @@ export interface ScheduleCheckEntry {
   text: string;
 }
 
-// The validated schedule the app applied when the response finished, with its differences.
+// The validated schedule adopted by the backend, with its differences.
 export interface ScheduleAppliedEntry {
   kind: 'schedule-applied';
+  browserApplied?: boolean;
   text: string;
   runId?: string;
   notice?: string;

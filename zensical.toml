@@ -49,6 +49,7 @@ nav = [
       ] },
       { "Backend Deployment" = "developer-guide/backend-deployment.md" },
       { "Architecture" = [
+        { "Frontend Browser Storage" = "developer-guide/frontend-storage.md" },
         { "Backend Server" = "developer-guide/backend-server.md" },
         { "Backend Containers and Networks" = "developer-guide/containers.md" },
         { "AI Assistant Backend" = "developer-guide/ai-assistant.md" },

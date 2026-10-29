@@ -282,11 +282,28 @@ The panel sits on the right on large screens and can be collapsed on smaller scr
 To replace the schedule currently open in the app directly, use **Upload** on
 **Save and Load**.
 
-The browser uploads one YAML snapshot when it creates the chat session. Later
-questions in that session use the same service-held snapshot. The current
-browser tab preserves the transcript when you switch pages or reload. A chat
-expires after 30 days without a message. Each new message renews that period,
-and the page reports when a preserved chat has expired.
+The browser sends schedule data when you send a message. The first message
+creates a session with the current schedule YAML. Before later messages, the
+browser sends updated schedule data if it has changed. Editing schedule data
+or opening a saved chat does not send it to the AI service. A queued message
+that joins the active response uses that response's schedule data. Browser
+changes are sent when a new response starts.
+
+### Recent chats
+
+Use **Recent chats** on the left to reopen a conversation. On a phone, expand
+the panel above the conversation. Selecting a chat keeps browser schedule data
+unchanged, including when earlier AI changes arrive during replay. The status
+above the message field shows whether browser schedule data matches the chat.
+Your next message sends current browser schedule data to that chat. New AI
+changes from that conversation can then update the browser schedule.
+
+**New chat** preserves the previous chat in history. Recent chats are stored
+unencrypted on this device for seven days after their last activity. Viewing a
+chat does not extend this period. **Remove** forgets one chat, and **Clear
+history** forgets all chats on this device. The open conversation stays visible
+but will not be saved again after you forget it. These actions do not delete
+backend sessions, which normally expire after 30 days of inactivity.
 
 ## Data and limitations
 

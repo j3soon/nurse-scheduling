@@ -1508,7 +1508,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         await expect(page.getByText('First part and', { exact: true })).toHaveCount(1);
         await expect(page.getByText('Compare Tuesday.', { exact: true })).toHaveCount(1);
       }
-      await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
+      await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
       expect(executions).toBe(1);
       expect(unauthorized).toBe(0);
@@ -1673,7 +1673,7 @@ test('keeps the model editable until the server accepts a message', async ({ pag
   await expect(page.getByText('The AI service is busy. Try again later.').first()).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.reload();
-  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('First question', { exact: true })).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.getByLabel('AI model').selectOption('deep');
   await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
@@ -1710,7 +1710,7 @@ test('follows the saved model lock after a question stops before its run starts'
   await expect(page.getByText('Stopped before completion.')).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.reload();
-  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('First question', { exact: true })).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
 });
 

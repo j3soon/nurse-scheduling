@@ -18,6 +18,7 @@ authentication, storage, Sentry, usage reports, and diagnostics.
 
 ## Architecture
 
+- [Frontend browser storage](frontend-storage.md)
 - [Backend server](backend-server.md)
 - [Backend containers and networks](containers.md)
 - [Experimental AI assistant backend](ai-assistant.md)

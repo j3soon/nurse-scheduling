@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AI_CONVERSATION_STORAGE_KEY, readStoredConversation } from './chatConversation';
+import { AI_CONVERSATION_STORAGE_KEY, HISTORY_RETENTION_MS, readStoredConversation } from './chatConversation';
 
 afterEach(() => { sessionStorage.clear(); vi.restoreAllMocks(); });
 const conversation = () => ({
@@ -31,6 +31,23 @@ const conversation = () => ({
 });
 
 describe('stored conversation compatibility', () => {
+  it('forgets expired device history even when the backend session is still retained', () => {
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
+      ...conversation(), expiresAt: Date.now() + 30 * 86400_000, lastActivityAt: Date.now() - HISTORY_RETENTION_MS,
+    }));
+    expect(readStoredConversation()).toBeNull();
+    expect(sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY)).toBeNull();
+  });
+
+  it('restores replayed schedule changes that kept browser schedule data unchanged', () => {
+    const activity = { kind: 'schedule-applied', text: 'Changed a rule', browserApplied: false };
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
+      ...conversation(), preserveBrowserSchedule: true,
+      messages: [{ id: 'answer', role: 'assistant', content: '', activity: [activity] }],
+    }));
+    expect(readStoredConversation()).toMatchObject({ preserveBrowserSchedule: true, messages: [{ activity: [activity] }] });
+  });
+
   it('restores the legacy pending request and retained trim warning without dropping transcript fields', () => {
     sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
       ...conversation(), trimmedHistoryCount: 3,
