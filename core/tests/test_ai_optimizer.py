@@ -1621,3 +1621,41 @@ def test_browser_finish_now_checks_job_ownership_and_allows_retry_after_transpor
         await optimizer.close()
 
     asyncio.run(scenario())
+
+
+def test_cancelled_finish_now_allows_a_user_retry() -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        updates = []
+
+        class Backend(FakeOptimizerBackend):
+            async def finish_now(self, job_id):
+                self.finish_requests.append(job_id)
+                entered.set()
+                await release.wait()
+                return OptimizerJobPayload(id=job_id, state="running")
+
+        async def on_update(_session_id, update):
+            updates.append(update)
+
+        backend = Backend()
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=1, on_completion=lambda *_: asyncio.sleep(0), on_update=on_update
+        )
+        try:
+            job = await optimizer.start("session-1", TEST_SCHEDULE, None)
+            request = asyncio.create_task(optimizer.finish_now("session-1"))
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            request.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await request
+            release.set()
+            assert (await optimizer.finish_now("session-1", job.id, requested_by="user"))[1]
+            assert backend.finish_requests == ["remote-1", "remote-1"]
+            assert job.finish_now_requested_by == "user"
+            assert [update["finish_now_requested_by"] for update in updates] == [None, None, "user"]
+        finally:
+            await optimizer.close()
+
+    asyncio.run(scenario())

@@ -479,6 +479,11 @@ class SessionOptimizer:
             job.finish_now_requested_by = requested_by
             try:
                 payload = await self._backend.finish_now(job.remote_id)
+            except asyncio.CancelledError:
+                if not _is_terminal(job.payload):
+                    job.finish_now_requested_by = None
+                    await self._notify_update(job)
+                raise
             except OptimizerError as exc:
                 if _is_terminal(job.payload):
                     return job, False
