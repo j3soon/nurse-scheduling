@@ -1034,7 +1034,7 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
   if (touch) test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test('finishes the background optimizer early and retains timing and user intent after reload', async ({ page }) => {
-    await page.clock.install({ time: new Date('2026-10-30T00:00:20Z') });
+    await page.clock.install({ time: new Date('2026-10-29T23:00:00Z') });
     const running = {
       job_id: 'opt-finish', state: 'running', terminal: false, downloadable: false,
       created_at: '2026-10-30T00:00:00Z', started_at: '2026-10-30T00:00:10Z',
@@ -1062,6 +1062,7 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const finish = page.getByRole('button', { name: 'Finish now', exact: true });
     await expect(finish).toBeEnabled();
+    await page.clock.pauseAt(new Date('2026-10-30T00:00:20Z'));
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
     await expect(page.getByText('Elapsed: 10s', { exact: true })).toBeVisible();
     await page.clock.runFor(2000);

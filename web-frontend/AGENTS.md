@@ -61,6 +61,10 @@ Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
+For exact elapsed-time assertions, install the Playwright clock before navigation
+at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
+time advancing during setup. Use `runFor` to check timer updates.
+
 Treat transcript visibility preferences as display settings. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
