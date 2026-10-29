@@ -904,6 +904,17 @@
     "comparison_mode": "ablation"
   },
   {
+    "id": "qualification-overlap",
+    "file": "steps/qualification-overlap.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ],
+    "hypothesis": "Diagnoses head nurses and deputy head nurses omitted from senior staffing eligibility and asks for confirmation before optimizing.",
+    "sha256": "2bde9795d7d7d6934377f5a03ce84aa66d1f38c37a4bafc134e9ccdc1beea83d",
+    "evidence": []
+  },
+  {
     "id": "new-roster-rest-intake",
     "file": "steps/new-roster-rest-intake.md",
     "cases": [

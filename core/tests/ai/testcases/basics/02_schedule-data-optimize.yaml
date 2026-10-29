@@ -9,17 +9,15 @@ steps:
       Forbid N to D and N to E, limit consecutive workdays to five, and
       balance total days off and days off on free days equally across people.
       A is restricted to head nurses, D/E/N each requires at least one senior nurse.
+      Encourage consecutive days in the same shift category.
   - schedule:
       allow_changes: true
   - optimizer:
       invoked: false
   - assistant:
-      count: 2
+      count: 1
       judge: >-
-        Pass when the response seeks clarification on both points:
-        (1) Whether A counts as Day for the rest rules, including the forbidden
-        transition after a Night shift.
-        (2) Whether to encourage consecutive days in the same shift category,
-        even though the user declined monthly primary shifts. This must be an
-        optional preference, not an invented hard ban on switching shifts.
-        Combined questions are fine. Do not require exact wording or question-only replies.
+        Pass when the response asks whether P1 and P2 also count as seniors
+        for the senior staffing requirement. Identifying the possible overlap
+        is not enough without seeking confirmation. Combined questions and
+        clear schedule data edits are allowed. Do not require exact wording.
