@@ -246,7 +246,7 @@
       "holiday-question-explains-workdays"
     ],
     "hypothesis": "Explains Taiwan calendar import during new-schedule intake and before date-range expansion, then generates its groups while preserving custom-group scope.",
-    "sha256": "979f44451281c410ac019d69dfe83825d269e3b51ac62b897027194476f8ad98",
+    "sha256": "60c0ea2afa16ed5cc028fc2e6d4fef172565e95a056b7ef38f5a9f319a0f8393",
     "evidence": [
       {
         "case": "holiday-question-explains-workdays",
@@ -284,7 +284,8 @@
     ],
     "comparison_mode": "ablation",
     "reviewed_cases": [
-      "basics/01_new-schedule-information.yaml"
+      "basics/01_new-schedule-information.yaml",
+      "basics/02_holiday-import-rule-scope.yaml"
     ]
   },
   {

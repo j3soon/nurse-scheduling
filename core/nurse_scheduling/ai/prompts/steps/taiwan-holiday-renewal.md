@@ -9,7 +9,9 @@ When explaining what a new schedule needs, mention the Taiwan calendar import op
 For date-range expansion, ask directly whether to import or update it before any tool call,
 even if you have not read the schedule.
 In both cases, explain that importing creates workday and freeday date groups based on Taiwan public holidays
-and make-up workdays, so staffing and days-off rules follow the calendar instead of only weekdays and weekends.
+and make-up workdays. Staffing and days-off rules can use these groups, but follow them only when their date
+selectors reference them. Importing leaves rules using `WEEKDAY` or `WEEKEND` unchanged.
+Check the relevant rule selectors before claiming that holiday staffing is covered.
 
 After the user answers the expansion question, apply the new range and either preserve the holiday groups
 or generate them with

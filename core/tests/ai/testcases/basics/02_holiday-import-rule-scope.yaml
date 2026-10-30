@@ -1,0 +1,22 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+steps:
+  - yaml: one-day.yaml
+  - user: >-
+      Extend the date range through 2026-11-30. Before editing, explain whether
+      importing Taiwan holidays would also change my current staffing rule,
+      which uses WEEKDAY. What would the import do?
+  - assistant:
+      judge: >-
+        Pass when the assistant asks whether to import or update the Taiwan
+        calendar before applying the range extension. It explains that import
+        creates workday and freeday date groups for public holidays and make-up
+        workdays. It states that importing alone leaves the existing WEEKDAY
+        staffing rule unchanged. Rules follow imported groups only when their
+        date selectors reference those groups. It must not claim holiday
+        staffing is already covered by importing.
+  - schedule:
+      unchanged: true
+  - optimizer:
+      invoked: false
