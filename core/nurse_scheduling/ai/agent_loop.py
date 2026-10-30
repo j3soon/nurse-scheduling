@@ -253,6 +253,13 @@ async def agent_loop(
             conversation.append(response)
             yield AgentMessageEnd(response)
             yield AgentCompactionEnd("overflow", False, compactor.tokens(current_request(), definitions))
+            steering = tuple(take_steering(True)) if take_steering is not None else ()
+            for message_id, text in steering:
+                overflow_recovered = False
+                conversation.append(UserMessage(text))
+                yield AgentSteering(message_id, text)
+            if steering:
+                continue
             break
         if recoverable_length:
             # Keep the truncated attempt for audit, but omit it from the context
