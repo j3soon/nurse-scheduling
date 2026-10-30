@@ -33,9 +33,14 @@ repository root:
 set -a
 source docker/.env.staging  # Use docker/.env when present.
 set +a
+export AI_SANDBOX_TURN_TIMEOUT_SECONDS=300
 cd core
 python -m tests.ai.runner run
 ```
+
+Set the turn limit after loading the environment file. This matches CI's
+five-minute per-turn limit and prevents local smoke tests from inheriting the
+service's six-hour default.
 
 Required settings are `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. Set `AI_SANDBOX_BACKEND=e2b` and select `AI_PROVIDER_MODEL`
