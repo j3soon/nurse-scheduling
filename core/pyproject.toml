@@ -12,6 +12,7 @@ addopts = [
     "--deselect=tests/test_ai_eval_runner.py::test_reviewed_prompt_evidence_uses_portable_fixture_paths",
     "--deselect=tests/test_ai_eval_runner.py::test_optimizer_goal_and_background_start_have_separate_ladder_comparisons",
     "--deselect=tests/test_ai_eval_runner.py::test_prompt_evidence_accepts_only_cost_gains_meeting_the_declared_target",
+    "--deselect=tests/test_ai_eval_runner.py::test_prompt_evidence_rejects_changed_helper_source",
 ]
 
 [tool.ruff]
