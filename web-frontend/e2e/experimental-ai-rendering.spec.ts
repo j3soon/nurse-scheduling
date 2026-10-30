@@ -25,6 +25,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import fixture from '../../core/tests/ai_fixtures/chat-rendering.json';
 
@@ -33,7 +34,7 @@ const storageKey = 'nurse-scheduling-ai-conversation';
 type SavedEvent = { type: string; occurred_at: number; data: Record<string, unknown> };
 type SavedRun = Omit<typeof fixture.runs[number], 'finished_at'> & { finished_at: number | null };
 type Snapshot = Omit<typeof fixture, 'events' | 'runs'> & { events: SavedEvent[]; runs: SavedRun[] };
-const variants = ['rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'final-truncated',
+const variants = ['chinese', 'rich', 'empty', 'pending', 'pending-tool', 'stopped', 'truncated', 'failed-truncated', 'final-truncated',
   'length-recovery', 'tool-rounds', 'failed-summary', 'manual-completed', 'manual-failed', 'manual-skipped', 'manual-interrupted',
   'manual-running'] as const;
 
@@ -173,6 +174,10 @@ function scenario(variant: typeof variants[number]): Snapshot {
     append('compaction_end', { reason: 'threshold', tokens_before: 25000, success: true, aborted: false,
       summary: 'Retain Alice and Bob.', keep_messages: 4 });
     append('delta', { text: 'Checked staff.csv twice.' }); append('done');
+  } else if (variant === 'chinese') {
+    append('delta', { text: '软件和鼠标。数据' });
+    append('delta', { text: '库\n\n`软件`\n\n```yaml\n名字: 张三\n```\n\n> 软件原文\n\n[软件链接](https://example.test/软件)' });
+    append('done');
   } else if (variant === 'empty') append('done');
   const last = snapshot.runs.at(-1)!;
   const terminal = snapshot.events.at(-1)!;
@@ -376,7 +381,11 @@ for (const variant of variants) test(`current Python export follows the live tra
   const backend = await startBackend(new URL(baseURL!).origin, snapshot);
   const exported = await context.newPage();
   const externalRequests: string[] = [];
-  await exported.route('**/*', route => { externalRequests.push(route.request().url()); return route.abort(); });
+  await exported.route('**/*', route => {
+    if (route.request().url().startsWith('file:')) return route.continue();
+    externalRequests.push(route.request().url());
+    return route.abort();
+  });
   const dir = path.join(root, 'artifacts', 'chat-rendering', test.info().project.name, variant);
   await mkdir(dir, { recursive: true });
   try {
@@ -407,7 +416,35 @@ for (const variant of variants) test(`current Python export follows the live tra
         await saved.getByText('View Schedule Spec YAML', { exact: true }).click();
       }
     }
-    await expect(exported.locator('script')).toHaveCount(0);
+    await expect(exported.locator('script')).toHaveCount(1);
+    if (variant === 'chinese') {
+      const html = await exportHtml(snapshot);
+      expect(html).toContain('软件和鼠标。数据库');
+      const filename = path.join(dir, 'chat.html');
+      await writeFile(filename, html);
+      await exported.goto(pathToFileURL(filename).href);
+      const name = '自動轉換為臺灣繁體中文';
+      for (const current of [page, exported]) {
+        const toggle = current.getByRole('checkbox', { name: current === page ? 'Convert to Taiwan Traditional Chinese' : name, exact: true });
+        await expect(toggle).toBeChecked();
+        await expect(current.locator('article.assistant .content').last()).toContainText('軟體和滑鼠。資料庫');
+        await expect(current.locator('article.assistant .content pre').last()).toHaveText('名字: 张三\n');
+        await expect(current.locator('article.assistant .content blockquote').last()).toHaveText('软件原文');
+        await expect(current.getByRole('link', { name: '软件链接' })).toHaveAttribute('href', encodeURI('https://example.test/软件'));
+        await toggle.uncheck();
+        await expect(current.locator('article.assistant .content').last()).toContainText('软件和鼠标。数据库');
+        await toggle.check();
+        await expect(current.locator('article.assistant .content').last()).toContainText('軟體和滑鼠。資料庫');
+      }
+      await page.getByRole('checkbox', { name: 'Convert to Taiwan Traditional Chinese', exact: true }).uncheck();
+      await page.reload();
+      await expect(page.getByRole('checkbox', { name: 'Convert to Taiwan Traditional Chinese', exact: true })).not.toBeChecked();
+      await expect(page.locator('article.assistant .content').last()).toContainText('软件和鼠标。数据库');
+      expect(await page.evaluate(key => sessionStorage.getItem(key), storageKey)).toContain('软件和鼠标。数据库');
+      await page.getByRole('checkbox', { name: 'Convert to Taiwan Traditional Chinese', exact: true }).check();
+      await page.screenshot({ path: path.join(dir, 'conversion-settings.png'), fullPage: true });
+      await exported.screenshot({ path: path.join(dir, 'conversion-export.png'), fullPage: true });
+    }
     if (variant === 'length-recovery') {
       for (const current of [page, exported]) {
         await expect(current.getByText('Incomplete response. Omitted from future model context.')).toHaveCount(1);

@@ -32,6 +32,7 @@ from jinja2 import Environment, StrictUndefined
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
 
+from ..version import REPOSITORY_ROOT
 from .chat_projection import project_saved_chat
 
 MAX_MARKDOWN_DEPTH = 64
@@ -906,6 +907,22 @@ def _template():
     )
 
 
+@lru_cache(maxsize=1)
+def _conversion_script():
+    directory = Path(__file__).parent
+    vendor = REPOSITORY_ROOT / "thirdparty" / "opencc"
+    notices = "\n".join((vendor / name).read_text(encoding="utf-8") for name in ("LICENSE", "THIRD_PARTY_LICENSES.md"))
+    script = (
+        "/*\n"
+        + notices.replace("*/", "* /")
+        + "\n*/\n"
+        + (vendor / "cn2t.js").read_text(encoding="utf-8")
+        + ";\n"
+        + (directory / "chat_conversion.js").read_text(encoding="utf-8")
+    )
+    return script.replace("</", "<\\/")
+
+
 def build_html_chat(messages, metadata):
     rendered, urls = [], metadata.get("fileUrls", {})
     for message in _display_messages(messages):
@@ -1068,6 +1085,7 @@ def build_html_chat(messages, metadata):
         )
     return _template().render(
         styles=Path(__file__).with_name("chat_styles.css").read_text(encoding="utf-8"),
+        conversion_script=_conversion_script(),
         exported_at=escape_html(_iso(metadata["exportedAt"])),
         frontend=escape_html(metadata["frontendVersion"]),
         backend=escape_html(metadata.get("backendVersion", "unknown")),

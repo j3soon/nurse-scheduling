@@ -681,3 +681,17 @@ def test_schedule_snapshots_keep_exact_inputs_and_skip_ai_edits(initial):
     assert "<script> & ```" not in html
     assert markdown.count("<summary>View Schedule Spec YAML</summary>") == 2
     assert "````yaml\n" + updated + "\n````" in markdown
+
+
+def test_chinese_conversion_is_reversible_browser_display_only():
+    text = "软件和鼠标。数据库\n\n`软件`\n\n> 软件原文\n\n<script>unsafe()</script>"
+    messages = [{"role": "assistant", "content": text}, {"role": "user", "content": "软件用户原文"}]
+    html = build_html_chat(messages, CASES[0]["metadata"])
+    document, script = html.split("<script>")
+    assert "软件和鼠标。数据库" in document
+    assert "软件用户原文" in document
+    assert "軟體和滑鼠。資料庫" not in document
+    assert '<input id="convert-chinese" type="checkbox" checked disabled>' in document
+    assert "unsafe()" not in document
+    assert script.count("</script>") == 1
+    assert text in build_markdown_chat(messages, CASES[0]["metadata"])

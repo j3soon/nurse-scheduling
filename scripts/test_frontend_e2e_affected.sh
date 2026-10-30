@@ -47,6 +47,7 @@ fi
 
 # Export rendering crosses Python, frontend components, and their shared CSS.
 mapfile -d '' rendering_changes < <(
+  affected_changed_files "$ROOT_DIR" thirdparty/opencc
   affected_changed_files "$ROOT_DIR" ':(glob)core/nurse_scheduling/ai/chat_*'
   affected_changed_files "$ROOT_DIR" core/tests/ai_fixtures/chat-rendering.json
   affected_changed_files "$ROOT_DIR" core/tests/chat_rendering_helper.py

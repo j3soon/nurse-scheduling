@@ -19,6 +19,8 @@
 // This code is mostly AI generated.
 
 export const en = {
+  "Convert assistant prose for display. Saved and exported messages keep the original text.": "Convert assistant prose for display. Saved and exported messages keep the original text.",
+  "Convert to Taiwan Traditional Chinese": "Convert to Taiwan Traditional Chinese",
   "Download YAML": "Download YAML",
   "Copy failed. Select the YAML to copy it.": "Copy failed. Select the YAML to copy it.",
   "Copy YAML": "Copy YAML",

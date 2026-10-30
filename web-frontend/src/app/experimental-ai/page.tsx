@@ -80,6 +80,7 @@ interface AiPreferences {
   showTools: boolean;
   showCosts: boolean;
   showModels: boolean;
+  convertChinese: boolean;
 }
 
 interface StoredAiAuth {
@@ -264,6 +265,7 @@ export default function ExperimentalAiPage() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [showReasoning, setShowReasoning] = useState(true);
+  const [convertChinese, setConvertChinese] = useState(true);
   const [showTools, setShowTools] = useState(true);
   const [showCosts, setShowCosts] = useState(true);
   const [showModels, setShowModels] = useState(true);
@@ -356,6 +358,7 @@ export default function ExperimentalAiPage() {
         // Restore browser preferences after hydration.
         // eslint-disable-next-line react-hooks/set-state-in-effect
         if (typeof preferences.showReasoning === 'boolean') setShowReasoning(preferences.showReasoning);
+        if (typeof preferences.convertChinese === 'boolean') setConvertChinese(preferences.convertChinese);
         if (typeof preferences.showTools === 'boolean') setShowTools(preferences.showTools);
         if (typeof preferences.showCosts === 'boolean') setShowCosts(preferences.showCosts);
         if (typeof preferences.showModels === 'boolean') setShowModels(preferences.showModels);
@@ -396,11 +399,12 @@ export default function ExperimentalAiPage() {
   }, [restoreConversation]);
 
   const rememberPreferences = (updates: Partial<AiPreferences>) => {
-    const preferences = { showReasoning, showTools, showCosts, showModels, ...updates };
+    const preferences = { showReasoning, showTools, showCosts, showModels, convertChinese, ...updates };
     setShowReasoning(preferences.showReasoning);
     setShowTools(preferences.showTools);
     setShowCosts(preferences.showCosts);
     setShowModels(preferences.showModels);
+    setConvertChinese(preferences.convertChinese);
     try {
       window.localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(preferences));
     } catch {
@@ -1170,6 +1174,12 @@ export default function ExperimentalAiPage() {
                   onChange={event => rememberPreferences({ showModels: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
                 {t("Show models")}</label>
+              <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0" title={t("Convert assistant prose for display. Saved and exported messages keep the original text.")}>
+                <input type="checkbox" checked={convertChinese}
+                  onChange={event => rememberPreferences({ convertChinese: event.target.checked })}
+                  className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
+                {t("Convert to Taiwan Traditional Chinese")}
+              </label>
             </div>
             {process.env.NEXT_PUBLIC_DISABLE_SENTRY !== '1' && (
               // FeedbackWidget hides the floating Feedback button here on phones.
@@ -1240,6 +1250,7 @@ export default function ExperimentalAiPage() {
       <ChatTranscriptView
         messages={messages}
         showReasoning={showReasoning}
+        convertChinese={convertChinese}
         showTools={showTools}
         showCosts={showCosts}
         showModels={showModels}

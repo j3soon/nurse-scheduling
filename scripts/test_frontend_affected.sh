@@ -16,10 +16,16 @@ if ((${#affected_paths[@]} > 0)); then
     related_files+=("${file#web-frontend/}")
   done
 elif [[ "$run_full_suite" == false ]]; then
-  mapfile -d '' changed_files < <(affected_changed_files "$ROOT_DIR" web-frontend)
+  mapfile -d '' changed_files < <(
+    affected_changed_files "$ROOT_DIR" web-frontend
+    affected_changed_files "$ROOT_DIR" thirdparty/opencc
+  )
   for file in "${changed_files[@]}"; do
     relative="${file#web-frontend/}"
     case "$relative" in
+      thirdparty/opencc/*)
+        related_files+=(src/app/experimental-ai/chineseConversion.ts)
+        ;;
       src/test/setup.ts | src/app/globals.css)
         run_full_suite=true
         ;;

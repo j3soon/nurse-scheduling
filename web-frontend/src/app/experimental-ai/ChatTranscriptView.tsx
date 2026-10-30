@@ -57,6 +57,7 @@ function ThinkingIndicator() {
 interface ChatTranscriptViewProps {
   messages: ChatMessage[];
   showReasoning: boolean;
+  convertChinese?: boolean;
   showTools: boolean;
   showCosts: boolean;
   showModels: boolean;
@@ -76,6 +77,7 @@ interface ChatTranscriptViewProps {
 export function ChatTranscriptView({
   messages,
   showReasoning,
+  convertChinese = true,
   showTools,
   showCosts,
   showModels,
@@ -140,7 +142,7 @@ export function ChatTranscriptView({
                 </ul>
               )}
               {message.activity && (
-                <AssistantActivity
+                <AssistantActivity convertChinese={convertChinese}
                   entries={message.activity.filter(entry => (
                     entry.kind === 'notice' || entry.kind === 'response' || entry.kind === 'schedule-spec-applied' || entry.kind === 'schedule-spec-check'
                       || entry.kind === 'compaction'

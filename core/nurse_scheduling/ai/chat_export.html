@@ -27,8 +27,11 @@ SPDX-FileCopyrightText: 2026 Johnson Sun -#}
   <main>
     <h1>Schedule AI Chat</h1>
     <p class="metadata">Exported {{ exported_at }}<br>Frontend version: {{ frontend }}<br>Backend version: {{ backend }}<br>AI server: {{ endpoint }}</p>
+    <label style="display:flex;align-items:center;gap:6px;margin-bottom:16px;min-height:44px" title="Convert assistant prose for display. This file retains the original text."><input id="convert-chinese" type="checkbox" checked disabled> 自動轉換為臺灣繁體中文</label>
+    <noscript><p>Enable JavaScript to convert assistant prose. The original text is shown below.</p></noscript>
     <section class="chat" aria-label="Chat transcript">{{ messages }}
     </section>{{ uploads }}{{ running }}
   </main>
+  <script>{{ conversion_script }}</script>
 </body>
 </html>

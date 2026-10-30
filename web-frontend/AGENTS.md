@@ -83,7 +83,10 @@ For exact elapsed-time assertions, install the Playwright clock before navigatio
 at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
 time advancing during setup. Use `runFor` to check timer updates.
 
-Treat transcript visibility preferences as display settings. Saved exports retain
+Treat Chinese conversion and transcript visibility preferences as display settings.
+Keep original chat text in storage, model inputs, and exports. Offline HTML may
+convert assistant prose in the browser with a reversible toggle. Preserve code,
+links, and block quotes during conversion. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
 Keep assistant output and tool activity, including tool results, left-aligned.

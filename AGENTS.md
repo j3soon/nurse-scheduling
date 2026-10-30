@@ -5,7 +5,7 @@
 - `web-frontend/`: Next.js + TypeScript app.
 - `docs/`: Zensical content, dependencies, and template overrides.
 - `scripts/`: setup and development utilities.
-- `thirdparty/`: external calendar data and helpers.
+- `thirdparty/`: external data, helpers, and vendored libraries shared by modules.
 
 Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 

@@ -101,4 +101,27 @@ people: []
     expect(unsafeLink?.getAttribute('href') ?? '').not.toMatch(/^javascript:/i);
     expect(screen.getByText('[Remote image omitted: tracker]')).toBeInTheDocument();
   });
+  it('converts prose by default and restores exact originals without changing literal text', () => {
+    const content = '软件和鼠标。**数据库**\n\n`软件`\n\n```yaml\n名字: 张三\n```\n\n> 软件原文\n\n[软件链接](https://example.test/软件)';
+    const { container, rerender } = render(<AssistantMarkdown content={content} />);
+    expect(screen.getByText('軟體和滑鼠。', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('資料庫')).toBeInTheDocument();
+    expect(container.querySelector('blockquote')).toHaveTextContent('软件原文');
+    expect(container.querySelector('a')).toHaveTextContent('软件链接');
+    expect(container.querySelector('a')).toHaveAttribute('href', encodeURI('https://example.test/软件'));
+    expect(container.querySelector('pre')).toHaveTextContent('名字: 张三');
+    expect(container.querySelector('code')).toHaveTextContent('软件');
+    rerender(<AssistantMarkdown content={content} convertChinese={false} />);
+    expect(screen.getByText('软件和鼠标。', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('数据库')).toBeInTheDocument();
+    rerender(<AssistantMarkdown content={content} />);
+    expect(screen.getByText('資料庫')).toBeInTheDocument();
+  });
+
+  it('reconverts the accumulated message when a streamed phrase completes', () => {
+    const { rerender } = render(<AssistantMarkdown content="数据" />);
+    rerender(<AssistantMarkdown content="数据库" />);
+    expect(screen.getByText('資料庫')).toBeInTheDocument();
+  });
+
 });

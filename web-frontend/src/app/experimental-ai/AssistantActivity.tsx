@@ -175,7 +175,7 @@ export function CompactionSummary({ entry }: { entry: CompactionActivity }) {
   </>;
 }
 
-export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
+export function AssistantActivity({ entries, convertChinese = true }: { entries: ActivityEntry[]; convertChinese?: boolean }) {
   const { t } = useI18n();
   if (entries.length === 0) return null;
 
@@ -198,7 +198,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
             <p role="status" className="notice-message">{entry.text}</p>
           ) : entry.kind === 'response' ? (
             <>
-              <AssistantMarkdown content={entry.text} />
+              <AssistantMarkdown content={entry.text} convertChinese={convertChinese} />
               <p className="character-count">{formatCount(characterCount(entry.text))}{t(" characters")}</p>
             </>
           ) : (
