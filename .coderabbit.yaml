@@ -3,3 +3,12 @@
 reviews:
   high_level_summary: true
   high_level_summary_in_walkthrough: true
+  path_filters:
+    - "!docs/content/**/*.md"
+    - "!**/README.md"
+    - "!core/tests/**"
+    - "!web-frontend/e2e/**"
+    - "!web-frontend/src/**/*.test.ts"
+    - "!web-frontend/src/**/*.test.tsx"
+    - "!web-frontend/src/test/**"
+    - "!web-frontend/docs-screenshots/**"
