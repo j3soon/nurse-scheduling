@@ -717,6 +717,30 @@ def test_manual_compaction_skips_when_the_last_transcript_entry_is_a_summary():
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("limit", [32768, 65536], ids=["default-cap", "larger-explicit-cap"])
+def test_request_output_cap_does_not_trigger_context_compaction(limit):
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd
+
+    class Provider(CompactionProvider):
+        context_tokens = 262144
+        output_tokens = 131072
+
+        async def stream_events(self, messages, tools=None):
+            self.requests.append((messages, tools))
+            yield TextDelta("Truncated answer")
+            yield TokenUsage(4000, limit, 4000 + limit)
+            yield ResponseEnd("length", limit)
+
+    provider = Provider()
+    events = asyncio.run(collect(agent_loop(provider, history(8000), [], keep_recent_tokens=1000)))
+    assert len(provider.requests) == 1
+    assert provider.summaries == []
+    replies = [event.message for event in events if isinstance(event, AgentMessageEnd)]
+    assert len(replies) == 1
+    assert replies[0].stop_reason == "length"
+    assert not replies[0].context_omitted
+
+
 @pytest.mark.parametrize("repeated", [False, True], ids=["recovered", "bounded-retry"])
 def test_recoverable_length_compacts_once_without_replaying_partial_tools(repeated):
     from nurse_scheduling.ai.agent_types import AgentMessageEnd

@@ -160,6 +160,7 @@ class ResponseEnd:
     """
 
     finish_reason: str | None
+    output_token_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -856,7 +857,12 @@ class OpenAiCompatibleProvider:
                 yield ReasoningReplay(native_reasoning, self.identity)
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
-            yield ResponseEnd(finish_reason)
+            yield ResponseEnd(
+                finish_reason,
+                (payload.get("max_completion_tokens") or payload.get("max_tokens"))
+                if finish_reason == "length"
+                else None,
+            )
 
 
 def _is_context_overflow(body: str) -> bool:

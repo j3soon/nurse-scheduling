@@ -833,10 +833,13 @@ def test_default_allowance_respects_model_limits_and_explicit_requests(
     monkeypatch, context, output, requested, expected
 ):
     requests = []
-    provider = _streaming_provider(monkeypatch, _sse_body(_delta_chunk({"content": "Done"})), requests)
+    chunk = _delta_chunk({"content": "Done"})
+    chunk["choices"][0]["finish_reason"] = "length"
+    provider = _streaming_provider(monkeypatch, _sse_body(chunk), requests)
     provider.context_tokens, provider.output_tokens = context, output
-    _events(provider.with_output_limit(requested, context_used_tokens=8))
+    events = _events(provider.with_output_limit(requested, context_used_tokens=8))
     assert json.loads(requests[0].content)["max_tokens"] == expected
+    assert events[-1] == ResponseEnd("length", expected)
 
 
 def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1104,7 +1107,7 @@ def test_completion_is_checked_before_releasing_tool_calls(monkeypatch, finish_r
         assert seen == [
             ToolCallProgress(2),
             ToolCallRequest((ToolCall("edit", "edit", "{}"),)),
-            ResponseEnd(finish_reason),
+            ResponseEnd(finish_reason, 32768 if finish_reason == "length" else None),
         ]
 
 
@@ -1207,7 +1210,7 @@ def test_stream_end_diagnostics_record_signals_without_response_text(monkeypatch
         with pytest.raises(ProviderError, match="before completion"):
             _events(provider)
     else:
-        assert _events(provider)[-1] == ResponseEnd(reason)
+        assert _events(provider)[-1] == ResponseEnd(reason, 32768 if reason == "length" else None)
     assert f"finish_reason={reason} done_received={done}" in caplog.text
     assert "text_chars=18 reasoning_chars=17 tool_calls=0" in caplog.text
     assert "private words" not in caplog.text and "private reasoning" not in caplog.text

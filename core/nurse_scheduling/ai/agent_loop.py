@@ -151,6 +151,7 @@ async def agent_loop(
                 yield AgentSteering(message_id, text)
         answer, reasoning, calls = [], [], ()
         finish_reason = None
+        output_token_limit = None
         replay = None
         usage = None
         request = current_request()
@@ -205,6 +206,7 @@ async def agent_loop(
                         yield AgentGenerationProgress("tool_calls", event.characters)
                     elif isinstance(event, ResponseEnd):
                         finish_reason = event.finish_reason
+                        output_token_limit = event.output_token_limit
         except ProviderContextOverflowError:
             failed = AssistantMessage(
                 "".join(answer), "error", "".join(reasoning), calls, usage=usage, context_omitted=True
@@ -236,7 +238,7 @@ async def agent_loop(
             replay.provider if replay else getattr(provider, "identity", None),
             usage,
         )
-        desired_output = getattr(provider, "output_tokens", None)
+        desired_output = output_token_limit or getattr(provider, "output_tokens", None)
         completion = (usage or {}).get("completion_tokens")
         recoverable_length = (
             finish_reason == "length"
