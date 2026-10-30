@@ -362,6 +362,69 @@ async function mockAiBackend(
   });
 }
 
+for (const clearPending of [false, true]) {
+  test(`recovers a tab after a failed first history write and respects ${clearPending ? 'clearing pending history' : 'later removal'}`, async ({ page }) => {
+    await mockAiBackend(page, ['Recovered answer.']);
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (this === localStorage && key === 'nurse-scheduling-ai-history'
+          && sessionStorage.getItem('test-history-full') !== 'false') {
+          throw new DOMException('Full', 'QuotaExceededError');
+        }
+        setItem.call(this, key, value);
+      };
+    });
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Keep this chat.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const transcript = page.getByRole('region', { name: 'Chat messages' });
+    await expect(transcript.getByText('Recovered answer.')).toBeVisible();
+    await expect(page.getByText(/Recent chats could not be saved/)).toBeVisible();
+    const snapshot = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? 'null'));
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(true);
+    await page.reload();
+    await expect(transcript.getByText('Recovered answer.')).toBeVisible();
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(true);
+
+    if (clearPending) {
+      await page.evaluate(() => {
+        const stored = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+        sessionStorage.setItem('test-history-full', 'false');
+        localStorage.setItem('nurse-scheduling-ai-history', JSON.stringify({ appVersion: 'test', entries: [{
+          lastActivityAt: stored.lastActivityAt,
+          conversation: { ...stored, sessionId: 'older', messages: [{ id: 'old', role: 'user', content: 'Older chat' }] },
+        }] }));
+        window.dispatchEvent(new Event('ai-chat-history-changed'));
+        sessionStorage.setItem('test-history-full', 'true');
+      });
+      page.on('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: 'Clear history', exact: true }).click();
+      await page.evaluate(() => {
+        sessionStorage.setItem('test-history-full', 'false');
+        window.dispatchEvent(new Event('pagehide'));
+      });
+      expect(await snapshot()).toBeNull();
+      expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-history'))).toBeNull();
+      await page.reload();
+      await expect(transcript.getByText('Recovered answer.')).toHaveCount(0);
+      return;
+    }
+
+    await page.evaluate(() => sessionStorage.setItem('test-history-full', 'false'));
+    await page.reload();
+    const history = page.getByRole('complementary', { name: 'Recent chats' });
+    await expect(history.getByRole('button', { name: /^Keep this chat/ })).toBeVisible();
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(false);
+    await history.getByRole('button', { name: 'Remove chat: Keep this chat.' }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    expect(await snapshot()).toBeNull();
+    await page.reload();
+    await expect(transcript.getByText('Recovered answer.')).toHaveCount(0);
+    await expect(history.getByText('No recent chats.')).toBeVisible();
+  });
+}
+
 test('submits a long question without a character limit', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Long question received.']);
   await page.route('**/capabilities', route => route.fulfill({ json: {
@@ -1077,7 +1140,13 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
     if (touch) await finish.tap(); else await finish.click();
     await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Cancel optimizer' })).toBeEnabled();
-    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    // The button also reflects the optimistic POST state. Wait for the server
+    // event in the saved snapshot before checking its persistence across reload.
+    await expect.poll(() => page.evaluate(() => {
+      window.dispatchEvent(new Event('pagehide'));
+      return JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? 'null')
+        ?.activeOptimization?.finishNowRequestedBy;
+    })).toBe('user');
     await page.reload();
     await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
     await expect.poll(() => backend.hasWaitingReader()).toBe(true);

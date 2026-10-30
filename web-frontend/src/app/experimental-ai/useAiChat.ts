@@ -371,6 +371,10 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const clearRecentChats = () => {
     try {
       clearChatHistory();
+      if (sessionIdRef.current) {
+        historyForgottenRef.current = true;
+        historyCreateRef.current = false;
+      }
       clearStoredConversation();
     } catch {
       setHistoryError('Chat history could not be cleared from browser storage.');
@@ -426,16 +430,20 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           })(),
         };
         try {
-          window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
-        } catch {
-          // Device history can still work when tab storage is unavailable.
-        }
-        try {
           saveChatHistory(stored, historyCreateRef.current);
           historyCreateRef.current = false;
           setHistoryError(null);
         } catch {
           setHistoryError('Recent chats could not be saved on this device. Browser storage may be unavailable or full.');
+        }
+        // A failed first history write must remain retryable after a reload.
+        stored.historyPending = historyCreateRef.current;
+        if (!historyForgottenRef.current) {
+          try {
+            window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+          } catch {
+            // Device history can still work when tab storage is unavailable.
+          }
         }
       } catch {
         // The live conversation remains usable when tab storage is unavailable or full.
@@ -1237,7 +1245,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       persistConversationRef.current?.();
       resetRuntime();
       lastActivityRef.current = storedConversation.lastActivityAt ?? Date.now();
-      historyCreateRef.current = !fromHistory && storedConversation.lastActivityAt === undefined;
+      historyCreateRef.current = !fromHistory
+        && (storedConversation.historyPending === true || storedConversation.lastActivityAt === undefined);
       preserveBrowserScheduleRef.current = fromHistory || storedConversation.preserveBrowserSchedule === true;
       setConversationUnavailable(false);
       setSessionNotice(null);

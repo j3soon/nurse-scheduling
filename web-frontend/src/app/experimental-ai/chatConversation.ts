@@ -34,6 +34,7 @@ export function clearStoredConversation(): void {
 
 export interface StoredChatConversation {
   lastActivityAt?: number;
+  historyPending?: boolean;
   preserveBrowserSchedule?: boolean;
   sessionId: string;
   endpoint: string;
@@ -154,6 +155,7 @@ export function parseStoredConversation(input: unknown): StoredChatConversation 
     const value = { ...input } as Partial<StoredChatConversation>;
     if (
       (value.lastActivityAt !== undefined && !Number.isFinite(value.lastActivityAt))
+      || (value.historyPending !== undefined && typeof value.historyPending !== 'boolean')
       || (value.preserveBrowserSchedule !== undefined && typeof value.preserveBrowserSchedule !== 'boolean')
       || typeof value.sessionId !== 'string'
       || !value.sessionId
