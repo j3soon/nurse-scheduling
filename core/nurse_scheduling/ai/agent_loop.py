@@ -246,8 +246,15 @@ async def agent_loop(
             finish_reason == "length"
             and type(desired_output) is int
             and desired_output > 0
-            and type(completion) is int
-            and completion < desired_output
+            and (
+                (type(completion) is int and completion < desired_output)
+                or (
+                    completion is None
+                    and type(output_token_limit) is int
+                    and type(output_token_allowance) is int
+                    and 0 < output_token_limit < output_token_allowance
+                )
+            )
         )
         if recoverable_length and overflow_recovered:
             conversation.append(response)

@@ -718,7 +718,8 @@ def test_manual_compaction_skips_when_the_last_transcript_entry_is_a_summary():
 
 
 @pytest.mark.parametrize("limit", [32768, 65536], ids=["default-cap", "larger-explicit-cap"])
-def test_request_output_cap_does_not_trigger_context_compaction(limit):
+@pytest.mark.parametrize("reported_usage", [False, True], ids=["missing-usage", "reported-usage"])
+def test_request_output_cap_does_not_trigger_context_compaction(limit, reported_usage):
     from nurse_scheduling.ai.agent_types import AgentMessageEnd
 
     class Provider(CompactionProvider):
@@ -728,7 +729,8 @@ def test_request_output_cap_does_not_trigger_context_compaction(limit):
         async def stream_events(self, messages, tools=None):
             self.requests.append((messages, tools))
             yield TextDelta("Truncated answer")
-            yield TokenUsage(4000, limit, 4000 + limit)
+            if reported_usage:
+                yield TokenUsage(4000, limit, 4000 + limit)
             yield ResponseEnd("length", limit, limit)
 
     provider = Provider()

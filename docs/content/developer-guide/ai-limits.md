@@ -65,9 +65,9 @@ Pi's design guides the whole agent. These implementation differences remain:
   Length-stop recovery compares reported completion usage with the normal output
   allowance, which applies model and explicit request limits before the remaining
   context limit. Filling a smaller context cap can trigger recovery. Filling the
-  normal allowance does not. If recovery compaction
-  skips or fails, normal output-limit handling retains the response and refuses
-  its partial tool calls.
+  normal allowance does not. If usage is absent, recovery requires a known request
+  cap below the known normal allowance. If recovery compaction skips or fails,
+  normal output-limit handling retains the response and refuses its partial tool calls.
   Manual compaction uses shared run admission, Stop, replay, and persistence.
   It requires an idle chat instead of implicitly stopping an active schedule
   operation. Use Stop before compacting an active chat.

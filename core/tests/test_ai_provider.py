@@ -223,6 +223,7 @@ def _transport_provider(
     handler,
     *,
     include_attempts: bool = False,
+    include_usage: bool = False,
     **settings_overrides,
 ) -> OpenAiCompatibleProvider:
     """Build a provider around a stateful mock transport."""
@@ -239,7 +240,9 @@ def _transport_provider(
         "auth_token": "ai-shared-test-token",
     }
     settings.update(settings_overrides)
-    provider = OpenAiCompatibleProvider(AiSettings(**settings), include_attempts=include_attempts)
+    provider = OpenAiCompatibleProvider(
+        AiSettings(**settings), include_attempts=include_attempts, include_usage=include_usage
+    )
     provider.context_tokens = 262144
     provider._context_tokens_loaded = True
     return provider
@@ -848,7 +851,8 @@ def test_default_allowance_respects_model_limits_and_explicit_requests(
 
 
 @pytest.mark.parametrize("retry", [False, True], ids=["first-attempt", "after-transient-failure"])
-def test_length_at_a_context_limited_cap_compacts_and_retries(monkeypatch, retry):
+@pytest.mark.parametrize("reported_usage", [False, True], ids=["missing-usage", "reported-usage"])
+def test_length_at_a_context_limited_cap_compacts_and_retries(monkeypatch, retry, reported_usage):
     from nurse_scheduling.ai.agent_types import AgentMessageEnd
 
     from .test_ai_compaction import history
@@ -870,17 +874,18 @@ def test_length_at_a_context_limited_cap_compacts_and_retries(monkeypatch, retry
         completed_requests += 1
         chunk = _delta_chunk({"content": "Cut-off answer" if completed_requests == 1 else "Recovered answer"})
         chunk["choices"][0]["finish_reason"] = "length" if completed_requests == 1 else "stop"
-        if completed_requests == 1:
+        if completed_requests == 1 and reported_usage:
             cap = payload["max_tokens"]
             chunk["usage"] = {"prompt_tokens": 16000 - 4096 - cap, "completion_tokens": cap, "total_tokens": 11904}
         return httpx.Response(200, text=_sse_body(chunk))
 
-    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    provider = _transport_provider(monkeypatch, handle, include_usage=True, provider_retry_backoff_seconds=0)
     provider.context_tokens, provider.output_tokens = 16000, 12000
     events = asyncio.run(
         _collect(agent_loop(provider, history(8000), [], reserve_tokens=1500, keep_recent_tokens=1000))
     )
     assert requests[0]["max_tokens"] < provider.output_tokens
+    assert requests[0]["stream_options"] == {"include_usage": True}
     assert len(requests) == 2 + retry
     assert len(summaries) == 1
     replies = [event.message for event in events if isinstance(event, AgentMessageEnd)]
