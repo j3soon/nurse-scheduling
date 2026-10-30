@@ -722,7 +722,7 @@ describe('AI client', () => {
     };
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(streamedResponse([
-        `event: model_input\ndata: ${JSON.stringify(input)}\n\n`,
+        `event: model_input\ndata: ${JSON.stringify({ ...input, schedule_spec_yaml: '# Original\npeople: []\n' })}\n\n`,
         'event: done\ndata: {"run_id":"1"}\n\n',
       ]))
       .mockResolvedValueOnce(streamedResponse([
@@ -734,7 +734,7 @@ describe('AI client', () => {
     await expect(streamMessage('session-id', 'Question', { onEvent }, new AbortController().signal, null))
       .rejects.toThrow('The AI backend returned an invalid model input.');
 
-    expect(onEvent.mock.calls.filter(([event]) => event.type === 'model_input')).toEqual([[{ type: 'model_input', input }]]);
+    expect(onEvent.mock.calls.filter(([event]) => event.type === 'model_input')).toEqual([[{ type: 'model_input', input: { ...input, scheduleSpecYaml: '# Original\npeople: []\n' } }]]);
   });
 
   it('reports a generated ZIP and a retention warning without failing the completed run', async () => {
@@ -758,8 +758,8 @@ describe('AI client', () => {
   it('forwards tool use, its schedule check and the applied schedule to the caller', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
-      'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
-      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true,"schedule_spec_check":{"ok":true,"text":"Valid."}}\n\n',
+      'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule-spec.yaml\\"}"}\n\n',
+      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule-spec.yaml\\"}","result":"exit_code: 0","ok":true,"schedule_spec_check":{"ok":true,"text":"Valid."}}\n\n',
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
       'event: schedule_spec_change\ndata: {"schedule_spec_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
@@ -779,9 +779,9 @@ describe('AI client', () => {
 
     expect(events).toEqual([
       { type: 'reasoning', text: 'Checking people.' },
-      { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}' } },
+      { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule-spec.yaml"}' } },
       { type: 'tool', activity: {
-        toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true,
+        toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule-spec.yaml"}', result: 'exit_code: 0', ok: true,
         scheduleSpecCheck: { ok: true, text: 'Valid.' },
       } },
       { type: 'steering', messageId: 'queued-1', message: 'Focus on P2.' },

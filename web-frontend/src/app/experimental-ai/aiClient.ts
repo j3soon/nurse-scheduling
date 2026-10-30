@@ -212,6 +212,7 @@ export interface ModelInputMessage {
 }
 
 export interface ModelInput {
+  scheduleSpecYaml?: string;
   system: string;
   messages: ModelInputMessage[];
 }
@@ -759,10 +760,12 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     }
   } else if (eventType === 'model_input') {
     if (typeof payload.system !== 'string' || !Array.isArray(payload.messages)
-      || !payload.messages.every(isModelInputMessage)) {
+      || !payload.messages.every(isModelInputMessage)
+      || (payload.schedule_spec_yaml !== undefined && typeof payload.schedule_spec_yaml !== 'string')) {
       throw new Error('The AI backend returned an invalid model input.');
     }
-    emit({ type: 'model_input', input: { system: payload.system, messages: payload.messages } });
+    emit({ type: 'model_input', input: { system: payload.system, messages: payload.messages,
+      ...(typeof payload.schedule_spec_yaml === 'string' ? { scheduleSpecYaml: payload.schedule_spec_yaml } : {}) } });
   } else if (eventType === 'done') {
     emit({ type: 'done' });
   } else if (eventType === 'stopped') {

@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import { describe, expect, it } from 'vitest';
+import { applyAssistantEvent } from './assistantEvents';
 import { applyModelInput, type ChatMessage } from './chatTranscript';
 import type { ModelInput } from './aiClient';
 
@@ -84,4 +85,37 @@ describe('model input transcript placement', () => {
     expect(replaced.map(message => message.content)).toEqual(['Policy', 'Updated result', 'Optimizer review', 'Later answer']);
     expect(applyModelInput(messages, input, { questionId: null, assistantId: 'missing' })).toBe(messages);
   });
+});
+
+
+it('retains initial and changed schedule snapshots through retries, AI edits, and browser reload', () => {
+  const request = (yaml: string): ModelInput => ({ system: 'Policy', scheduleSpecYaml: yaml,
+    messages: [{ kind: 'question', content: 'Check schedule' }] });
+  let messages: ChatMessage[] = [];
+  const send = (id: string, yaml: string) => {
+    messages.push({ id: `q-${id}`, role: 'user', content: 'Check schedule' },
+      { id, role: 'assistant', content: '' });
+    messages = applyModelInput(messages, request(yaml), { questionId: `q-${id}`, assistantId: id });
+  };
+  send('a', '');
+  expect(messages.find(message => message.source === 'schedule')).toMatchObject({
+    title: 'Initial Schedule Spec sent', content: '',
+  });
+  messages = applyModelInput(messages, request(''), { questionId: 'q-a', assistantId: 'a' });
+  send('b', '');
+  expect(messages.filter(message => message.source === 'schedule')).toHaveLength(1);
+  messages = messages.map(message => message.id === 'b' ? applyAssistantEvent(message,
+    { type: 'schedule_spec_applied', diff: 'Changed', scheduleSpecYaml: '# AI edit\npeople: []\n' }) : message);
+  messages = applyModelInput(messages, request(''), { questionId: 'q-b', assistantId: 'b' });
+  // Reload retains the last accepted schedule, including AI changes.
+  messages = JSON.parse(JSON.stringify(messages));
+  send('c', '# AI edit\npeople: []\n');
+  expect(messages.filter(message => message.source === 'schedule')).toHaveLength(1);
+  send('d', '# App edit\npeople: []\n');
+  const snapshots = messages.filter(message => message.source === 'schedule');
+  expect(snapshots.map(message => [message.title, message.content])).toEqual([
+    ['Initial Schedule Spec sent', ''], ['Updated Schedule Spec sent', '# App edit\npeople: []\n'],
+  ]);
+  expect(messages.indexOf(snapshots[1]) + 1).toBe(messages.findIndex(message => message.id === 'q-d'));
+  expect(messages.find(message => message.id === 'schedule-a')?.content).toBe('');
 });

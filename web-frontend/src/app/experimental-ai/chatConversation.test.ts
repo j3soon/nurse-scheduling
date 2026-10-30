@@ -118,3 +118,13 @@ describe('stored conversation compatibility', () => {
     expect(readStoredConversation()).toBeNull();
   });
 });
+
+
+it('restores schedule snapshots and the accepted AI schedule used for later comparisons', () => {
+  const messages = [
+    { id: 'snapshot', role: 'user', source: 'schedule', title: 'Initial Schedule Spec sent', content: '' },
+    { id: 'answer', role: 'assistant', content: 'Edited', scheduleSpecYaml: '# Accepted\npeople: []\n' },
+  ];
+  sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), messages }));
+  expect(readStoredConversation()?.messages).toEqual(messages);
+});

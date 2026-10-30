@@ -129,3 +129,5 @@
   .chat { padding: 16px; }
   .chat .message { width: 85%; max-width: 85%; padding-right: 16px; padding-left: 16px; }
 }
+.chat .snapshot-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; font-size: 12px; line-height: 16px; }
+.chat .snapshot-actions a, .chat .snapshot-actions button { cursor: pointer; text-decoration: underline; }

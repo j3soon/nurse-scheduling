@@ -253,6 +253,12 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 Uploaded file names and sizes appear beside their upload event in the chat and
 exports. The file panel shows the files currently retained by the session.
 
+The chat shows a centered **Initial Schedule Spec sent** bubble with the first
+message. It shows **Updated Schedule Spec sent** when a later message sends
+changed schedule data from the app. Expand **View Schedule Spec YAML** to read the
+complete saved version. You can copy or download that version without changing
+the current schedule data. These snapshots also appear in chat exports.
+
 Use **Export Chat** to download one ZIP from the server. Extract it and open
 `chat.html` for a styled transcript or `chat.md` for Markdown. Both link to files
 under `attachments/`, including removed uploads, generated ZIPs, and optimizer

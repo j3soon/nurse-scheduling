@@ -21,7 +21,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -388,9 +388,25 @@ for (const variant of variants) test(`current Python export follows the live tra
     }
     await replay(page, snapshot, backend);
     if (variant === 'rich') {
+      await expect(page.getByText('Initial Schedule Spec sent', { exact: true })).toHaveCount(1);
+      await expect(page.getByText('Updated Schedule Spec sent', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Download files (ZIP)', exact: true })).toHaveCount(1);
     }
     await exported.setContent(await exportHtml(snapshot));
+    if (variant === 'rich') {
+      for (const current of [page, exported]) {
+        const saved = current.locator('article.schedule').first();
+        await saved.getByText('View Schedule Spec YAML', { exact: true }).click();
+        const yaml = snapshot.events.find(event => event.type === 'model_input')!.data.schedule_spec_yaml as string;
+        expect(await saved.locator('pre').textContent()).toBe(yaml);
+        const downloading = current.waitForEvent('download');
+        await saved.getByRole('link', { name: 'Download YAML', exact: true }).click();
+        const download = await downloading;
+        expect(download.suggestedFilename()).toBe('schedule-spec.yaml');
+        expect(await readFile((await download.path())!, 'utf8')).toBe(yaml);
+        await saved.getByText('View Schedule Spec YAML', { exact: true }).click();
+      }
+    }
     await expect(exported.locator('script')).toHaveCount(0);
     if (variant === 'length-recovery') {
       for (const current of [page, exported]) {

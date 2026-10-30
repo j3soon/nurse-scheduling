@@ -95,7 +95,9 @@ Classify notices by their context provenance, because some report text supplied
 to the model. A discarded summary belongs with app notices and must say that it
 is omitted from future context. Derive these bubbles for display without changing
 saved message identity, execution ownership, or model inputs. Match chat exports
-to this convention.
+to this convention. Keep schedule input snapshots exact and separate from model
+messages. Compare later submissions with the last accepted schedule, including
+AI-applied edits. Do not count snapshot bubbles when marking compacted context.
 Invalidate summaries across every reply from a failed run, including replies
 before steering. Test foreground output, background replay, and reload.
 

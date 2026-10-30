@@ -19,6 +19,13 @@
 // This code is mostly AI generated.
 
 export const en = {
+  "Download YAML": "Download YAML",
+  "Copy failed. Select the YAML to copy it.": "Copy failed. Select the YAML to copy it.",
+  "Copy YAML": "Copy YAML",
+  "View Schedule Spec YAML": "View Schedule Spec YAML",
+  "Schedule Spec sent": "Schedule Spec sent",
+  "Updated Schedule Spec sent": "Updated Schedule Spec sent",
+  "Initial Schedule Spec sent": "Initial Schedule Spec sent",
   "Count Shift Type": "Count Shift Type",
   " - {value0}": " - {value0}",
   " · {value0} ms": " · {value0} ms",

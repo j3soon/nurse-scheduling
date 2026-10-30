@@ -109,8 +109,9 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (message.providerCalls === undefined || (Array.isArray(message.providerCalls) && message.providerCalls.every(isProviderCallCost)))
     && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'optimizer')
     && typeof message.content === 'string'
+    && (message.scheduleSpecYaml === undefined || typeof message.scheduleSpecYaml === 'string')
     && (message.failureReason === undefined || typeof message.failureReason === 'string')
-    && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer')
+    && (message.source === undefined || message.source === 'app' || message.source === 'status' || message.source === 'optimizer' || message.source === 'schedule')
     && (message.historyIndex === undefined || Number.isSafeInteger(message.historyIndex))
     && (message.title === undefined || typeof message.title === 'string')
     && (message.activity === undefined

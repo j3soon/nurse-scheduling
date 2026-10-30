@@ -626,3 +626,58 @@ def test_saved_exports_always_include_models_and_latest_call_costs(format, cost)
     assert "100 tok/s" in text
     assert "Speed measured for 1 of 1 call." in text
     assert "Streaming: 0.2s · Time to first output: 0.5s" in text
+
+
+@pytest.mark.parametrize("initial", ["", "\n# Initial upload\npeople: []\n"])
+def test_schedule_snapshots_keep_exact_inputs_and_skip_ai_edits(initial):
+    snapshot = saved_case("saved-rich")
+    snapshot["events"] = []
+    snapshot["runs"] = []
+    at = snapshot["snapshot_at"]
+    ai_yaml = "# AI edit\npeople: []\n"
+    updated = 'description: "<script> & ```"\npeople: []\n'
+    for index, yaml in enumerate((initial, initial, ai_yaml, updated)):
+        run_id = f"schedule-{index}"
+        snapshot["runs"].append({"id": run_id, "kind": "foreground", "prompt": "Check schedule", "started_at": at})
+        snapshot["events"].append(
+            {
+                "type": "model_input",
+                "occurred_at": at,
+                "data": {
+                    "run_id": run_id,
+                    "system": "Policy",
+                    "schedule_spec_yaml": yaml,
+                    "messages": [{"kind": "question", "content": "Check schedule"}],
+                },
+            }
+        )
+        if index == 1:
+            snapshot["events"].append(
+                {
+                    "type": "schedule_spec_applied",
+                    "occurred_at": at,
+                    "data": {
+                        "run_id": run_id,
+                        "schedule_spec_yaml": ai_yaml,
+                        "diff": "AI edit",
+                    },
+                }
+            )
+        snapshot["events"].append({"type": "done", "occurred_at": at, "data": {"run_id": run_id}})
+    messages, _ = project_saved_chat(snapshot)
+    saved = [message for message in messages if message.get("source") == "schedule"]
+    assert [(message["title"], message["content"]) for message in saved] == [
+        ("Initial Schedule Spec sent", initial),
+        ("Updated Schedule Spec sent", updated),
+    ]
+    assert messages.index(saved[0]) < next(
+        i for i, m in enumerate(messages) if m["role"] == "user" and not m.get("source")
+    )
+    html = build_saved_chat_export(snapshot, "html")
+    markdown = build_saved_chat_export(snapshot, "markdown")
+    assert html.count('class="system-prompt schedule-snapshot"') == 2
+    assert '<article class="message user schedule app-notice">' in html
+    assert "description: &quot;&lt;script&gt; &amp; ```&quot;" in html
+    assert "<script> & ```" not in html
+    assert markdown.count("<summary>View Schedule Spec YAML</summary>") == 2
+    assert "````yaml\n" + updated + "\n````" in markdown

@@ -29,6 +29,7 @@ import { FiDownload } from 'react-icons/fi';
 import { AssistantActivity, CompactionSummary } from './AssistantActivity';
 import { CostDetails } from './CostDetails';
 import CollapsedText from './CollapsedText';
+import ScheduleSnapshot from './ScheduleSnapshot';
 import { characterCount, messageLabel, messageUploadedFileLines, transcriptConversation } from './chatPresentation';
 import { formatResponseDuration, formatResponseTime, formatSessionExpiration, retentionLabel } from './chatPresentation';
 import { parseOptimizerMessage } from './optimizerMessage';
@@ -107,10 +108,11 @@ export function ChatTranscriptView({
         {bubbles.map(({ message, key }) => {
           const notice = message.presentation === 'notice';
           const summary = message.presentation === 'summary' ? message.compaction : undefined;
-          const centered = notice || summary?.invalidated || message.role === 'optimizer';
+          const schedule = message.source === 'schedule';
+          const centered = schedule || notice || summary?.invalidated || message.role === 'optimizer';
           const alignment = centered ? 'mx-auto' : message.role === 'assistant' ? 'mr-auto' : 'ml-auto';
           const classes = ['message', message.role, message.source,
-            notice || summary?.invalidated ? 'app-notice' : undefined, alignment].filter(Boolean).join(' ');
+            schedule || notice || summary?.invalidated ? 'app-notice' : undefined, alignment].filter(Boolean).join(' ');
           const uploads = messageUploadedFileLines(message);
           const timestamp = message.responseCompletedAt ?? message.createdAt;
           const optimizer = message.role === 'optimizer' ? parseOptimizerMessage(message.content) : null;
@@ -146,7 +148,7 @@ export function ChatTranscriptView({
                   ))}
                 />
               )}
-              {summary ? null : notice ? null : message.presentation === 'context' ? (
+              {schedule ? <ScheduleSnapshot yaml={message.content} /> : summary ? null : notice ? null : message.presentation === 'context' ? (
                 <p className="context-content">{message.content}</p>
               ) : message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null

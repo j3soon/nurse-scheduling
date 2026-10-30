@@ -48,7 +48,7 @@ export type AssistantEvent =
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_spec_change'; before: string; after: string }
-  | { type: 'schedule_spec_applied'; diff: string; runId?: string; notice?: string; browserApplied?: boolean };
+  | { type: 'schedule_spec_applied'; diff: string; scheduleSpecYaml?: string; runId?: string; notice?: string; browserApplied?: boolean };
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_spec_change'
@@ -193,7 +193,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
         ...(event.browserApplied === false ? { browserApplied: false } : {}),
         ...(event.runId ? { runId: event.runId } : {}), ...(event.notice ? { notice: event.notice } : {}) };
       const retained = event.runId ? activity.filter(item => item.kind !== 'schedule-spec-applied' || item.runId !== event.runId) : activity;
-      return { ...message, activity: [...retained, entry] };
+      return { ...message, ...(event.scheduleSpecYaml === undefined ? {} : { scheduleSpecYaml: event.scheduleSpecYaml }), activity: [...retained, entry] };
     }
   }
 }
@@ -256,7 +256,7 @@ export function toAssistantEvent(
       return { type: 'schedule_spec_change', before, after: event.scheduleSpecYaml };
     }
     case 'schedule_spec_applied':
-      return { type: 'schedule_spec_applied', runId: event.applied.runId, diff: event.applied.diff };
+      return { type: 'schedule_spec_applied', runId: event.applied.runId, diff: event.applied.diff, scheduleSpecYaml: event.applied.scheduleSpecYaml };
     default: return null;
   }
 }

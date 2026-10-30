@@ -30,7 +30,7 @@ export type TranscriptMessage = ChatMessage & {
 };
 
 function contextMessageCount(message: TranscriptMessage): number {
-  if (message.role === 'system' || message.role === 'optimizer' || message.presentation === 'notice') return 0;
+  if (message.role === 'system' || message.role === 'optimizer' || message.presentation === 'notice' || message.source === 'schedule') return 0;
   if (message.presentation === 'summary') return message.compaction?.invalidated ? 0 : 1;
   if (message.role === 'user') return 1;
   if (message.status === 'pending') return 0;
@@ -266,6 +266,7 @@ export function messageLabel(message: ChatMessageContent, t: Translator = transl
   if (message.role === 'system') return t("System");
   if (message.role === 'assistant') return t("Assistant");
   if (message.role === 'optimizer') return t("Optimizer");
+  if (message.source === 'schedule') return t(message.title ?? 'Schedule Spec sent');
   const topic = message.title ? t(" - {value0}", { value0: t(message.title) }) : '';
   if (message.source === 'app') return t("User · App{value0}", { value0: topic });
   if (message.source === 'status') return t("User · Status{value0}", { value0: topic });
