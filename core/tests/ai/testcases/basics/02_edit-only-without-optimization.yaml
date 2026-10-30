@@ -1,0 +1,18 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+steps:
+  - yaml: one-day.yaml
+  - user: >-
+      All scheduling requirements are already agreed. Add Bob to the people
+      list. Keep all other schedule data unchanged.
+  - schedule:
+      added:
+        people.items:
+          - id: Bob
+  - optimizer:
+      invoked: false
+  - assistant:
+      judge: >-
+        Pass when the assistant confirms that it added Bob. It must not claim
+        to have started optimization or produced a completed schedule.

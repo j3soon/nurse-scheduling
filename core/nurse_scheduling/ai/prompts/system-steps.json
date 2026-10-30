@@ -1020,12 +1020,13 @@
     "file": "steps/autonomous-roster-validation.md",
     "cases": [],
     "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit schedule data. Optimization-loop coverage awaits optimizer support in the new tester.",
-    "sha256": "82f2c53ec6852f5fc95177e9e5c7159c3c48a813f37c7d2b6206703bdd2cac9e",
+    "sha256": "ff6c09b010a751b1d2bd444aeab7498898c4f6af27c044bc9b1189dbbcef80ee",
     "evidence": [],
     "comparison_mode": "ablation",
     "reviewed_cases": [
       "basics/02_schedule-data-guidance.yaml",
-      "basics/02_explicit-people-edit.yaml"
+      "basics/02_explicit-people-edit.yaml",
+      "basics/02_edit-only-without-optimization.yaml"
     ]
   },
   {

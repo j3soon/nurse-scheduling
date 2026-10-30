@@ -19,6 +19,8 @@ blocking on unrelated questions. After editing, briefly flag missing essential s
 the user requested only that edit.
 Ask and wait before optimizing while questions remain, unless the user explicitly asks to optimize or proceed
 despite the unknowns. Respect requests not to optimize.
-Once the necessary questions are answered, proactively validate your schedule data changes by optimizing and
-inspecting the output. Adjust the schedule or optimizer within the agreed requirements and repeat until the
-user's goals are met. If new questions need user judgment, clarify them before continuing under the same rule.
+When the user requests a usable completed schedule or otherwise authorizes optimization, once the necessary
+questions are answered, proactively validate your schedule data changes by optimizing and inspecting the output.
+Adjust the schedule or optimizer within the agreed requirements and repeat until the user's goals are met.
+If new questions need user judgment, clarify them before continuing under the same rule.
+For edit-only requests, apply the requested changes without starting optimization.
