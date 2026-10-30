@@ -157,10 +157,13 @@ class ResponseEnd:
     `length` means the output token limit cut the response off, so its text and
     any tool call arguments may be incomplete. `None` means the endpoint sent
     `[DONE]` without a finish reason.
+    The request cap includes the remaining-context limit. The output allowance
+    includes model and explicit request limits before that context limit.
     """
 
     finish_reason: str | None
     output_token_limit: int | None = None
+    output_token_allowance: int | None = None
 
 
 @dataclass(frozen=True)
@@ -423,7 +426,8 @@ class OpenAiCompatibleProvider:
         provider._context_used_tokens = context_used_tokens
         return provider
 
-    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> None:
+    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> int | None:
+        """Set the request cap and return the output allowance before the context limit."""
         configured = next(
             (
                 payload[key]
@@ -438,14 +442,17 @@ class OpenAiCompatibleProvider:
             if configured and self._max_output_tokens
             else configured or self._max_output_tokens or default_allowance
         )
+        allowance = response_token_limit(
+            0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
+        )
         limit = response_token_limit(
             used_tokens,
             context_tokens=self.context_tokens,
             output_tokens=self.output_tokens,
-            requested_tokens=requested,
+            requested_tokens=allowance,
         )
         if limit is None:
-            return
+            return allowance
         parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
         payload.pop("max_tokens", None)
         payload.pop("max_completion_tokens", None)
@@ -460,13 +467,11 @@ class OpenAiCompatibleProvider:
             # for a visible answer, as Pi's clampThinkingBudgetToAnswerRoom does.
             available = limit - 1024
             if available < 1024:
-                output_limit = response_token_limit(
-                    0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
-                )
-                if output_limit is not None and output_limit < 2048:
+                if allowance is not None and allowance < 2048:
                     raise ProviderError.for_user("The AI output token limit has no room for reasoning and an answer.")
                 raise ProviderContextOverflowError.for_user("The AI request has no room for reasoning and an answer.")
             payload["thinking"] = {**thinking, "budget_tokens": min(thinking["budget_tokens"], available)}
+        return allowance
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
@@ -563,7 +568,8 @@ class OpenAiCompatibleProvider:
                 if self._context_used_tokens is not None
                 else estimate
             )
-            self._apply_output_limit(payload, used_tokens)
+            request_payload = dict(payload)
+            output_token_allowance = self._apply_output_limit(request_payload, used_tokens)
             call = ProviderCall(str(uuid4()), self._settings.provider_model)
             if self._include_costs:
                 yield call
@@ -573,7 +579,7 @@ class OpenAiCompatibleProvider:
             try:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
                 completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
-                async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
+                async with aclosing(self._stream_attempt(timeout, headers, request_payload)) as events:
                     while True:
                         try:
                             remaining = None if retry_deadline is None else retry_deadline - time.monotonic()
@@ -607,6 +613,8 @@ class OpenAiCompatibleProvider:
                             continue
                         if isinstance(event, TokenUsage):
                             call = replace(call, usage=event)
+                        if isinstance(event, ResponseEnd) and event.finish_reason == "length":
+                            event = replace(event, output_token_allowance=output_token_allowance)
                         if isinstance(event, (ToolCallRequest, ResponseEnd, ReasoningReplay)):
                             completed.append(event)
                             continue

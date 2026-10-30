@@ -30,7 +30,7 @@ N/A marks a limit or component absent in the pinned Pi implementation.
 | Context safety margin | 4,096 tokens | Same. |
 | Tool-result text in summary input | Truncated to 2,000 characters | Same. |
 | Cumulative file-operation records in summaries | Supported | Read, write, and edit paths are saved separately and appended to each summary. |
-| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the effective request output limit. Partial tool calls are not executed. Chats and exports label the omitted attempt. |
+| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the normal output allowance before applying the remaining-context limit. Partial tool calls are not executed. Chats and exports label the omitted attempt. |
 
 Each history or turn-prefix section is summarized in one request. Complete,
 successful summaries are accepted, including empty text, as in Pi. Summary
@@ -62,8 +62,10 @@ Pi's design guides the whole agent. These implementation differences remain:
   replace this default. Model output and available-context limits still apply.
 - The loop checks context before tool continuations as well as after a final
   response, so growing tool results can be summarized before the next request.
-  Length-stop recovery requires reported completion usage below the actual request
-  output cap. Reaching that cap does not trigger compaction. If recovery compaction
+  Length-stop recovery compares reported completion usage with the normal output
+  allowance, which applies model and explicit request limits before the remaining
+  context limit. Filling a smaller context cap can trigger recovery. Filling the
+  normal allowance does not. If recovery compaction
   skips or fails, normal output-limit handling retains the response and refuses
   its partial tool calls.
   Manual compaction uses shared run admission, Stop, replay, and persistence.

@@ -729,7 +729,7 @@ def test_request_output_cap_does_not_trigger_context_compaction(limit):
             self.requests.append((messages, tools))
             yield TextDelta("Truncated answer")
             yield TokenUsage(4000, limit, 4000 + limit)
-            yield ResponseEnd("length", limit)
+            yield ResponseEnd("length", limit, limit)
 
     provider = Provider()
     events = asyncio.run(collect(agent_loop(provider, history(8000), [], keep_recent_tokens=1000)))

@@ -825,12 +825,17 @@ def test_default_output_allowance_leaves_room_for_underestimated_large_input(mon
 
 
 @pytest.mark.parametrize(
-    ("context", "output", "requested", "expected"),
-    [(262144, 8192, None, 8192), (8192, 8192, None, 4088), (262144, 131072, 65536, 65536)],
-    ids=["model-output-ceiling", "remaining-context", "explicit-larger-allowance"],
+    ("context", "output", "requested", "expected", "allowance"),
+    [
+        (262144, 8192, None, 8192, 8192),
+        (8192, 8192, None, 4088, 8192),
+        (262144, 131072, 65536, 65536, 65536),
+        (8192, 8192, 1024, 1024, 1024),
+    ],
+    ids=["model-output-ceiling", "remaining-context", "explicit-larger-allowance", "explicit-smaller-allowance"],
 )
 def test_default_allowance_respects_model_limits_and_explicit_requests(
-    monkeypatch, context, output, requested, expected
+    monkeypatch, context, output, requested, expected, allowance
 ):
     requests = []
     chunk = _delta_chunk({"content": "Done"})
@@ -839,7 +844,49 @@ def test_default_allowance_respects_model_limits_and_explicit_requests(
     provider.context_tokens, provider.output_tokens = context, output
     events = _events(provider.with_output_limit(requested, context_used_tokens=8))
     assert json.loads(requests[0].content)["max_tokens"] == expected
-    assert events[-1] == ResponseEnd("length", expected)
+    assert events[-1] == ResponseEnd("length", expected, allowance)
+
+
+@pytest.mark.parametrize("retry", [False, True], ids=["first-attempt", "after-transient-failure"])
+def test_length_at_a_context_limited_cap_compacts_and_retries(monkeypatch, retry):
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd
+
+    from .test_ai_compaction import history
+
+    requests, summaries = [], []
+    completed_requests = 0
+
+    def handle(request):
+        nonlocal completed_requests
+        payload = json.loads(request.content)
+        if payload["messages"][0]["content"].startswith("You are a context summarization assistant."):
+            summaries.append(payload)
+            chunk = _delta_chunk({"content": "Keep nights. Inspect P1 next."})
+            chunk["choices"][0]["finish_reason"] = "stop"
+            return httpx.Response(200, text=_sse_body(chunk))
+        requests.append(payload)
+        if retry and len(requests) == 1:
+            return httpx.Response(503)
+        completed_requests += 1
+        chunk = _delta_chunk({"content": "Cut-off answer" if completed_requests == 1 else "Recovered answer"})
+        chunk["choices"][0]["finish_reason"] = "length" if completed_requests == 1 else "stop"
+        if completed_requests == 1:
+            cap = payload["max_tokens"]
+            chunk["usage"] = {"prompt_tokens": 16000 - 4096 - cap, "completion_tokens": cap, "total_tokens": 11904}
+        return httpx.Response(200, text=_sse_body(chunk))
+
+    provider = _transport_provider(monkeypatch, handle, provider_retry_backoff_seconds=0)
+    provider.context_tokens, provider.output_tokens = 16000, 12000
+    events = asyncio.run(
+        _collect(agent_loop(provider, history(8000), [], reserve_tokens=1500, keep_recent_tokens=1000))
+    )
+    assert requests[0]["max_tokens"] < provider.output_tokens
+    assert len(requests) == 2 + retry
+    assert len(summaries) == 1
+    replies = [event.message for event in events if isinstance(event, AgentMessageEnd)]
+    assert [reply.stop_reason for reply in replies] == (["error"] if retry else []) + ["length", "stop"]
+    assert replies[-2].context_omitted
+    assert replies[-1].text == "Recovered answer"
 
 
 def test_requests_and_streams_token_usage_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1107,7 +1154,11 @@ def test_completion_is_checked_before_releasing_tool_calls(monkeypatch, finish_r
         assert seen == [
             ToolCallProgress(2),
             ToolCallRequest((ToolCall("edit", "edit", "{}"),)),
-            ResponseEnd(finish_reason, 32768 if finish_reason == "length" else None),
+            ResponseEnd(
+                finish_reason,
+                32768 if finish_reason == "length" else None,
+                32768 if finish_reason == "length" else None,
+            ),
         ]
 
 
@@ -1210,7 +1261,9 @@ def test_stream_end_diagnostics_record_signals_without_response_text(monkeypatch
         with pytest.raises(ProviderError, match="before completion"):
             _events(provider)
     else:
-        assert _events(provider)[-1] == ResponseEnd(reason, 32768 if reason == "length" else None)
+        assert _events(provider)[-1] == ResponseEnd(
+            reason, 32768 if reason == "length" else None, 32768 if reason == "length" else None
+        )
     assert f"finish_reason={reason} done_received={done}" in caplog.text
     assert "text_chars=18 reasoning_chars=17 tool_calls=0" in caplog.text
     assert "private words" not in caplog.text and "private reasoning" not in caplog.text
