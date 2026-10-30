@@ -139,7 +139,7 @@ class SessionOptimization:
     retired: asyncio.Event = field(default_factory=asyncio.Event)
     deleted: bool = False
     finish_now_requested_by: Literal["user", "agent"] | None = None
-    finish_now_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def completion_details(self) -> dict[str, Any]:
         """Keep timing and early-completion attribution in events, reviews, and archives."""
@@ -447,12 +447,15 @@ class SessionOptimizer:
         return job
 
     async def _cancel_retired(self, job: SessionOptimization) -> None:
-        try:
-            payload = await self._backend.cancel(job.remote_id)
-        except OptimizerError as exc:
-            logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
-            return
-        job.observe(payload)
+        async with job.control_lock:
+            if _is_terminal(job.payload):
+                return
+            try:
+                payload = await self._backend.cancel(job.remote_id)
+            except OptimizerError as exc:
+                logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
+                return
+            job.observe(payload)
 
     async def _delete_retired(self, job: SessionOptimization) -> None:
         if job.deleted:
@@ -471,8 +474,13 @@ class SessionOptimizer:
             raise OptimizerJobUnavailable("Optimizer job not found.")
         if job is None:
             raise OptimizerError("No optimizer job has been started in this chat session.")
-        async with job.finish_now_lock:
-            if _is_terminal(job.payload) or job.finish_now_requested_by is not None:
+        async with job.control_lock:
+            if (
+                self._jobs.get(job.id) is not job
+                or _is_terminal(job.payload)
+                or job.payload.state == "cancelling"
+                or job.finish_now_requested_by is not None
+            ):
                 return job, False
             # Completion can arrive before the control response. Record intent before
             # awaiting it so the review retains the trigger and the solver's actual reason.
@@ -503,20 +511,21 @@ class SessionOptimizer:
         job = self._jobs.get(job_id)
         if job is None or job.session_id != session_id:
             raise OptimizerJobUnavailable("Optimizer job not found.")
-        if _is_terminal(job.payload) or job.payload.state == "cancelling":
-            return job
-        try:
-            payload = await self._backend.cancel(job.remote_id)
-        except OptimizerError as exc:
-            # Completion can delete the remote job while cancellation is in flight.
-            if _is_terminal(job.payload):
+        async with job.control_lock:
+            if self._jobs.get(job.id) is not job or _is_terminal(job.payload) or job.payload.state == "cancelling":
                 return job
-            logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
-            raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
-        job.observe(payload)
-        if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
-            await self._notify_update(job)
-        return job
+            try:
+                payload = await self._backend.cancel(job.remote_id)
+            except OptimizerError as exc:
+                # Completion can delete the remote job while cancellation is in flight.
+                if _is_terminal(job.payload):
+                    return job
+                logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
+                raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
+            job.observe(payload)
+            if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
+                await self._notify_update(job)
+            return job
 
     async def _monitor(self, job: SessionOptimization) -> None:
         unreachable_since: float | None = None
