@@ -1659,3 +1659,51 @@ def test_cancelled_finish_now_allows_a_user_retry() -> None:
             await optimizer.close()
 
     asyncio.run(scenario())
+
+
+def test_polling_ignores_rotating_links_but_keeps_control_and_terminal_updates() -> None:
+    async def scenario() -> None:
+        updates = []
+        completed = asyncio.Event()
+
+        class Backend(FakeOptimizerBackend):
+            polls = 0
+
+            async def get(self, job_id):
+                self.polls += 1
+                if self.polls == 4:
+                    self.release.set()
+                payload = await super().get(job_id)
+                return payload.model_copy(
+                    update={
+                        "links": {**payload.links, "events": f"/optimize/{job_id}/events?token={self.polls}"},
+                        "controls": {"early_completion_available": True} if self.polls >= 3 else {},
+                    }
+                )
+
+        async def on_update(_session_id, update):
+            updates.append(update)
+
+        async def on_completion(*_args):
+            completed.set()
+
+        backend = Backend()
+        optimizer = SessionOptimizer(
+            backend, poll_interval_seconds=0.001, on_completion=on_completion, on_update=on_update
+        )
+        try:
+            job = await optimizer.start("session-1", TEST_SCHEDULE, None)
+            await asyncio.wait_for(completed.wait(), timeout=2)
+            assert backend.polls == 4
+            assert [update["state"] for update in updates] == ["running", "running", "completed"]
+            assert [update["controls"] for update in updates] == [
+                {},
+                {"early_completion_available": True},
+                {"early_completion_available": True},
+            ]
+            assert job.payload.links["events"].endswith("token=4")
+            assert "token=" not in json.dumps(updates)
+        finally:
+            await optimizer.close()
+
+    asyncio.run(scenario())

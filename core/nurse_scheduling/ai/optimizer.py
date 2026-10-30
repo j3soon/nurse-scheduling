@@ -559,7 +559,10 @@ class SessionOptimizer:
             outage_reported = False
             previous = job.payload
             job.observe(payload)
-            if job.payload != previous and not _is_terminal(job.payload):
+            # Stream-link tokens can renew without a change to the job.
+            if not _is_terminal(job.payload) and job.payload.model_dump(exclude={"links"}) != previous.model_dump(
+                exclude={"links"}
+            ):
                 await self._notify_update(job)
 
     async def _relay_progress(self, job: SessionOptimization) -> None:
