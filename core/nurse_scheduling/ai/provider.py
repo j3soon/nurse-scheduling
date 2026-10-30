@@ -693,6 +693,8 @@ class OpenAiCompatibleProvider:
         request_started = time.perf_counter()
         first_output: float | None = None
         last_output: float | None = None
+        reported_usage: TokenUsage | None = None
+        streamed_reasoning = False
         async with (
             httpx.AsyncClient(timeout=timeout) as client,
             client.stream(
@@ -770,7 +772,8 @@ class OpenAiCompatibleProvider:
                             cost_usd=_parse_cost(usage.get("cost")) if isinstance(usage, dict) else None,
                         )
                     if usage is not None:
-                        yield _parse_token_usage(usage)
+                        reported_usage = _parse_token_usage(usage)
+                        yield reported_usage
                     # A usage-only or filter-only chunk carries no choice, and some
                     # providers omit usage from it.
                     if not choices:
@@ -805,6 +808,7 @@ class OpenAiCompatibleProvider:
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
                 reasoning_size = _merge_reasoning(native_reasoning, delta)
+                streamed_reasoning = streamed_reasoning or reasoning_size > 0
                 if content or reasoning_size or delta.get("tool_calls"):
                     if first_output is None:
                         first_output = received_at
@@ -837,9 +841,14 @@ class OpenAiCompatibleProvider:
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
                 )
             if self._include_costs and first_output is not None:
+                # Hidden reasoning can precede the first observed output chunk.
+                # Its tokens cannot be matched to this delivery interval.
+                hidden_reasoning = reported_usage and reported_usage.reasoning_tokens > 0 and not streamed_reasoning
                 yield ProviderResponseMetadata(
                     streaming_seconds=(
-                        last_output - first_output if last_output is not None and last_output > first_output else None
+                        last_output - first_output
+                        if last_output is not None and last_output > first_output and not hidden_reasoning
+                        else None
                     ),
                     time_to_first_output_seconds=first_output - request_started,
                 )

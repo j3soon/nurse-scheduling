@@ -187,6 +187,8 @@ It excludes input tokens, time to first output, tool execution, VM work, retry
 backoff, and gaps between calls. A call needs reported positive output usage and
 at least two output chunks with distinct arrival times. Missing or incomplete
 measurements remain unavailable. Cost availability is independent of speed.
+When usage reports reasoning tokens without reasoning stream events, speed is
+unavailable because their generation time cannot be matched to the observed interval.
 
 Run and conversation totals divide measured output tokens by measured streaming
 seconds. They do not average individual speeds. Turn details report how many

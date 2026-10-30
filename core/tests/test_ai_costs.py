@@ -536,7 +536,8 @@ def test_tiny_totals_and_restored_mixed_prices_fit_the_browser_contract():
 
 
 @pytest.mark.parametrize("kind", ["text", "reasoning", "tool"])
-def test_provider_times_only_generated_output_between_first_and_last_chunk(monkeypatch, kind):
+@pytest.mark.parametrize("reasoning_tokens", [0, 10], ids=["no-reasoning-usage", "reasoning-usage"])
+def test_provider_times_only_generated_output_between_first_and_last_chunk(monkeypatch, kind, reasoning_tokens):
     from types import SimpleNamespace
 
     from nurse_scheduling.ai import provider as module
@@ -565,7 +566,7 @@ def test_provider_times_only_generated_output_between_first_and_last_chunk(monke
         async def __aiter__(self):
             nonlocal now
             for at, event in [
-                (1, {"choices": [{"delta": {"role": "assistant"}, "finish_reason": None}]}),
+                (1, {"choices": [{"delta": {"role": "assistant", "reasoning_content": ""}, "finish_reason": None}]}),
                 (5, {"choices": [{"delta": deltas[0], "finish_reason": None}]}),
                 (7, {"choices": [{"delta": deltas[1], "finish_reason": None}]}),
                 (10, {"choices": [{"delta": {}, "finish_reason": "tool_calls" if kind == "tool" else "stop"}]}),
@@ -577,7 +578,7 @@ def test_provider_times_only_generated_output_between_first_and_last_chunk(monke
                             "prompt_tokens": 100,
                             "completion_tokens": 20,
                             "total_tokens": 120,
-                            "completion_tokens_details": {"reasoning_tokens": 10},
+                            "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
                         },
                     },
                 ),
@@ -601,11 +602,21 @@ def test_provider_times_only_generated_output_between_first_and_last_chunk(monke
     events = asyncio.run(collect(provider.stream_events([])))
     call = [event for event in events if isinstance(event, ProviderCall)][-1]
     assert call.status == "unavailable"  # Missing price does not hide measured speed.
-    assert call.streaming_seconds == 2
+    measurable = not reasoning_tokens or kind == "reasoning"
+    assert call.streaming_seconds == (2 if measurable else None)
     assert call.time_to_first_output_seconds == 5
     totals = CostTotals()
     totals.update(call)
-    assert totals.public()["streaming"] == {"calls": 1, "output_tokens": 20, "seconds": 2}
+    if measurable:
+        assert totals.public()["streaming"] == {"calls": 1, "output_tokens": 20, "seconds": 2}
+    else:
+        assert "streaming" not in totals.public()
+    assert ProviderCall.restored(asdict(call)) == call
+    from nurse_scheduling.ai.chat_export import _provider_cost_lines
+
+    exported = _provider_cost_lines({**asdict(call), "call_id": call.id}, 1, False)
+    speed = next(line for line in exported if line.startswith("Provider streaming speed:"))
+    assert ("unavailable" in speed.lower()) is not measurable
 
 
 def test_streaming_totals_replace_updates_and_restore_without_averaging_speeds():
