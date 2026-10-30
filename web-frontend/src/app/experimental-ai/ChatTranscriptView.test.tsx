@@ -220,7 +220,7 @@ it.each([undefined, 'failed', 'stopped'] as const)('keeps footer details on the 
   }]);
   const answer = screen.getByText('Updated.').closest('article');
   expect(screen.getByText('test-model · high').closest('article')).toBe(answer);
-  expect(screen.getByText(/^Estimated turn cost:/).closest('article')).toBe(answer);
+  expect(screen.getByText(/^Turn details ·/).closest('article')).toBe(answer);
   expect(screen.getByRole('button', { name: 'Download files (ZIP)' }).closest('article')).toBe(answer);
   expect(screen.getByText(/1\.5s/).closest('article')).toBe(answer);
   if (status) expect(screen.getByText(status === 'failed' ? 'The provider failed.' : 'Stopped before completion.')
@@ -243,7 +243,7 @@ it('keeps manual compaction metadata on the notice before its summary', () => {
   renderTranscript([message]);
   const notice = screen.getByText('Conversation summarized').closest('article');
   expect(screen.getByText('test-model · high').closest('article')).toBe(notice);
-  expect(screen.getByText(/^Estimated turn cost:/).closest('article')).toBe(notice);
+  expect(screen.getByText(/^Turn details ·/).closest('article')).toBe(notice);
   expect(screen.getByText(/1\.5s/).closest('article')).toBe(notice);
   expect(screen.getByText('User · Conversation summary').closest('article')).not.toBe(notice);
   expect(message).toEqual(saved);

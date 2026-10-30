@@ -717,6 +717,32 @@ def test_manual_compaction_skips_when_the_last_transcript_entry_is_a_summary():
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("limit", [32768, 65536], ids=["default-cap", "larger-explicit-cap"])
+@pytest.mark.parametrize("reported_usage", [False, True], ids=["missing-usage", "reported-usage"])
+def test_request_output_cap_does_not_trigger_context_compaction(limit, reported_usage):
+    from nurse_scheduling.ai.agent_types import AgentMessageEnd
+
+    class Provider(CompactionProvider):
+        context_tokens = 262144
+        output_tokens = 131072
+
+        async def stream_events(self, messages, tools=None):
+            self.requests.append((messages, tools))
+            yield TextDelta("Truncated answer")
+            if reported_usage:
+                yield TokenUsage(4000, limit, 4000 + limit)
+            yield ResponseEnd("length", limit, limit)
+
+    provider = Provider()
+    events = asyncio.run(collect(agent_loop(provider, history(8000), [], keep_recent_tokens=1000)))
+    assert len(provider.requests) == 1
+    assert provider.summaries == []
+    replies = [event.message for event in events if isinstance(event, AgentMessageEnd)]
+    assert len(replies) == 1
+    assert replies[0].stop_reason == "length"
+    assert not replies[0].context_omitted
+
+
 @pytest.mark.parametrize("repeated", [False, True], ids=["recovered", "bounded-retry"])
 def test_recoverable_length_compacts_once_without_replaying_partial_tools(repeated):
     from nurse_scheduling.ai.agent_types import AgentMessageEnd
@@ -766,6 +792,65 @@ def test_recoverable_length_compacts_once_without_replaying_partial_tools(repeat
     assert projected_history([UserMessage("Continue"), restored]) == [{"role": "user", "content": "Continue"}]
     failed_run = interrupted_entries([UserMessage("Continue"), restored], "error")
     assert not any(isinstance(entry, ToolResultMessage) for entry in failed_run)
+
+
+@pytest.mark.parametrize("with_tools", [False, True], ids=["text", "partial-tool"])
+def test_repeated_length_drains_accepted_steering_before_ending(with_tools):
+    from nurse_scheduling.ai.agent_types import AgentSteering
+
+    agent = Agent()
+    agent.open_steering()
+    queued = [("steer-2", "Also inspect P2"), ("steer-3", "Then inspect P3")]
+    executed = []
+
+    class Provider(CompactionProvider):
+        context_tokens = 16000
+        output_tokens = 4000
+
+        async def stream_events(self, messages, tools=None):
+            if messages[0]["content"].startswith("You are a context summarization assistant."):
+                async for event in super().stream_events(messages, tools):
+                    yield event
+                return
+            self.requests.append((messages, tools))
+            if len(self.requests) <= 2:
+                if len(self.requests) == 2:
+                    for message_id, text in queued:
+                        agent.steer(message_id, text)
+                yield TextDelta("Cut-off answer")
+                if with_tools:
+                    yield ToolCallRequest((ToolCall("partial", "write", '{"path":'),))
+                yield TokenUsage(4000, 100, 4100)
+                yield ResponseEnd("length", 100, 4000)
+            else:
+                yield TextDelta("Answered steering")
+                yield ResponseEnd("stop")
+
+    async def execute(arguments):
+        executed.append(arguments)
+        return AgentToolOutcome("Written", True)
+
+    provider = Provider()
+    tools = [AgentTool({"type": "function", "function": {"name": "write"}}, execute)] if with_tools else []
+    events = asyncio.run(
+        collect(
+            agent.prompt(
+                provider,
+                history(8000),
+                tools,
+                take_steering=agent.take_steering,
+                reserve_tokens=1500,
+                keep_recent_tokens=1000,
+            )
+        )
+    )
+    assert len(provider.requests) == 3
+    assert len(provider.summaries) == 1
+    assert [message["content"] for message in provider.requests[2][0][-2:]] == [text for _, text in queued]
+    assert [event for event in events if isinstance(event, AgentSteering)] == [AgentSteering(*item) for item in queued]
+    assert all(UserMessage(text) in agent.state.messages for _, text in queued)
+    assert agent.queued_steering == () and not agent.accepting_steering
+    assert executed == []
 
 
 @pytest.mark.parametrize("with_tools", [False, True], ids=["text", "partial-tool"])

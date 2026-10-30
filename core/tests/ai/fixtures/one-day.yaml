@@ -1,0 +1,20 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+apiVersion: alpha
+dates:
+  range:
+    startDate: '2026-11-02'
+    endDate: '2026-11-02'
+people:
+  items:
+    - id: Alice
+shiftTypes:
+  items:
+    - id: D
+preferences:
+  - type: at most one shift per day
+  - type: shift type requirement
+    shiftType: D
+    date: WEEKDAY
+    requiredNumPeople: 1

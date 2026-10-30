@@ -190,3 +190,14 @@ A separate check without evidence-strength passes 3/3 each for natural onboardin
 fact-only policy, explicit policy and corrected-rule construction. Structured
 inference passes 2/3. One response omits a comma in JSON. These runs use the
 same inference prompt and make no token or timing improvement claim.
+
+## Reviewed YAML cases
+
+A prompt step can list `reviewed_cases` relative to `tests/ai/testcases/` instead
+of duplicating those tests in this dataset. Use the same evidence records and
+before/after counts, with `reviewed_input_digest` for `input_sha256`. The digest
+binds the clause, YAML definition, referenced fixtures, and assertion code.
+Run at least three repetitions before and after the clause, including controls.
+The reviewed tester does not depend on this evaluation harness.
+The older ladder audit records these cases separately in its plan. Run them
+with `python -m tests.ai.runner` because its cohorts execute only older cases.

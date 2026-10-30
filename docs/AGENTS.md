@@ -19,6 +19,8 @@
 - Describe the current supported behavior as if earlier project versions did
   not exist. Keep change history, migration narratives, and upgrade comparisons
   in Git history. External reference revisions may identify the source used.
+- Document the current design and its limitations. Keep proposed designs and
+  roadmaps out of documentation pages.
 - In comparison tables, omit rows where both sides are N/A.
 - Keep screenshots focused on a decision or result. Add concise alt text and
   describe any warning that appears in the image. Add screenshots where a
@@ -170,6 +172,8 @@
 - Git on Windows can check out symlinks as plain text. Enable symlink support
   or use Linux or WSL when building the documentation.
 
+- Keep `developer-guide/frontend-storage.md` synchronized with frontend storage
+  keys, payloads, lifetimes, and cross-tab behavior.
 - Describe the current recovery schema. Keep conversation order, event cursors,
   and execution status distinct.
 - For backup and restore instructions, use the same environment file, Compose

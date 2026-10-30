@@ -22,6 +22,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
+import { AI_HISTORY_STORAGE_KEY, chatKey, readChatHistory, saveChatHistory } from './chatHistory';
+import type { StoredChatConversation } from './chatConversation';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
 const mockCompactSession = vi.hoisted(() => vi.fn());
@@ -221,6 +223,171 @@ describe('ExperimentalAiPage', () => {
     window.sessionStorage.clear();
   });
 
+  const seedRecentChat = (sessionId = 'older-session', endpoint = '/ai'): StoredChatConversation => {
+    const conversation: StoredChatConversation = {
+      sessionId, endpoint, lastActivityAt: Date.now() - 1000,
+      expiresAt: Date.now() + 86400_000, retentionSeconds: 30 * 86400,
+      syncedSchedule: 'description: older schedule\n', sessionEventId: 5,
+      messages: [{ id: 'old-question', role: 'user', content: `Review ${sessionId}` },
+        { id: 'old-answer', role: 'assistant', content: 'An earlier answer.', activity: [{ kind: 'response', text: 'An earlier answer.' }] }],
+    };
+    saveChatHistory(conversation, true);
+    return conversation;
+  };
+
+  it.each(['model', 'reasoning'])('restores a recent chat without saving an unsent %s choice', async choice => {
+    seedRecentChat();
+    mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
+    mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
+      { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [
+        { id: 'default', label: 'Default' }, { id: 'high', label: 'High' },
+      ] },
+      { id: 'deep', name: 'Deep', default_reasoning: 'high', reasoning_options: [{ id: 'high', label: 'High' }] },
+    ] });
+    mockGetSessionModelSelection.mockResolvedValue({ selection: { model: 'fast', reasoning: 'default' }, locked: true });
+    mockUpdateSessionModelSelection.mockRejectedValue(new MockAiHttpError('Model is fixed', 409));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
+    await user.selectOptions(screen.getByLabelText(choice === 'model' ? 'AI model' : 'Reasoning'), choice === 'model' ? 'deep' : 'high');
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(within(history).getByRole('button', { name: /^Review older-session/ }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('AI model')).toHaveValue('fast');
+      expect(screen.getByLabelText('AI model')).toBeDisabled();
+      expect(screen.getByLabelText('Reasoning')).toHaveValue('default');
+    });
+    expect(mockUpdateSessionModelSelection).not.toHaveBeenCalled();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue this chat.');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+
+  it('selects a recent chat without uploading or replacing browser schedule data, then syncs on send', async () => {
+    const chat = seedRecentChat();
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
+    await waitFor(() => expect(mockGetSessionStatus).toHaveBeenCalledWith('older-session', null, '/ai'));
+    expect(await screen.findByText('An earlier answer.')).toBeInTheDocument();
+    expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+    expect(mockCreateSession).not.toHaveBeenCalled();
+    expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('differs');
+    await waitFor(() => expect(readChatHistory()[0].conversation.preserveBrowserSchedule).toBe(true));
+    expect(readChatHistory()[0].lastActivityAt).toBe(chat.lastActivityAt);
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as SessionStreamOptions;
+    act(() => {
+      stream.onEvent({ type: 'run_context', runId: 'away-run' });
+      stream.onEvent({ type: 'schedule_applied', applied: { runId: 'away-run', scheduleYaml: 'description: changed while away\n', diff: 'Changed while away', replacedQueuedSchedule: false } });
+      stream.onEvent({ type: 'done', runId: 'away-run' });
+    });
+    expect(mockLoadFromYaml).not.toHaveBeenCalled();
+    expect(await screen.findByText(/Browser schedule data was kept unchanged/)).toBeInTheDocument();
+    expect(screen.getByText('Saved in this chat')).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue with my schedule');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(mockUpdateSessionSchedule).toHaveBeenCalledWith('older-session', 'description: current schedule\n', null, '/ai');
+    expect(mockUpdateSessionSchedule.mock.invocationCallOrder[0]).toBeLessThan(mockSendMessage.mock.invocationCallOrder[0]);
+    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('matches');
+    expect(chatKey(chat)).toBe('/ai\nolder-session');
+  });
+
+  it('does not resubmit an interrupted request just by selecting its history entry', async () => {
+    const chat = seedRecentChat();
+    const request = { id: 'interrupted-request', question: 'Review older-session', questionId: 'old-question', assistantId: 'old-answer', active: true };
+    chat.messages = [
+      { ...chat.messages[0], request },
+      { ...chat.messages[1], content: '', activity: [], status: 'pending', requestId: request.id, request },
+    ];
+    saveChatHistory(chat);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
+    expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
+    expect(mockSendMessage).not.toHaveBeenCalled();
+    expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+  });
+
+  it('reports browser edits without sending them during an active response', async () => {
+    let finish!: () => void;
+    mockRunEvents.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const user = userEvent.setup();
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Review this schedule');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Stop' });
+    mockGenerateYaml.mockReturnValue('description: manually edited schedule\n');
+    view.rerender(<ExperimentalAiPage />);
+    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('This response keeps its schedule data');
+    expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
+    await act(async () => finish());
+    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('Sending your next message');
+  });
+
+  it('preserves chats across New chat and forgets an open chat without saving it again', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(input, 'First conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await within(history).findByRole('button', { name: /^First conversation/ });
+    await user.click(within(history).getByRole('button', { name: 'New chat' }));
+    expect(within(history).getByRole('button', { name: /^First conversation/ })).toBeInTheDocument();
+    expect(screen.queryByText('Alice works Monday.')).not.toBeInTheDocument();
+    await user.click(within(history).getByRole('button', { name: /^First conversation/ }));
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    await user.click(within(history).getByRole('button', { name: 'Remove chat: First conversation' }));
+    expect(within(history).queryByRole('button', { name: /^First conversation/ })).not.toBeInTheDocument();
+    expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+    await user.type(input, 'Continue forgotten conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
+    expect(mockStopSession).not.toHaveBeenCalled();
+  });
+
+  it('clears only chat records and keeps the visible transcript and other preferences', async () => {
+    seedRecentChat();
+    seedRecentChat('another-session');
+    localStorage.setItem('unrelated-preference', 'keep');
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(within(history).getByRole('button', { name: 'Clear history' }));
+    expect(within(history).getByText('No recent chats.')).toBeInTheDocument();
+    expect(screen.getByText('An earlier answer.')).toBeInTheDocument();
+    expect(localStorage.getItem('unrelated-preference')).toBe('keep');
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(readChatHistory()).toEqual([]);
+    expect(mockStopSession).not.toHaveBeenCalled();
+  });
+
+  it('protects drafts on selection and scopes credentials to the selected backend', async () => {
+    seedRecentChat('external-session', 'https://example.com/ai');
+    localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { 'https://example.com/ai': 'external-token' } }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    const entry = await within(history).findByRole('button', { name: /^Review external-session/ });
+    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    await user.type(input, 'Unsaved draft');
+    const confirmation = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await user.click(entry);
+    expect(input).toHaveValue('Unsaved draft');
+    expect(mockGetSessionStatus).not.toHaveBeenCalled();
+    confirmation.mockReturnValue(true);
+    await user.click(entry);
+    expect(input).toHaveValue('');
+    await waitFor(() => expect(mockGetSessionStatus).toHaveBeenCalledWith('external-session', 'external-token', 'https://example.com/ai'));
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).not.toContain('external-token');
+  });
+
   it('pastes Markdown over the selection and submits the converted message', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -376,7 +543,7 @@ describe('ExperimentalAiPage', () => {
     // Generated export defaults are added only when the optimizer submits the schedule.
     expect(mockGenerateYaml.mock.calls[0][0]).not.toHaveProperty('export');
 
-    expect(screen.getByText('Current snapshot: 0 people, 0 dates. Captured when you send the first question.')).toBeInTheDocument();
+    expect(screen.getByText('Browser schedule data: 0 people, 0 dates. Sent when you send a message.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
     await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.4.3'));
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
@@ -653,7 +820,7 @@ describe('ExperimentalAiPage', () => {
     firstRender.unmount();
     render(<ExperimentalAiPage />);
 
-    expect(await screen.findByText('Who works Monday?')).toBeInTheDocument();
+    expect(await screen.findByText('Who works Monday?', { selector: '.plain-content' })).toBeInTheDocument();
     expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
     expect(mockGetSessionStatus).toHaveBeenCalledWith('session-id', null, '/ai');
     expect(mockCreateSession).toHaveBeenCalledOnce();
@@ -1087,7 +1254,7 @@ describe('ExperimentalAiPage', () => {
     act(() => window.dispatchEvent(new Event('pagehide')));
     const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
     expect(stored.messages.at(-1).content).toBe('First second');
-    expect(writeConversation).toHaveBeenCalledTimes(1);
+    expect(writeConversation.mock.calls.filter(([key]) => key === 'nurse-scheduling-ai-conversation')).toHaveLength(1);
     await act(async () => finishStream?.());
   });
 
@@ -1154,7 +1321,7 @@ describe('ExperimentalAiPage', () => {
       terminal: false,
       downloadable: false,
     } }));
-    expect(screen.getByRole('status')).toHaveTextContent('Optimizer running in the background · running');
+    expect(screen.getAllByRole('status').find(status => status.textContent?.includes('Optimizer running in the background'))).toHaveTextContent('Optimizer running in the background · running');
 
     act(() => {
       backgroundCallbacks?.onEvent({ type: 'optimization_progress', activity: {
@@ -1427,7 +1594,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText(
-      /This chat is also stored unencrypted in this browser until it expires or you start a new chat\./,
+      /Recent chats are stored unencrypted on this device for seven days after their last activity\./,
     )).toBeInTheDocument();
   });
 
@@ -3250,7 +3417,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Cost question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    await screen.findByText('Estimated turn cost: $0.1000 · 1 call');
+    await screen.findByText('Turn details · ~$0.1000 · Speed unavailable · 1 call');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
     act(() => {
       stream.onEvent({ type: 'session_reset', reset: { runIds: ['user-run-1'], activeRunId: null, terminalRunIds: ['user-run-1'], incomplete: false } });
@@ -3261,7 +3428,7 @@ describe('ExperimentalAiPage', () => {
         run: { usd: '0.2', calls: 1, pending: 0, unavailable: 0 } });
       stream.onEvent({ type: 'done', runId: 'user-run-1' });
     });
-    expect(screen.getByText('Estimated turn cost: $0.2000 · 1 call')).toBeInTheDocument();
+    expect(screen.getByText('Turn details · ~$0.2000 · Speed unavailable · 1 call')).toBeInTheDocument();
     expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
     expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });

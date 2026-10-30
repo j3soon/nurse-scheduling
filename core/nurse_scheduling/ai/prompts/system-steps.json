@@ -7,28 +7,44 @@
       "colleague-open-ai-chat"
     ],
     "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
-    "sha256": "9515e51b586aa567276143bc36d0335e9b53eba50903bced9358cc956c1d2774",
+    "sha256": "ae297fc7a5b24e76ffa88714c26e1e3adbe87be43bc6444b44ba6acf7a1c2c1e",
     "evidence": [
       {
-        "case": "current-chat-identity",
-        "input_sha256": "1fd98fa160fa129376acb09e28330bdce77b322b70b7d91221fb7d91f20cc254",
-        "before": "0/3",
+        "case": "basics/01_already-in-ai-chat.yaml",
+        "input_sha256": "6be52cabb77db9d73d0438670608ee8734901d6e7ca21ce830bd51f6376fb2ab",
+        "before": "1/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "colleague-open-ai-chat",
-            "input_sha256": "c4e16ced721d913ee91e0e267e15a3c8726f4cbf237513fb3bfecb34713e01a8",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full-prompt ablation over three user turns. Without the clause, the agent answers that it cannot tell whether this is the Experimental AI chat. Navigation advice for a colleague on another page stays correct.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
+        "note": "Regraded six preserved conversations with the current assertions and judge after fixing provider retries. With the identity clause, all three replies acknowledge the current chat. No new agent rollouts or judge request errors."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_already-in-ai-chat.yaml"
+    ]
+  },
+  {
+    "id": "response-language",
+    "file": "steps/response-language.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/01_lang_traditional_chinese.yaml",
+      "basics/01_lang_english.yaml"
+    ],
+    "hypothesis": "Always uses Taiwan Traditional Chinese for Chinese-language users, including Simplified Chinese requests, while preserving English replies.",
+    "sha256": "85a0dbdb50ef021a1410b6c713d1d9aff8ebe0dbda280247760367c59b104523",
+    "evidence": [
+      {
+        "case": "basics/01_lang_traditional_chinese.yaml",
+        "input_sha256": "890d005312dd05ca0befad64125df61e16c472d2b08ed1c492a883ace5dfc213",
+        "before": "14/24",
+        "after": "16/24",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "infrastructure_errors": 3,
+        "note": "Fixed 24 conversations per revision. Before: 14 pass, 7 script failures, 3 judge/provider errors. After: 16 pass, 8 script failures, no errors. Fully graded pass rates are both 66.7%, two-sided Fisher exact p=1.0. English control passes 3/3 after. Retained as an explicit policy change, not a demonstrated reliability improvement. Baseline concurrency up to eight, follow-up four because secondary health changed. No performance claim."
+      }
+    ]
   },
   {
     "id": "app-guide",
@@ -229,33 +245,22 @@
       "dates-range-renew-custom-group-small",
       "holiday-question-explains-workdays"
     ],
-    "hypothesis": "Explains importing the Taiwan holiday calendar before expanding the range, then generates its groups with the maintained helper while preserving custom-group scope.",
-    "sha256": "530c501b18b7dd041fc0acd26e4fc910f5635e93e644867a4d1048849ec1d0d3",
+    "hypothesis": "Explains Taiwan calendar import during new-schedule intake and before date-range expansion, then generates its groups while preserving custom-group scope.",
+    "sha256": "60c0ea2afa16ed5cc028fc2e6d4fef172565e95a056b7ef38f5a9f319a0f8393",
     "evidence": [
       {
         "case": "holiday-question-explains-workdays",
-        "input_sha256": "1406c72e4fe7b86f03e00456d4997c7c4fb2b49a1920b123f7260c98ea043635",
+        "input_sha256": "9ae9ba46f1420899df964a244f2be11711010591207f89a304d36462809092dc",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
         "infrastructure_errors": 0,
+        "comparison_passed": true,
         "controls": [
           {
-            "case": "dates-range-renew-custom-group-small",
-            "input_sha256": "b9c60e76671b3589bf752b8d9b3cb5fed5b4d69eea9287f27e0fde48c3706def",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
             "case": "dates-range-renew-small",
-            "input_sha256": "76cda2cecc44c9426580037fe3467da9215994ad405d4acef9ef84992773a420",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "holiday-expansion-question-without-reads",
-            "input_sha256": "7e7c6c75ddc15e7b1b976f45d5ca6b82575689be4893461a67a11001faaa68b1",
-            "before": "0/3",
+            "input_sha256": "f624705c56f1e73af9a8a05a755184f602b7d8d65d31d72284582f53fe57c767",
+            "before": "2/3",
             "after": "3/3"
           }
         ],
@@ -269,20 +274,19 @@
           "cases": [
             {
               "case": "dates-range-renew-small",
-              "before": "1/3",
-              "after": "3/3"
-            },
-            {
-              "case": "dates-range-renew-custom-group-small",
-              "before": "1/3",
+              "before": "0/3",
               "after": "3/3"
             }
           ]
         },
-        "note": "Full production prompt with the revised renewal policy versus that prompt with the complete policy omitted. Three repetitions and four concurrent jobs with real provider and E2B commands. All four candidate cases passed 3/3. Both renewal cases executed the generator with --start and --end in 3/3 runs. Manual rechecking confirms these counts. The stricter automatic checker recognizes 3/3 ordinary renewals and 1/3 custom-group renewals. The other two custom-group runs use stderr redirection or --help followed by && and require manual verification. This validates the complete policy and its reviewed adoption condition, not the independent benefit of changing the calendar source. A separate original-versus-revised comparison preserves correctness and measures adoption. No cost target or efficiency gain is claimed."
+        "note": "Full production prompt with and without the complete condensed calendar step, three repetitions per version. The step restores the calendar explanation before tools and preserves date renewal with actual generator use. The reviewed new-schedule information case separately passed 3/3. This validates the complete calendar policy, not an isolated gain from the new intake sentence."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_new-schedule-information.yaml",
+      "basics/02_holiday-import-rule-scope.yaml"
+    ]
   },
   {
     "id": "optimizer-start",
@@ -696,47 +700,6 @@
     "comparison_mode": "ablation"
   },
   {
-    "id": "optimizer-goal",
-    "file": "steps/optimizer-goal.md",
-    "cases": [
-      "optimizer-goal-preserves-policy",
-      "optimizer-authorized-policy-change",
-      "optimizer-independent-request-check"
-    ],
-    "hypothesis": "Starts optimization goals with unchanged policy directly, while handling explicit edits and independent checks first.",
-    "sha256": "ef108b52850ee85e05e28427bcac9e28b7dbce0a2a04afd70691b15f0c0b9ece",
-    "evidence": [
-      {
-        "case": "optimizer-goal-preserves-policy",
-        "input_sha256": "5cbf9d428efcf194443b94f022a5d0a33ea307c3bea5542843ae0c2186e7b476",
-        "before": "3/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "cost_metric": "total-tokens",
-        "cost_ratio": 0.31278434281673984,
-        "cost_target": 0.8,
-        "controls": [
-          {
-            "case": "optimizer-authorized-policy-change",
-            "input_sha256": "5abd93f7a9cbccdbbedc552c277a34ae18c2049dd98aaccbc48c1a9c2ebf9c60",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimizer-independent-request-check",
-            "input_sha256": "43d90a0587b1ef850759cc22c595bc54a034c7baeb9d58e626bdeca2a2cbcf2c",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Adjacent full-prompt prefixes. Goal witness preserves submitted policy with 69% fewer mean tokens. Two of three starts are direct. Edit and independent-check controls stay correct. Authorized edits use 38% more tokens, so the combined cost gate fails. Baseline token variance is high. Controlled starts do not grade solver quality.",
-        "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
-        "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
-      }
-    ]
-  },
-  {
     "id": "generated-downloads",
     "file": "steps/generated-downloads.md",
     "cases": [
@@ -829,7 +792,7 @@
       "senior-additional-day-slot"
     ],
     "hypothesis": "Reads the real-schedule guide, explains qualified slots, and preserves stated totals when a qualified slot is included.",
-    "sha256": "88b5ef7a73a54753ff5cbc6083b17d80426ea1fe9e2e14f0aed418aafab27391",
+    "sha256": "b8abcb9d7227d6b195ced9ee9b3aee6a2a37aafb69c04d1e28a45ce084d4e730",
     "evidence": [
       {
         "case": "senior-included-in-day-total",
@@ -856,6 +819,9 @@
         "grading_note": "Regraded saved outputs after numeric comparison correction. Case and fixture fingerprints match. Pass counts and costs are unchanged.",
         "fingerprint_note": "Expanded JSON comparator dependency coverage. Grading, model inputs and historical measurements are unchanged. Grading helpers are fingerprinted transitively, and list numbers compare by value. Model inputs, measurements, and grades of saved outputs are unchanged."
       }
+    ],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
     ]
   },
   {
@@ -923,6 +889,17 @@
     "comparison_mode": "ablation"
   },
   {
+    "id": "qualification-overlap",
+    "file": "steps/qualification-overlap.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ],
+    "hypothesis": "Diagnoses head nurses and deputy head nurses omitted from senior staffing eligibility and asks for confirmation before optimizing.",
+    "sha256": "2bde9795d7d7d6934377f5a03ce84aa66d1f38c37a4bafc134e9ccdc1beea83d",
+    "evidence": []
+  },
+  {
     "id": "new-roster-rest-intake",
     "file": "steps/new-roster-rest-intake.md",
     "cases": [
@@ -931,7 +908,7 @@
       "new-schedule-policy-declined"
     ],
     "hypothesis": "Asks about missing rest rules before building a roster without inventing workplace defaults.",
-    "sha256": "783fdb4a391187e258298fbb49c474d4bbce9472b7e298af0f1644c132692ef9",
+    "sha256": "3be98edce4a4f318f209db58e47e4e0223f629bb250f40d05a72cc6fe68d177f",
     "evidence": [
       {
         "case": "new-schedule-rest-intake",
@@ -951,7 +928,21 @@
         "note": "Full-prompt ablation of this step only. Saved outputs were regraded after requiring a direct question about the consecutive-work limit. Original testcase and fixture fingerprints were verified first. Questions, prompts, tools and raw measurements are unchanged. The baseline suggests defaults or asks only whether to add rest rules. Real provider and E2B commands, four case jobs, no optimizer jobs or cost claim."
       }
     ],
-    "comparison_mode": "ablation"
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ]
+  },
+  {
+    "id": "new-roster-shift-stability",
+    "file": "steps/new-roster-shift-stability.md",
+    "cases": [],
+    "reviewed_cases": [
+      "basics/02_schedule-data-optimize.yaml"
+    ],
+    "hypothesis": "Clarifies optional same-category succession rewards independently of monthly primary shifts and workload balance.",
+    "sha256": "610bfda32b9481ac2effbf00df4e9c44deda207a423b61b9b1c5a86b3e6de76b",
+    "evidence": []
   },
   {
     "id": "new-roster-fairness-intake",
@@ -992,48 +983,12 @@
       "new-schedule-qualified-slots",
       "new-schedule-policy-declined"
     ],
-    "hypothesis": "Offers optional people groups for shared primary shift preferences or eligibility rules before building a roster.",
-    "sha256": "a5b4e8d7724403e35c7e1de231c6dd19e06bfed18b4e4b025eab124a6c2cd211",
+    "hypothesis": "Includes monthly primary shifts in new-schedule information and offers optional people groups before construction or optimization.",
+    "sha256": "e133d221e27b9623209bb2977da139f2d60c91ddde20cb14a0af376eef920d3b",
     "evidence": [
       {
         "case": "new-schedule-primary-shift-groups",
-        "input_sha256": "459c2c97393d45085d9fbc182c514a24b83392116f8b857bf7a54a699da3d4ee",
-        "before": "0/3",
-        "after": "3/3",
-        "model": "unsloth/Qwen3.8-27B-NVFP4",
-        "infrastructure_errors": 0,
-        "controls": [
-          {
-            "case": "new-schedule-qualified-slots",
-            "input_sha256": "50867b20a7f2372d0f7af8131d200e69562c8ad5d96e2aabdeceebed3b054e15",
-            "before": "3/3",
-            "after": "3/3"
-          }
-        ],
-        "note": "Full-prompt ablation of this step only, with the other intake policies fixed. The baseline omits the optional primary shift people-group offer. Real provider and E2B commands, four concurrent case jobs, no optimizer jobs. No cost improvement is claimed."
-      }
-    ],
-    "comparison_mode": "ablation"
-  },
-  {
-    "id": "autonomous-roster-validation",
-    "file": "steps/autonomous-roster-validation.md",
-    "cases": [
-      "optimization-loop-outcome-after-edit",
-      "optimization-loop-offer-after-edit",
-      "optimization-loop-offer-accepted",
-      "optimization-loop-offer-declined",
-      "optimization-loop-outcome-holdout",
-      "new-schedule-policy-declined",
-      "result-policy-misses",
-      "optimization-loop-authorized-retry"
-    ],
-    "hypothesis": "Proposes or starts optimization and inspection for schedule outcomes, offers the loop after edits, and continues once authorized.",
-    "sha256": "90ec9f03e78eded9b7c6bde234570a1d2af7f3ea9edbdbfdd155d40381de63e9",
-    "evidence": [
-      {
-        "case": "optimization-loop-offer-after-edit",
-        "input_sha256": "d65e0f0370adc42cec1d2a93ad46fd5848bff01cbe22cae504e2f85d9887230f",
+        "input_sha256": "eda1d40a9bf2cc450f16b91cd9ef113692e1b0da14b3a29572373ee52aac9c5f",
         "before": "0/3",
         "after": "3/3",
         "model": "unsloth/Qwen3.8-27B-NVFP4",
@@ -1042,49 +997,37 @@
         "controls": [
           {
             "case": "new-schedule-policy-declined",
-            "input_sha256": "1c80ad006bb7d98953f8d0dbb4f72a9dcaf6f0901157bb94837a918b20340f75",
+            "input_sha256": "ec2adebb09b9715bb66299731bdc14d6b68230545eb88b7d7d2c887f330d36d3",
             "before": "3/3",
             "after": "3/3"
           },
           {
-            "case": "optimization-loop-authorized-retry",
-            "input_sha256": "b4477054f49e13bd73ba37e34b3bc596c0df9082fc4dba9cff998e123f6a4659",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-offer-accepted",
-            "input_sha256": "dede43d322fdf4b044309a450edd9fd41a0206c9964ed08344a83eecb30cd885",
-            "before": "0/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-offer-declined",
-            "input_sha256": "1af84f8fddccc52c48b1b72d0b93f5be5b4b6401ea51e5b064ba3cd7941367d1",
-            "before": "0/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-outcome-after-edit",
-            "input_sha256": "63dc71a507c930d963588391238aeba13367f7a484539baeb114022691c88353",
-            "before": "2/3",
-            "after": "3/3"
-          },
-          {
-            "case": "optimization-loop-outcome-holdout",
-            "input_sha256": "29645a231952da0d52b9492f21f44b5fbcb6f1f4dc4daf8c91175452443cf9db",
-            "before": "3/3",
-            "after": "3/3"
-          },
-          {
-            "case": "result-policy-misses",
-            "input_sha256": "340c9a6cd2e4dfdcf63f62c2821fc3ade39208a4012d1f8c046be1156fbc2a57",
+            "case": "new-schedule-qualified-slots",
+            "input_sha256": "313698d1ce2e397fea6ba1d24c44b64752ca16cd77f4fa131da650acdd5fbade",
             "before": "3/3",
             "after": "3/3"
           }
         ],
-        "note": "Offers to optimize the changed schedule instead of the proposal."
+        "note": "Full-prompt ablation of the complete primary-shift step, three repetitions per version. The step restores monthly primary-shift questions and optional group offers. Qualified-slot explanations and declined-policy drafts pass in both versions. These legacy controls start from an incomplete initial fixture. All resulting draft proposals pass frontend validation. Separately, the reviewed new-schedule information case uses the frontend empty schedule fixture and passed 32/32 with primary shifts mentioned. This does not isolate the incremental benefit of the intake sentence."
       }
+    ],
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/01_new-schedule-information.yaml"
+    ]
+  },
+  {
+    "id": "autonomous-roster-validation",
+    "file": "steps/autonomous-roster-validation.md",
+    "cases": [],
+    "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit schedule data. Optimization-loop coverage awaits optimizer support in the new tester.",
+    "sha256": "ff6c09b010a751b1d2bd444aeab7498898c4f6af27c044bc9b1189dbbcef80ee",
+    "evidence": [],
+    "comparison_mode": "ablation",
+    "reviewed_cases": [
+      "basics/02_schedule-data-guidance.yaml",
+      "basics/02_explicit-people-edit.yaml",
+      "basics/02_edit-only-without-optimization.yaml"
     ]
   },
   {

@@ -48,6 +48,9 @@ SECRET_ASSIGNMENT_PATTERN = re.compile(
     r"(?i)(\b(?:api[_-]?key|access[_-]?token|authorization|secret)\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"([^\"'\s,;<}]+)"
 )
+# A request allowance, not a model capability. Avoid reserving the entire
+# context window when token estimates undercount a large tool response.
+DEFAULT_RESPONSE_TOKENS = 32768
 MAX_TOOL_CALLS_PER_RESPONSE = 1024
 MAX_TOOL_ARGUMENT_CHARS = 4_000_000
 MAX_PROVIDER_ERROR_EXCERPT_CHARS = 1_000
@@ -154,9 +157,13 @@ class ResponseEnd:
     `length` means the output token limit cut the response off, so its text and
     any tool call arguments may be incomplete. `None` means the endpoint sent
     `[DONE]` without a finish reason.
+    The request cap includes the remaining-context limit. The output allowance
+    includes model and explicit request limits before that context limit.
     """
 
     finish_reason: str | None
+    output_token_limit: int | None = None
+    output_token_allowance: int | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,24 @@ class ProviderCall:
     usage: TokenUsage | None = None
     provider_call_id: str | None = None
     response_model: str | None = None
+    streaming_seconds: float | None = None
+    time_to_first_output_seconds: float | None = None
+
+    @classmethod
+    def restored(cls, data: dict[str, Any]) -> "ProviderCall":
+        """Read a saved call from session state or a public event."""
+        usage = data.get("usage")
+        return cls(
+            id=data.get("id", data.get("call_id")),
+            model=data.get("model", ""),
+            status=data["status"],
+            cost_usd=data.get("cost_usd"),
+            usage=TokenUsage(**usage) if usage is not None else None,
+            provider_call_id=data.get("provider_call_id"),
+            response_model=data.get("response_model"),
+            streaming_seconds=data.get("streaming_seconds"),
+            time_to_first_output_seconds=data.get("time_to_first_output_seconds"),
+        )
 
 
 @dataclass(frozen=True)
@@ -216,6 +241,8 @@ class ProviderResponseMetadata:
     provider_call_id: str | None = None
     response_model: str | None = None
     cost_usd: str | None = None
+    streaming_seconds: float | None = None
+    time_to_first_output_seconds: float | None = None
 
 
 ChatStreamEvent = (
@@ -399,7 +426,8 @@ class OpenAiCompatibleProvider:
         provider._context_used_tokens = context_used_tokens
         return provider
 
-    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> None:
+    def _apply_output_limit(self, payload: dict[str, Any], used_tokens: int) -> int | None:
+        """Set the request cap and return the output allowance before the context limit."""
         configured = next(
             (
                 payload[key]
@@ -408,19 +436,23 @@ class OpenAiCompatibleProvider:
             ),
             None,
         )
+        default_allowance = DEFAULT_RESPONSE_TOKENS if self.context_tokens or self.output_tokens else None
         requested = (
             min(configured, self._max_output_tokens)
             if configured and self._max_output_tokens
-            else configured or self._max_output_tokens
+            else configured or self._max_output_tokens or default_allowance
+        )
+        allowance = response_token_limit(
+            0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
         )
         limit = response_token_limit(
             used_tokens,
             context_tokens=self.context_tokens,
             output_tokens=self.output_tokens,
-            requested_tokens=requested,
+            requested_tokens=allowance,
         )
         if limit is None:
-            return
+            return allowance
         parameter = "max_completion_tokens" if "max_completion_tokens" in payload else self.output_token_parameter
         payload.pop("max_tokens", None)
         payload.pop("max_completion_tokens", None)
@@ -435,13 +467,11 @@ class OpenAiCompatibleProvider:
             # for a visible answer, as Pi's clampThinkingBudgetToAnswerRoom does.
             available = limit - 1024
             if available < 1024:
-                output_limit = response_token_limit(
-                    0, context_tokens=None, output_tokens=self.output_tokens, requested_tokens=requested
-                )
-                if output_limit is not None and output_limit < 2048:
+                if allowance is not None and allowance < 2048:
                     raise ProviderError.for_user("The AI output token limit has no room for reasoning and an answer.")
                 raise ProviderContextOverflowError.for_user("The AI request has no room for reasoning and an answer.")
             payload["thinking"] = {**thinking, "budget_tokens": min(thinking["budget_tokens"], available)}
+        return allowance
 
     async def _load_context_tokens(self) -> None:
         """Read and cache the configured model's context limit when metadata is available."""
@@ -538,7 +568,8 @@ class OpenAiCompatibleProvider:
                 if self._context_used_tokens is not None
                 else estimate
             )
-            self._apply_output_limit(payload, used_tokens)
+            request_payload = dict(payload)
+            output_token_allowance = self._apply_output_limit(request_payload, used_tokens)
             call = ProviderCall(str(uuid4()), self._settings.provider_model)
             if self._include_costs:
                 yield call
@@ -548,7 +579,7 @@ class OpenAiCompatibleProvider:
             try:
                 # Keep tool calls private until the HTTP attempt also closes cleanly.
                 completed: list[ToolCallRequest | ResponseEnd | ReasoningReplay] = []
-                async with aclosing(self._stream_attempt(timeout, headers, payload)) as events:
+                async with aclosing(self._stream_attempt(timeout, headers, request_payload)) as events:
                     while True:
                         try:
                             remaining = None if retry_deadline is None else retry_deadline - time.monotonic()
@@ -567,13 +598,23 @@ class OpenAiCompatibleProvider:
                                 provider_call_id=event.provider_call_id or call.provider_call_id,
                                 response_model=event.response_model or call.response_model,
                                 cost_usd=event.cost_usd if event.cost_usd is not None else call.cost_usd,
+                                streaming_seconds=event.streaming_seconds or call.streaming_seconds,
+                                time_to_first_output_seconds=(
+                                    event.time_to_first_output_seconds
+                                    if event.time_to_first_output_seconds is not None
+                                    else call.time_to_first_output_seconds
+                                ),
                             )
                             if updated != call:
                                 call = updated
-                                yield call
+                                # Timing belongs to the terminal call update, avoiding an extra checkpoint.
+                                if event.time_to_first_output_seconds is None:
+                                    yield call
                             continue
                         if isinstance(event, TokenUsage):
                             call = replace(call, usage=event)
+                        if isinstance(event, ResponseEnd) and event.finish_reason == "length":
+                            event = replace(event, output_token_allowance=output_token_allowance)
                         if isinstance(event, (ToolCallRequest, ResponseEnd, ReasoningReplay)):
                             completed.append(event)
                             continue
@@ -585,6 +626,14 @@ class OpenAiCompatibleProvider:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 return
             except (ProviderError, httpx.HTTPError, TimeoutError) as exc:
+                if isinstance(exc, ProviderError) and not isinstance(
+                    exc, (_RetryableProviderError, ProviderContextOverflowError)
+                ):
+                    logger.exception(
+                        "AI provider stream failed call_id=%s provider_call_id=%s",
+                        call.id,
+                        call.provider_call_id or "unknown",
+                    )
                 if self._include_costs:
                     yield replace(call, status="reported" if call.cost_usd is not None else "unavailable")
                 if isinstance(exc, ProviderError) and not isinstance(exc, _RetryableProviderError):
@@ -650,6 +699,11 @@ class OpenAiCompatibleProvider:
         payload: dict[str, Any],
     ) -> AsyncIterator[ChatStreamEvent]:
         """Run one HTTP stream attempt without replay policy."""
+        request_started = time.perf_counter()
+        first_output: float | None = None
+        last_output: float | None = None
+        reported_usage: TokenUsage | None = None
+        streamed_reasoning = False
         async with (
             httpx.AsyncClient(timeout=timeout) as client,
             client.stream(
@@ -711,13 +765,15 @@ class OpenAiCompatibleProvider:
                     break
                 if not raw_data:
                     continue
+                # Capture arrival before yielding metadata to persistence consumers.
+                received_at = time.perf_counter()
                 try:
                     event = json.loads(raw_data)
                     if not isinstance(event, dict):
-                        raise TypeError
+                        raise TypeError("Stream event must be an object")
                     choices = event["choices"]
                     if not isinstance(choices, list):
-                        raise TypeError
+                        raise TypeError("Stream choices must be an array")
                     usage = event.get("usage")
                     if self._include_costs:
                         yield ProviderResponseMetadata(
@@ -725,17 +781,18 @@ class OpenAiCompatibleProvider:
                             cost_usd=_parse_cost(usage.get("cost")) if isinstance(usage, dict) else None,
                         )
                     if usage is not None:
-                        yield _parse_token_usage(usage)
+                        reported_usage = _parse_token_usage(usage)
+                        yield reported_usage
                     # A usage-only or filter-only chunk carries no choice, and some
                     # providers omit usage from it.
                     if not choices:
                         continue
                     choice = choices[0]
                     if not isinstance(choice, dict):
-                        raise TypeError
+                        raise TypeError("Stream choice must be an object")
                     delta = choice["delta"]
                     if not isinstance(delta, dict):
-                        raise TypeError
+                        raise TypeError("Stream delta must be an object")
                     content = delta.get("content")
                     reported_reason = choice.get("finish_reason")
                     if finish_reason is not None:
@@ -759,6 +816,12 @@ class OpenAiCompatibleProvider:
                         finish_reason = reported_reason
                 except (json.JSONDecodeError, KeyError, TypeError) as exc:
                     raise ProviderError.for_user("The AI provider returned an invalid stream.") from exc
+                reasoning_size = _merge_reasoning(native_reasoning, delta)
+                streamed_reasoning = streamed_reasoning or reasoning_size > 0
+                if content or reasoning_size or delta.get("tool_calls"):
+                    if first_output is None:
+                        first_output = received_at
+                    last_output = received_at
                 if isinstance(content, str) and content:
                     text_chars += len(content)
                     yield TextDelta(content)
@@ -767,7 +830,6 @@ class OpenAiCompatibleProvider:
                 if isinstance(reasoning, str) and reasoning:
                     reasoning_chars += len(reasoning)
                     yield ReasoningDelta(reasoning)
-                _merge_reasoning(native_reasoning, delta)
                 _merge_tool_call_fragments(partial_calls, delta.get("tool_calls"))
                 if delta.get("tool_calls"):
                     yield ToolCallProgress(sum(len(partial.arguments) for partial in partial_calls.values()))
@@ -787,11 +849,28 @@ class OpenAiCompatibleProvider:
                 raise ProviderError.for_user(
                     f"The AI provider returned an unsuccessful finish reason: {finish_reason}."
                 )
+            if self._include_costs and first_output is not None:
+                # Hidden reasoning can precede the first observed output chunk.
+                # Its tokens cannot be matched to this delivery interval.
+                hidden_reasoning = reported_usage and reported_usage.reasoning_tokens > 0 and not streamed_reasoning
+                yield ProviderResponseMetadata(
+                    streaming_seconds=(
+                        last_output - first_output
+                        if last_output is not None and last_output > first_output and not hidden_reasoning
+                        else None
+                    ),
+                    time_to_first_output_seconds=first_output - request_started,
+                )
             if native_reasoning:
                 yield ReasoningReplay(native_reasoning, self.identity)
             if partial_calls:
                 yield ToolCallRequest(tuple(partial.complete() for _, partial in sorted(partial_calls.items())))
-            yield ResponseEnd(finish_reason)
+            yield ResponseEnd(
+                finish_reason,
+                (payload.get("max_completion_tokens") or payload.get("max_tokens"))
+                if finish_reason == "length"
+                else None,
+            )
 
 
 def _is_context_overflow(body: str) -> bool:

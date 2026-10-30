@@ -53,6 +53,7 @@ class PromptStep:
     sha256: str
     evidence: tuple[dict[str, Any], ...] = ()
     comparison_mode: str = "adjacent"
+    reviewed_cases: tuple[str, ...] = ()
 
 
 def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
@@ -63,6 +64,7 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
             **{
                 **item,
                 "cases": tuple(item["cases"]),
+                "reviewed_cases": tuple(item.get("reviewed_cases", ())),
                 "evidence": tuple(item.get("evidence", ())),
             }
         )
@@ -76,7 +78,7 @@ def load_prompt_steps(path: Path = STEPS_PATH) -> tuple[PromptStep, ...]:
             raise ValueError(f"Prompt step {index} has an invalid comparison mode")
         if hashlib.sha256(section.encode()).hexdigest() != step.sha256:
             raise ValueError(f"Prompt step {index} ({step.id}) changed. Update its hypothesis and evidence")
-        if any(record.get("case") not in step.cases for record in step.evidence):
+        if any(record.get("case") not in (*step.cases, *step.reviewed_cases) for record in step.evidence):
             raise ValueError(f"Prompt step {index} evidence must name one of its targeted cases")
     return steps
 
@@ -275,6 +277,37 @@ def evidence_input_digest(step: PromptStep, case: EvalCase, fixture_digest: str)
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
 
+def reviewed_input_digest(step: PromptStep, name: str) -> str:
+    """Bind a reviewed YAML case to its clause, fixtures, and assertion code."""
+    from tests.ai.schema import FIXTURES, ROOT, TESTCASES, load_case
+
+    path = (TESTCASES / name).resolve()
+    if not path.is_relative_to(TESTCASES):
+        raise ValueError("Reviewed cases must be inside tests/ai/testcases")
+    case = load_case(path)
+    fixtures = {FIXTURES / "empty.yaml"}
+    for entry in case.steps:
+        if entry.kind == "yaml":
+            fixtures.add(entry.value)
+        fixtures.update(entry.options.get("attachment", ()))
+    inputs = {
+        "clause": step.sha256,
+        "case": path.read_text(encoding="utf-8"),
+        "fixtures": {
+            file.relative_to(ROOT.parent).as_posix(): hashlib.sha256(
+                file.read_text(encoding="utf-8").encode()
+                if file.suffix in {".yaml", ".yml", ".txt", ".md", ".csv", ".json"}
+                else file.read_bytes()
+            ).hexdigest()
+            for file in sorted(fixtures)
+        },
+        "assertions": {
+            name: (ROOT / name).read_text(encoding="utf-8") for name in ("schema.py", "assertions.py", "judge.py")
+        },
+    }
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
 def validate_prompt_evidence(
     steps: tuple[PromptStep, ...],
     cases: Mapping[str, EvalCase],
@@ -316,12 +349,19 @@ def validate_prompt_evidence(
                 ):
                     raise ValueError(f"{label} shows no measured benefit")
             for observation in (record, *record.get("controls", [])):
-                if observation.get("case") not in step.cases or observation.get("case") not in cases:
+                name = observation.get("case")
+                if name in step.reviewed_cases:
+                    expected_digest = reviewed_input_digest(step, name)
+                elif name in step.cases and name in cases:
+                    case = cases[name]
+                    expected_digest = (
+                        evidence_input_digest(step, case, fixture_digests[case.fixture])
+                        if case.fixture in fixture_digests
+                        else None
+                    )
+                else:
                     raise ValueError(f"{label} names an unlinked testcase")
-                case = cases[observation["case"]]
-                if case.fixture not in fixture_digests or observation.get("input_sha256") != evidence_input_digest(
-                    step, case, fixture_digests[case.fixture]
-                ):
+                if expected_digest is None or observation.get("input_sha256") != expected_digest:
                     raise ValueError(f"{label} has stale clause, testcase, or fixture inputs")
                 # A targeted extension need not rerun controls already verified in
                 # a smaller paired batch. Each observation still needs 3–10 trials.

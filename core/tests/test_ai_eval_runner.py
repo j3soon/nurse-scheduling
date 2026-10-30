@@ -27,7 +27,7 @@ import sys
 from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 
 import httpx
@@ -178,6 +178,57 @@ def test_every_shipped_prompt_clause_has_current_repeated_benefit_evidence(tmp_p
     validate_prompt_evidence(load_prompt_steps(), CASE_BY_ID, FIXTURE_DIGESTS)
 
 
+@pytest.mark.parametrize("path_type", [PurePosixPath, PureWindowsPath], ids=["posix", "windows"])
+def test_reviewed_prompt_evidence_uses_portable_fixture_paths(monkeypatch, path_type):
+    from tests.ai import schema
+
+    class FixturePath(type(schema.FIXTURES)):
+        def relative_to(self, other):
+            return path_type(*super().relative_to(other).parts)
+
+    monkeypatch.setattr(schema, "FIXTURES", FixturePath(schema.FIXTURES))
+    steps = tuple(step for step in load_prompt_steps() if step.reviewed_cases)
+    assert steps
+    validate_prompt_evidence(steps, CASE_BY_ID, FIXTURE_DIGESTS)
+
+
+def test_prompt_evidence_accepts_reviewed_cases_and_rejects_stale_inputs(tmp_path, monkeypatch):
+    from tests.ai import schema
+    from tests.ai_eval.prompt_ladder import reviewed_input_digest
+
+    cases = tmp_path / "testcases"
+    cases.mkdir()
+    name = "english.yaml"
+    path = cases / name
+    content = "steps: [{user: Hi}, {assistant: {judge: Reply in English.}}]\n"
+    path.write_bytes(content.encode())
+    monkeypatch.setattr(schema, "TESTCASES", cases)
+    step = replace(load_prompt_steps()[0], cases=(), reviewed_cases=(name,), evidence=())
+    digest = reviewed_input_digest(step, name)
+    record = {
+        "case": name,
+        "input_sha256": digest,
+        "before": "0/3",
+        "after": "3/3",
+        "model": "test",
+        "infrastructure_errors": 0,
+    }
+    step = replace(step, evidence=(record,))
+    validate_prompt_evidence((step,), {}, {})
+    path.write_bytes(content.replace("\n", "\r\n").encode())
+    assert reviewed_input_digest(step, name) == digest
+    path.write_text(content + "# changed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="stale clause"):
+        validate_prompt_evidence((step,), {}, {})
+    path.write_bytes(content.encode())
+    with pytest.raises(ValueError, match="stale clause"):
+        validate_prompt_evidence((replace(step, sha256="changed"),), {}, {})
+    with pytest.raises(ValueError, match="unlinked testcase"):
+        validate_prompt_evidence((replace(step, reviewed_cases=()),), {}, {})
+    with pytest.raises(ValueError, match="inside tests/ai/testcases"):
+        reviewed_input_digest(step, "../outside.yaml")
+
+
 def test_prompt_evidence_rejects_changed_helper_source(tmp_path, monkeypatch):
     from nurse_scheduling.ai import workspace
 
@@ -234,7 +285,11 @@ def test_prompt_evidence_rejects_stale_or_inconclusive_receipts(change, message)
 
 
 def test_prompt_evidence_rejects_a_regressing_control():
-    step = next(step for step in load_prompt_steps() if step.evidence[0].get("controls"))
+    step = next(
+        step
+        for step in load_prompt_steps()
+        if step.evidence[0]["case"] in CASE_BY_ID and step.evidence[0].get("controls")
+    )
     record = {**step.evidence[0], "controls": [{**step.evidence[0]["controls"][0], "after": "2/3"}]}
     with pytest.raises(ValueError, match="all after attempts passing"):
         validate_prompt_evidence((replace(step, evidence=(record,)),), CASE_BY_ID, FIXTURE_DIGESTS)
@@ -262,7 +317,7 @@ def test_attachment_evidence_binds_reproducible_binary_inputs(monkeypatch):
 
 @pytest.mark.parametrize("changed_input", ["clause", "case", "fixture"])
 def test_prompt_evidence_rejects_changed_inputs(changed_input):
-    step = load_prompt_steps()[0]
+    step = next(step for step in load_prompt_steps() if step.evidence[0]["case"] in CASE_BY_ID)
     case = CASE_BY_ID[step.evidence[0]["case"]]
     cases, fixtures = CASE_BY_ID, FIXTURE_DIGESTS
     if changed_input == "clause":

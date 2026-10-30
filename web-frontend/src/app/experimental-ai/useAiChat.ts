@@ -71,9 +71,12 @@ import {
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
-import { AI_CONVERSATION_STORAGE_KEY, type StoredChatConversation } from './chatConversation';
+import { AI_HISTORY_CHANGED, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, chatKey, clearChatHistory, forgetChat, pruneChatHistory, saveChatHistory, type RecentChat } from './chatHistory';
+import { AI_CONVERSATION_STORAGE_KEY, clearStoredConversation, type StoredChatConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
 import { latestCostSummary, replaceCall, type CostSummary, type ProviderCallCost } from './costs';
+
+const KEPT_BROWSER_SCHEDULE_NOTICE = 'These changes belong to the selected chat. Browser schedule data was kept unchanged.';
 
 interface StreamCallbacks {
   onProviderCall?: (call: ProviderCallCost) => void;
@@ -151,7 +154,7 @@ function assistantEventCallbacks(
   apply: (event: AssistantEvent) => void,
   workingSchedule: { current: string | null },
   browserSchedule: { readonly current: string },
-  applySchedule: (applied: ScheduleApplied) => string | null,
+  applySchedule: (applied: ScheduleApplied) => { notice: string | null; browserApplied: boolean },
 ): Required<Pick<StreamCallbacks,
   'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
   | 'onScheduleApplied' | 'onGenerationProgress'>> {
@@ -171,8 +174,8 @@ function assistantEventCallbacks(
       apply({ type: 'schedule_change', before, after });
     },
     onScheduleApplied: applied => {
-      const notice = applySchedule(applied);
-      apply({ type: 'schedule_applied', runId: applied.runId, diff: applied.diff, ...(notice ? { notice } : {}) });
+      const { notice, browserApplied } = applySchedule(applied);
+      apply({ type: 'schedule_applied', runId: applied.runId, diff: applied.diff, browserApplied, ...(notice ? { notice } : {}) });
     },
   };
 }
@@ -205,6 +208,13 @@ interface AiChatOptions {
 export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
   serverStatus, retainsUploads, backendVersion, selection, modelSelectionEnabled = false, setError, reportRequestError, onSendStart, onReset, onApplySchedule,
 }: AiChatOptions) {
+  const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const lastActivityRef = useRef(Date.now());
+  const observedEventIdRef = useRef(0);
+  const historyCreateRef = useRef(false);
+  const historyForgottenRef = useRef(false);
+  const preserveBrowserScheduleRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
@@ -249,7 +259,15 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   // newer browser work. Preserve the browser's normalized YAML so formatting does not warn.
   const applyRunSchedule = useCallback((applied: ScheduleApplied) => {
     if (Object.hasOwn(appliedScheduleRunsRef.current, applied.runId)) {
-      return appliedScheduleRunsRef.current[applied.runId];
+      const notice = appliedScheduleRunsRef.current[applied.runId];
+      return { notice, browserApplied: notice !== KEPT_BROWSER_SCHEDULE_NOTICE };
+    }
+    if (preserveBrowserScheduleRef.current) {
+      syncedScheduleRef.current = applied.scheduleYaml;
+      syncedBrowserScheduleRef.current = applied.scheduleYaml;
+      const notice = KEPT_BROWSER_SCHEDULE_NOTICE;
+      appliedScheduleRunsRef.current[applied.runId] = notice;
+      return { notice, browserApplied: false };
     }
     const changed = applied.replacedQueuedSchedule || scheduleYamlRef.current !== syncedBrowserScheduleRef.current;
     const notice = changed
@@ -261,7 +279,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     syncedBrowserScheduleRef.current = browserYaml;
     syncedScheduleRef.current = applied.scheduleYaml;
     appliedScheduleRunsRef.current[applied.runId] = notice;
-    return notice;
+    return { notice, browserApplied: true };
   }, []);
   const sessionIdRef = useRef<string | null>(null);
   const sessionEndpointRef = useRef<string | null>(null);
@@ -279,6 +297,16 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const persistConversationRef = useRef<(() => void) | null>(null);
   const checkedSessionRef = useRef<string | null>(null);
   const resetRuntime = useCallback(() => {
+    if (conversationStorageTimerRef.current !== null) clearTimeout(conversationStorageTimerRef.current);
+    persistConversationRef.current = null;
+    historyCreateRef.current = false;
+    historyForgottenRef.current = false;
+    preserveBrowserScheduleRef.current = false;
+    resumedRequestRef.current = null;
+    observedEventIdRef.current = 0;
+    eventRouterRef.current = new SessionEventRouter();
+    setUploadedFiles([]);
+    setSteeringAssistantId(null);
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     sessionEvents.reset();
@@ -303,6 +331,57 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   }, [lifecycle, sessionEvents, onReset]);
 
   useEffect(() => {
+    if (!isClientReady) return;
+    const refresh = () => {
+      try {
+        const entries = pruneChatHistory();
+        setRecentChats(entries);
+        if (!historyCreateRef.current && sessionIdRef.current && sessionEndpointRef.current
+          && !entries.some(entry => chatKey(entry.conversation) === chatKey({
+            sessionId: sessionIdRef.current!, endpoint: sessionEndpointRef.current!,
+          }))) {
+          historyForgottenRef.current = true;
+          clearStoredConversation();
+        }
+      } catch {
+        setHistoryError('Recent chats could not be saved on this device. Browser storage may be unavailable or full.');
+      }
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === AI_HISTORY_STORAGE_KEY || event.key === null) refresh();
+    };
+    refresh();
+    window.addEventListener(AI_HISTORY_CHANGED, refresh);
+    window.addEventListener('storage', onStorage);
+    const timer = setInterval(refresh, 60_000);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(AI_HISTORY_CHANGED, refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [isClientReady]);
+
+  const removeRecentChat = (key: string) => {
+    try {
+      forgetChat(key);
+    } catch {
+      setHistoryError('This chat could not be removed from browser storage.');
+    }
+  };
+  const clearRecentChats = () => {
+    try {
+      clearChatHistory();
+      if (sessionIdRef.current) {
+        historyForgottenRef.current = true;
+        historyCreateRef.current = false;
+      }
+      clearStoredConversation();
+    } catch {
+      setHistoryError('Chat history could not be cleared from browser storage.');
+    }
+  };
+
+  useEffect(() => {
     scheduleYamlRef.current = scheduleYaml;
     sessionRetentionSecondsRef.current = sessionRetentionSeconds;
   }, [scheduleYaml, sessionRetentionSeconds]);
@@ -315,14 +394,18 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     const persistConversation = () => {
       try {
         if (
-          activeSessionId === null
+          historyForgottenRef.current
+          || lastActivityRef.current + HISTORY_RETENTION_MS <= Date.now()
+          || activeSessionId === null
           || sessionExpiresAt === null
           || sessionIdRef.current !== activeSessionId
         ) {
-          window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+          clearStoredConversation();
           return;
         }
         const stored: StoredChatConversation = {
+          lastActivityAt: lastActivityRef.current,
+          preserveBrowserSchedule: preserveBrowserScheduleRef.current,
           sessionId: activeSessionId,
           endpoint: sessionEndpointRef.current ?? aiEndpoint,
           expiresAt: sessionExpiresAt,
@@ -346,7 +429,22 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
               uploading: request.uploading, pendingFiles: request.pendingFiles, selection: request.selection } : null;
           })(),
         };
-        window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+        try {
+          saveChatHistory(stored, historyCreateRef.current);
+          historyCreateRef.current = false;
+          setHistoryError(null);
+        } catch {
+          setHistoryError('Recent chats could not be saved on this device. Browser storage may be unavailable or full.');
+        }
+        // A failed first history write must remain retryable after a reload.
+        stored.historyPending = historyCreateRef.current;
+        if (!historyForgottenRef.current) {
+          try {
+            window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
+          } catch {
+            // Device history can still work when tab storage is unavailable.
+          }
+        }
       } catch {
         // The live conversation remains usable when tab storage is unavailable or full.
       }
@@ -407,7 +505,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           resetRuntime();
           setConversationUnavailable(true);
           setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
-          window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+          clearStoredConversation();
         } else {
           checkedSessionRef.current = null;
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
@@ -461,13 +559,14 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setSessionNotice(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
       );
-      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+      clearStoredConversation();
     };
     checkExpiration();
     return () => window.clearTimeout(timeout);
   }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds]);
 
   const renewSessionExpiration = () => {
+    lastActivityRef.current = Date.now();
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
 
@@ -475,7 +574,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     resetRuntime();
     setConversationUnavailable(true);
     setSessionNotice(notice);
-    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+    clearStoredConversation();
   };
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
@@ -624,7 +723,11 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     backgroundEventRef.current = event => dispatchPageEvent(event, handlers, setMessages);
     sessionEvents.connect({
       sessionId, endpoint, authToken, resetReplay,
-      onEventId: () => setIsReconnecting(false),
+      onEventId: id => {
+        if (id > observedEventIdRef.current) lastActivityRef.current = Date.now();
+        observedEventIdRef.current = Math.max(observedEventIdRef.current, id);
+        setIsReconnecting(false);
+      },
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
       onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
@@ -732,6 +835,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint, requestSelection);
         if (!lifecycle.owns(operation)) return;
         controller.signal.throwIfAborted();
+        historyCreateRef.current = true;
+        lastActivityRef.current = Date.now();
         sessionIdRef.current = sessionId;
         sessionEndpointRef.current = sessionEndpoint;
         setSessionEndpoint(sessionEndpoint);
@@ -748,6 +853,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       if (!lifecycle.owns(operation)) return;
       controller.signal.throwIfAborted();
       if (!resume?.recover) {
+        preserveBrowserScheduleRef.current = false;
         syncedScheduleRef.current = scheduleYaml;
         syncedBrowserScheduleRef.current = scheduleYaml;
       }
@@ -1135,21 +1241,31 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     }
   };
 
-  const restoreConversation = useCallback((storedConversation: StoredChatConversation) => {
+  const restoreConversation = useCallback((storedConversation: StoredChatConversation, fromHistory = false) => {
+      persistConversationRef.current?.();
+      resetRuntime();
+      lastActivityRef.current = storedConversation.lastActivityAt ?? Date.now();
+      historyCreateRef.current = !fromHistory
+        && (storedConversation.historyPending === true || storedConversation.lastActivityAt === undefined);
+      preserveBrowserScheduleRef.current = fromHistory || storedConversation.preserveBrowserSchedule === true;
+      setConversationUnavailable(false);
+      setSessionNotice(null);
+      setError(null);
       const expired = storedConversation.expiresAt <= Date.now();
       // The server owns background work across reloads. Reconcile its later
       // events onto the saved pending message instead of declaring it failed.
       // An expired chat receives no events, so its background reply fails.
       const backgroundId = expired ? undefined : storedConversation.backgroundAssistantId;
       if (backgroundId) lifecycle.begin('background', backgroundId);
-      setMessages(storedConversation.messages.map(message => (
-        message.status === 'pending' && !message.requestId
-          && (message.runId ?? message.id) !== backgroundId
+      setMessages(storedConversation.messages.map(original => {
+        const message = fromHistory && original.request ? { ...original, request: { ...original.request, active: false } } : original;
+        return message.status === 'pending' && (fromHistory || !message.requestId) && (message.runId ?? message.id) !== backgroundId
           ? { ...message, status: 'failed' as const, activity: interruptRunningTools(message.activity ?? []) }
-          : message
-      )));
+          : message;
+      }));
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
+      observedEventIdRef.current = lastSessionEventIdRef.current;
       setContextUsage(storedConversation.contextUsage ?? null);
       setCostSummary(storedConversation.costSummary ?? null);
       setActiveOptimization(storedConversation.activeOptimization
@@ -1161,7 +1277,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       sessionEndpointRef.current = storedConversation.endpoint;
       setSessionEndpoint(storedConversation.endpoint);
       if (expired) {
-        window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+        clearStoredConversation();
         setConversationUnavailable(true);
         setSessionNotice(
           `This chat expired after ${retentionLabel(storedConversation.retentionSeconds)} of inactivity. Start a new chat to continue.`,
@@ -1175,7 +1291,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         // An expired chat sends nothing at all, so it keeps the transcript without it.
         setTrimmedHistoryCount(storedConversation.trimmedHistoryCount ?? 0);
       }
-  }, [lifecycle, lastSessionEventIdRef]);
+  }, [lifecycle, lastSessionEventIdRef, resetRuntime, setError]);
 
   useEffect(() => () => {
     lifecycle.reset();
@@ -1183,6 +1299,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   }, [lifecycle]);
 
   const newConversation = () => {
+    persistConversationRef.current?.();
     resetRuntime();
     setMessages([]);
     setContextUsage(null);
@@ -1191,7 +1308,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     setConversationUnavailable(false);
     setSessionNotice(null);
     setError(null);
-    window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+    clearStoredConversation();
   };
   const captureSession = () => sessionIdRef.current === null ? null : ({
     id: sessionIdRef.current,
@@ -1199,6 +1316,8 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     ownsConversation: lifecycle.capture(),
   });
   return {
+    recentChats, historyError, removeRecentChat, clearRecentChats,
+    scheduleDiffers: activeSessionId !== null && scheduleYaml !== (syncedBrowserScheduleRef.current ?? syncedScheduleRef.current),
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,

@@ -30,7 +30,7 @@ N/A marks a limit or component absent in the pinned Pi implementation.
 | Context safety margin | 4,096 tokens | Same. |
 | Tool-result text in summary input | Truncated to 2,000 characters | Same. |
 | Cumulative file-operation records in summaries | Supported | Read, write, and edit paths are saved separately and appended to each summary. |
-| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the model output limit. Partial tool calls are not executed. Chats and exports label the omitted attempt. |
+| Context overflow recovery | One compact-and-retry attempt | Same, including explicit overflow after partial output and a length stop below the normal output allowance before applying the remaining-context limit. Partial tool calls are not executed. Chats and exports label the omitted attempt. |
 
 Each history or turn-prefix section is summarized in one request. Complete,
 successful summaries are accepted, including empty text, as in Pi. Summary
@@ -57,11 +57,17 @@ Pi's design guides the whole agent. These implementation differences remain:
   and include the system prompt and tool definitions. Opaque signatures and
   encrypted replay data do not inflate these estimates. Message serialization
   and image representation differ from Pi's native message format.
+- Requests default to a 32,768-token response allowance so underestimated large
+  tool responses leave room in the context window. Explicit request limits
+  replace this default. Model output and available-context limits still apply.
 - The loop checks context before tool continuations as well as after a final
   response, so growing tool results can be summarized before the next request.
-  Length-stop recovery requires reported completion usage. If recovery compaction
-  skips or fails, normal output-limit handling retains the response and refuses
-  its partial tool calls.
+  Length-stop recovery compares reported completion usage with the normal output
+  allowance, which applies model and explicit request limits before the remaining
+  context limit. Filling a smaller context cap can trigger recovery. Filling the
+  normal allowance does not. If usage is absent, recovery requires a known request
+  cap below the known normal allowance. If recovery compaction skips or fails,
+  normal output-limit handling retains the response and refuses its partial tool calls.
   Manual compaction uses shared run admission, Stop, replay, and persistence.
   It requires an idle chat instead of implicitly stopping an active schedule
   operation. Use Stop before compacting an active chat.
@@ -170,5 +176,32 @@ For failure ordering, persistence, and event behavior, see
 [AI Assistant Backend](ai-assistant.md). The environment example and both backend
 Compose variants expose the runtime controls. In Compose, the optimizer timeout
 follows `OPTIMIZE_DEFAULT_TIMEOUT_SECONDS` so both services share the same default.
+
+## Provider streaming measurements
+
+Turn details show estimated provider cost, output tokens per second, call count,
+and missing prices. Provider call records retain streaming duration and time to
+first output when measurable. Streaming duration runs from the first nonempty
+output chunk to the last. Output includes text, reasoning, and tool-call generation.
+Time to first output starts when the backend begins the HTTP request.
+
+Speed uses provider-reported completion tokens, including reasoning tokens once.
+It excludes input tokens, time to first output, tool execution, VM work, retry
+backoff, and gaps between calls. A call needs reported positive output usage and
+at least two output chunks with distinct arrival times. Missing or incomplete
+measurements remain unavailable. Cost availability is independent of speed.
+When usage reports reasoning tokens without reasoning stream events, speed is
+unavailable because their generation time cannot be matched to the observed interval.
+
+Run and conversation totals divide measured output tokens by measured streaming
+seconds. They do not average individual speeds. Turn details report how many
+calls contributed. Recovery and exports retain the same measurements.
+These are backend-observed delivery speeds. Provider buffering, hidden reasoning,
+network delays, and stream-consumer delays can affect the estimate.
+
+Provider protocol failures log the underlying exception and gateway call ID
+when available.
+Use the call ID in turn details to find the matching backend log. Diagnostic
+logs omit provider response content and credentials.
 
 [pi]: https://github.com/earendil-works/pi/tree/a13d35a742c6ef8462812a28fbe1d8c8b7431c32

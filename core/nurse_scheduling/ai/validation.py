@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from ruamel.yaml.error import YAMLError
 
 from ..frontend_validation import load_frontend_data
+from ..loader import _load_yaml
 
 # The assistant is reachable only from the web frontend, so it validates the
 # frontend subset alone. The full backend schedule format accepts shapes the editor
@@ -62,11 +63,14 @@ class ScheduleValidationResult:
         return "\n".join(lines)
 
 
-def validate_frontend_schedule_yaml(schedule_yaml: str, max_bytes: int) -> ScheduleValidationResult:
+def validate_frontend_schedule_yaml(
+    schedule_yaml: str, max_bytes: int, *, allow_empty: bool = False
+) -> ScheduleValidationResult:
     """Validate one schedule against the shapes the web frontend can edit.
 
     Parsing bounds live in the shared loader. The frontend entry point also
-    rejects aliases before building a model.
+    rejects aliases before building a model. Candidate edits can allow the empty
+    editor state. Optimization still requires the complete backend schedule.
     """
     content = schedule_yaml.encode("utf-8")
     if len(content) > max_bytes:
@@ -74,6 +78,8 @@ def validate_frontend_schedule_yaml(schedule_yaml: str, max_bytes: int) -> Sched
     try:
         load_frontend_data(content)
     except ValidationError as error:
+        if allow_empty and _is_empty_schedule(_load_yaml(content, reject_aliases=True)):
+            return ScheduleValidationResult(valid=True)
         # ValidationError derives from ValueError, so it must be handled first.
         return _invalid([_issue_from_error(entry) for entry in error.errors()])
     except YAMLError as error:
@@ -81,6 +87,36 @@ def validate_frontend_schedule_yaml(schedule_yaml: str, max_bytes: int) -> Sched
     except (TypeError, ValueError) as error:
         return _invalid([ScheduleIssue(DOCUMENT_LOCATION, str(error))])
     return ScheduleValidationResult(valid=True)
+
+
+def _is_empty_schedule(data: dict) -> bool:
+    """Accept the empty editor state without accepting arbitrary incomplete data."""
+    data = dict(data)
+    app_version = data.pop("appVersion", None)
+    if app_version is not None and not isinstance(app_version, str):
+        return False
+    if data.get("description") is None:
+        data["description"] = ""
+    for name in ("dates", "people", "shiftTypes"):
+        container = data.get(name)
+        if isinstance(container, dict):
+            container = data[name] = dict(container)
+            container.setdefault("groups", [])
+            if name == "dates":
+                container.setdefault("items", [])
+    export = data.pop("export", {})
+    if not isinstance(export, dict) or set(export) - {"formatting", "extraColumns", "extraRows"}:
+        return False
+    if any(value != [] for value in export.values()):
+        return False
+    return data == {
+        "apiVersion": "alpha",
+        "description": "",
+        "dates": {"range": {}, "items": [], "groups": []},
+        "people": {"items": [], "groups": []},
+        "shiftTypes": {"items": [], "groups": []},
+        "preferences": [{"type": "at most one shift per day"}],
+    }
 
 
 def _invalid(issues: list[ScheduleIssue]) -> ScheduleValidationResult:

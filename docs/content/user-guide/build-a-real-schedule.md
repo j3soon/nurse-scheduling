@@ -301,7 +301,7 @@ result before saving, especially where groups overlap.
   - **Purpose:** Each of `D+`, `E+`, and `N+` requires three senior nurses in addition to ordinary staffing. Restricting `D+`, `E+`, and `N+` to this group ensures that junior nurses cannot fill the senior slots.
 
 - **`Head Nurses`**
-  - **Purpose:** This group contains the head nurse `P1` and deputy head nurse `P2`. No rule selects this group in the example.
+  - **Purpose:** This group contains the head nurse `P1` and deputy head nurse `P2`. No rule selects this group in the example. Head nurses often should also qualify as senior nurses but easily overlooked.
 
 - **`Super Junior Nurses`**
   - **Purpose:** Some wards distinguish newly hired nurses (`新人`) from other junior nurses and students when setting qualifications or workloads. Rules for this additional category are outside the scope of this example.

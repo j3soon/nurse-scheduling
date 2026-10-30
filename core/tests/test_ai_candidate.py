@@ -56,6 +56,23 @@ def test_valid_candidate_creates_structural_proposal():
     assert "people.items[0].description" in review.proposal.diff.render()
 
 
+def test_reset_to_empty_preserves_rule_and_allows_later_people_edits():
+    from tests.ai.schema import FIXTURES
+
+    empty = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
+    review = review_schedule_candidate(schedule_yaml(), empty, SCHEDULE_BYTE_LIMIT)
+    assert review.outcome.ok
+    assert review.proposal.text == empty
+    without_rule = empty.replace("preferences:\n  - type: at most one shift per day", "preferences: []")
+    restored = review_schedule_candidate(schedule_yaml(), without_rule, SCHEDULE_BYTE_LIMIT)
+    assert restored.outcome.ok
+    assert YAML(typ="safe").load(restored.proposal.text) == YAML(typ="safe").load(empty)
+    edited = empty.replace("people:\n  items: []", "people:\n  items: [{id: Alice, description: ''}]")
+    added = review_schedule_candidate(empty, edited, SCHEDULE_BYTE_LIMIT)
+    assert added.outcome.ok
+    assert added.proposal.text == edited
+
+
 def test_candidate_with_new_validation_problem_is_rejected():
     base = schedule_yaml()
 

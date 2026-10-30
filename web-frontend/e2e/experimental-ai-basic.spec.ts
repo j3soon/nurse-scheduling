@@ -21,7 +21,8 @@
 
 import { expect, Page, test } from '@playwright/test';
 import { createServer, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 const FRONTEND_TIMEZONE = 'America/Los_Angeles';
@@ -361,6 +362,69 @@ async function mockAiBackend(
   });
 }
 
+for (const clearPending of [false, true]) {
+  test(`recovers a tab after a failed first history write and respects ${clearPending ? 'clearing pending history' : 'later removal'}`, async ({ page }) => {
+    await mockAiBackend(page, ['Recovered answer.']);
+    await page.addInitScript(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (this === localStorage && key === 'nurse-scheduling-ai-history'
+          && sessionStorage.getItem('test-history-full') !== 'false') {
+          throw new DOMException('Full', 'QuotaExceededError');
+        }
+        setItem.call(this, key, value);
+      };
+    });
+    await page.goto('/experimental-ai');
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Keep this chat.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const transcript = page.getByRole('region', { name: 'Chat messages' });
+    await expect(transcript.getByText('Recovered answer.')).toBeVisible();
+    await expect(page.getByText(/Recent chats could not be saved/)).toBeVisible();
+    const snapshot = () => page.evaluate(() => JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? 'null'));
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(true);
+    await page.reload();
+    await expect(transcript.getByText('Recovered answer.')).toBeVisible();
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(true);
+
+    if (clearPending) {
+      await page.evaluate(() => {
+        const stored = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+        sessionStorage.setItem('test-history-full', 'false');
+        localStorage.setItem('nurse-scheduling-ai-history', JSON.stringify({ appVersion: 'test', entries: [{
+          lastActivityAt: stored.lastActivityAt,
+          conversation: { ...stored, sessionId: 'older', messages: [{ id: 'old', role: 'user', content: 'Older chat' }] },
+        }] }));
+        window.dispatchEvent(new Event('ai-chat-history-changed'));
+        sessionStorage.setItem('test-history-full', 'true');
+      });
+      page.on('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: 'Clear history', exact: true }).click();
+      await page.evaluate(() => {
+        sessionStorage.setItem('test-history-full', 'false');
+        window.dispatchEvent(new Event('pagehide'));
+      });
+      expect(await snapshot()).toBeNull();
+      expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-history'))).toBeNull();
+      await page.reload();
+      await expect(transcript.getByText('Recovered answer.')).toHaveCount(0);
+      return;
+    }
+
+    await page.evaluate(() => sessionStorage.setItem('test-history-full', 'false'));
+    await page.reload();
+    const history = page.getByRole('complementary', { name: 'Recent chats' });
+    await expect(history.getByRole('button', { name: /^Keep this chat/ })).toBeVisible();
+    await expect.poll(async () => (await snapshot())?.historyPending).toBe(false);
+    await history.getByRole('button', { name: 'Remove chat: Keep this chat.' }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    expect(await snapshot()).toBeNull();
+    await page.reload();
+    await expect(transcript.getByText('Recovered answer.')).toHaveCount(0);
+    await expect(history.getByText('No recent chats.')).toBeVisible();
+  });
+}
+
 test('submits a long question without a character limit', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Long question received.']);
   await page.route('**/capabilities', route => route.fulfill({ json: {
@@ -646,7 +710,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
   const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
-  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.getByText(/^Turn details ·/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
   await page.getByText('Conversation summary', { exact: true }).click();
@@ -656,7 +720,7 @@ test('compacts context on demand and restores the summary after reload', async (
   await page.reload();
   await expect(page.getByText('You requested context compaction.', { exact: true })).toBeVisible();
   await expect(page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true })).toBeVisible();
-  await expect(notice.getByText(/^Estimated turn cost:/)).toBeVisible();
+  await expect(notice.getByText(/^Turn details ·/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
 });
@@ -1027,6 +1091,82 @@ test('downloads a completed background optimization from chat', async ({ page })
   const download = await downloadEvent;
   expect(download.suggestedFilename()).toBe('optimized-schedule--browser.xlsx');
   expect(await readFile(await download.path())).toEqual(workbookBytes);
+});
+
+for (const touch of [false, true]) test.describe(touch ? 'phone optimizer controls' : 'desktop optimizer controls', () => {
+  if (touch) test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('finishes the background optimizer early and retains timing and user intent after reload', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-10-29T23:00:00Z') });
+    const running = {
+      job_id: 'opt-finish', state: 'running', terminal: false, downloadable: false,
+      created_at: '2026-10-30T00:00:00Z', started_at: '2026-10-30T00:00:10Z',
+      controls: { early_completion_available: true },
+    };
+    const backend = await mockAiBackend(page, ['Optimization started.'], false, 'finish-token', [{ type: 'optimization', data: running }]);
+    let requests = 0;
+    await page.route('**/ai/sessions/*/optimizations/opt-finish/finish-now', async route => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers().authorization).toBe('Bearer finish-token');
+      requests += 1;
+      if (requests === 1) {
+        await route.fulfill({ status: 502, json: { detail: 'The optimizer did not accept the finish-now request.' } });
+        return;
+      }
+      backend.publishEvent('optimization', { ...running, finish_now_requested_by: 'user', controls: { early_completion_available: false } });
+      await route.fulfill({ status: 202 });
+    });
+    await page.goto('/experimental-ai');
+    await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
+    await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('finish-token');
+    await page.getByRole('checkbox', { name: /remember on this device/i }).check();
+    await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const finish = page.getByRole('button', { name: 'Finish now', exact: true });
+    await expect(finish).toBeEnabled();
+    await page.clock.pauseAt(new Date('2026-10-30T00:00:20Z'));
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await expect(page.getByText('Elapsed: 10s', { exact: true })).toBeVisible();
+    await page.clock.runFor(2000);
+    await expect(page.getByText('Elapsed: 12s', { exact: true })).toBeVisible();
+    const artifactDir = path.resolve(__dirname, '../../artifacts/ai-optimizer', test.info().project.name, touch ? 'phone' : 'desktop');
+    await mkdir(artifactDir, { recursive: true });
+    await page.getByRole('button', { name: 'Cancel optimizer' }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifactDir, 'running.png') });
+    if (touch) await finish.tap(); else await finish.click();
+    await expect(page.getByText('The optimizer did not accept the finish-now request.', { exact: true })).toBeVisible();
+    await expect(finish).toBeEnabled();
+    if (touch) await finish.tap(); else await finish.click();
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Cancel optimizer' })).toBeEnabled();
+    // The button also reflects the optimistic POST state. Wait for the server
+    // event in the saved snapshot before checking its persistence across reload.
+    await expect.poll(() => page.evaluate(() => {
+      window.dispatchEvent(new Event('pagehide'));
+      return JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? 'null')
+        ?.activeOptimization?.finishNowRequestedBy;
+    })).toBe('user');
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toBeDisabled();
+    await expect.poll(() => backend.hasWaitingReader()).toBe(true);
+    backend.publishEvent('optimization', { ...running, state: 'completed', terminal: true, downloadable: true,
+      finished_at: '2026-10-30T00:01:33Z', elapsed_seconds: 83, finish_now_requested_by: 'user',
+      controls: { early_completion_available: false }, request: { timeout_seconds: 300 },
+      result: { outcome: 'feasible', score: 17, solver_status: 'FEASIBLE', termination_reason: 'user_requested' } });
+    await expect(page.getByRole('button', { name: 'Finishing…', exact: true })).toHaveCount(0);
+    const block = page.locator('article').filter({ hasText: 'Optimization finished. Download' });
+    await expect(block).toContainText('Elapsed time: 1m 23s');
+    await expect(block).toContainText('Finish now requested by: user');
+    await expect(block).toContainText('Termination reason: user_requested');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await block.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(artifactDir, 'completed.png') });
+    await page.clock.runFor(3000);
+    await expect(block).toContainText('Elapsed time: 1m 23s');
+    expect(requests).toBe(2);
+    expect(backend.messageBodies).toHaveLength(1);
+  });
 });
 
 test('cancels the background optimizer from its status box without asking the agent', async ({ page }) => {
@@ -1508,7 +1648,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         await expect(page.getByText('First part and', { exact: true })).toHaveCount(1);
         await expect(page.getByText('Compare Tuesday.', { exact: true })).toHaveCount(1);
       }
-      await expect(page.getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
+      await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Continue while disconnected', { exact: true })).toHaveCount(1);
       await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
       expect(executions).toBe(1);
       expect(unauthorized).toBe(0);
@@ -1673,7 +1813,7 @@ test('keeps the model editable until the server accepts a message', async ({ pag
   await expect(page.getByText('The AI service is busy. Try again later.').first()).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.reload();
-  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('First question', { exact: true })).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.getByLabel('AI model').selectOption('deep');
   await expect.poll(() => captured.modelSelections.at(-1)).toEqual({ model: 'deep', reasoning: 'off' });
@@ -1710,7 +1850,7 @@ test('follows the saved model lock after a question stops before its run starts'
   await expect(page.getByText('Stopped before completion.')).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.reload();
-  await expect(page.getByText('First question', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('First question', { exact: true })).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
 });
 
@@ -1720,13 +1860,13 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
     await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
       { type: 'model_selection', data: { model: 'deep', reasoning: 'high' } },
       { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
-        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep', streaming_seconds: 0.2, time_to_first_output_seconds: 0.5,
         usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
       { type: 'provider_call', data: { call_id: 'call-one', model: 'deep', reasoning: 'high', status: 'reported',
-        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep',
+        cost_usd: cost, provider_call_id: 'gateway-one', response_model: 'deep', streaming_seconds: 0.2, time_to_first_output_seconds: 0.5,
         usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } } },
-      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0 },
-        run: { usd: cost, calls: 1, pending: 0, unavailable: 0 } } },
+      { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } },
+        run: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } } } },
     ]);
     await page.goto('/experimental-ai');
     await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Cost question');
@@ -1742,23 +1882,23 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
         && !!(element.compareDocumentPosition(cost) & Node.DOCUMENT_POSITION_FOLLOWING);
     }, `Est. cost: ${display}`)).toBe(true);
     await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
-    await page.getByRole('checkbox', { name: 'Show turn costs' }).uncheck();
-    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn details' }).uncheck();
+    await expect(page.getByText(/^Turn details ·/)).toHaveCount(0);
     await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
     await expect(page.getByText('deep · high', { exact: true })).toHaveCount(0);
     await expect(conversationCost).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('checkbox', { name: 'Show turn costs' })).not.toBeChecked();
+    await expect(page.getByRole('checkbox', { name: 'Show turn details' })).not.toBeChecked();
     await expect(page.getByRole('checkbox', { name: 'Show models', exact: true })).not.toBeChecked();
-    await expect(page.getByText(/^Estimated turn cost:/)).toHaveCount(0);
-    await page.getByRole('checkbox', { name: 'Show turn costs' }).check();
+    await expect(page.getByText(/^Turn details ·/)).toHaveCount(0);
+    await page.getByRole('checkbox', { name: 'Show turn details' }).check();
     await page.getByRole('checkbox', { name: 'Show models', exact: true }).check();
     await expect(page.getByText('deep · high', { exact: true })).toBeVisible();
-    await page.getByText(`Estimated turn cost: ${display} · 1 call`).click();
+    await page.getByText(`Turn details · ${display.startsWith('<') ? display : '~' + display} · 100 tok/s · 1 call`).click();
     await expect(page.getByText('Call: gateway-one')).toHaveCount(1);
     await expect(page.getByText(/Reasoning \(included in output\): 10/)).toBeVisible();
     await page.reload();
     await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
-    await expect(page.getByText(`Estimated turn cost: ${display} · 1 call`)).toBeVisible();
+    await expect(page.getByText(`Turn details · ${display.startsWith('<') ? display : '~' + display} · 100 tok/s · 1 call`)).toBeVisible();
   });
 }

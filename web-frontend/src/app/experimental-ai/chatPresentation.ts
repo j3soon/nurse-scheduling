@@ -180,7 +180,7 @@ export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response'
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
   if (entry.kind === 'schedule-change') return 'schedule edit';
   if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
-  if (entry.kind === 'schedule-applied') return 'Applied to your schedule';
+  if (entry.kind === 'schedule-applied') return entry.browserApplied === false ? 'Saved in this chat' : 'Applied to your schedule';
   if (entry.argumentsCharacters !== undefined) {
     const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
     return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;

@@ -62,9 +62,11 @@ def validate_schedule_change(
     base_text: str, candidate: str, max_bytes: int
 ) -> tuple[ScheduleValidationResult, tuple[ScheduleIssue, ...]]:
     """Allow existing incomplete input while refusing problems introduced by an edit."""
-    validation = validate_frontend_schedule_yaml(candidate, max_bytes)
+    validation = validate_frontend_schedule_yaml(candidate, max_bytes, allow_empty=True)
     if validation.valid:
         return validation, ()
+    # Keep the original incomplete-state issues when editing an empty schedule.
+    # Accepting an empty reset must not prevent adding people before setting dates.
     base_validation = validate_frontend_schedule_yaml(base_text, max_bytes)
     return validation, new_schedule_issues(base_validation, validation)
 
@@ -131,7 +133,7 @@ def _restore_required_rule(candidate: str, max_bytes: int) -> str:
         expected = {**data, "preferences": [{"type": AT_MOST_ONE_SHIFT_PER_DAY}, *preferences]}
         if completed is None or _load_yaml(completed.encode("utf-8"), reject_aliases=True) != expected:
             return candidate
-        return completed if validate_frontend_schedule_yaml(completed, max_bytes).valid else candidate
+        return completed if validate_frontend_schedule_yaml(completed, max_bytes, allow_empty=True).valid else candidate
     except (YAMLError, TypeError, ValueError):
         return candidate
 

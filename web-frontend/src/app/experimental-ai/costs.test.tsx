@@ -41,7 +41,7 @@ it('replaces a streamed call record without counting it twice', () => {
 it('shows missing pricing separately from an explicitly free call', () => {
   render(<CostDetails summary={{ usd: '0', calls: 2, pending: 0, unavailable: 1 }} running={false}
     calls={[{ ...call, status: 'unavailable' }, { ...call, callId: 'b', status: 'reported', costUsd: '0' }]} />);
-  expect(screen.getByText('Estimated turn cost: $0.0000 · 2 calls · 1 unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Turn details · ~$0.0000 · Speed unavailable · 2 calls · 1 cost unavailable')).toBeInTheDocument();
   expect(screen.getByText(/1\. model.*Cost unavailable/)).toBeInTheDocument();
   expect(screen.getByText(/2\. model.*\$0.0000/)).toBeInTheDocument();
 });
@@ -49,7 +49,7 @@ it('shows missing pricing separately from an explicitly free call', () => {
 it('shows interrupted pending calls as unavailable and does not add reasoning tokens to output', () => {
   render(<CostDetails summary={{ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }} running={false}
     calls={[{ ...call, usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } }]} />);
-  expect(screen.getByText('Estimated turn cost: $0.1000 · 1 call · 1 unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Turn details · ~$0.1000 · Speed unavailable · 1 call · 1 cost unavailable')).toBeInTheDocument();
   expect(screen.getByText(/Reasoning \(included in output\): 10/)).toBeInTheDocument();
 });
 
@@ -71,7 +71,26 @@ it('keeps an authoritative reset total when older foreground events are acknowle
 it('keeps a reported price when the process stops before the terminal call event', () => {
   render(<CostDetails summary={{ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }} running={false}
     calls={[{ ...call, costUsd: '0.1' }]} />);
-  expect(screen.getByText('Estimated turn cost: $0.1000 · 1 call')).toBeInTheDocument();
+  expect(screen.getByText('Turn details · ~$0.1000 · Speed unavailable · 1 call')).toBeInTheDocument();
   expect(costLabel({ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }, false)).toBe('$0.1000');
   expect(costLabel({ usd: '0.1', calls: 1, pending: 1, unavailable: 0 }, true)).toBe('$0.1000 · 1 call · 1 pending');
+});
+
+it('shows provider speed independently of cost and identifies partial measurement coverage', () => {
+  render(<CostDetails summary={{ usd: '1e-8', calls: 2, pending: 0, unavailable: 1,
+    streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } }} running={false}
+    calls={[{ ...call, status: 'unavailable', streamingSeconds: 0.2, timeToFirstOutputSeconds: 0.5,
+      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, reasoning_tokens: 10 } }]} />);
+  expect(screen.getByText('Turn details · <$0.000001 · 100 tok/s · 2 calls · 1 cost unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Speed measured for 1 of 2 calls.')).toBeInTheDocument();
+  expect(screen.getByText('Provider streaming speed: 100 tok/s · Streaming: 0.2s · Time to first output: 0.5s')).toBeInTheDocument();
+});
+
+it('rejects malformed streaming measurements without rejecting old saved totals', () => {
+  const summary = { usd: '0', calls: 2, pending: 0, unavailable: 0 };
+  expect(isCostSummary(summary)).toBe(true);
+  for (const streaming of [null, { calls: 3, output_tokens: 20, seconds: 1 }, { calls: 1, output_tokens: 0, seconds: 1 },
+    { calls: 1, output_tokens: 20, seconds: 0 }, { calls: 1, output_tokens: 20, seconds: Infinity }]) {
+    expect(isCostSummary({ ...summary, streaming })).toBe(false);
+  }
 });

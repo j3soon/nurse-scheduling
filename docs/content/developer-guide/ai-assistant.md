@@ -213,6 +213,18 @@ updates and the cancellation summary arrive on the session stream. Cancellation
 uses no model call or sandbox, and cancelled jobs do not start a result review.
 It leaves an active chat response running.
 
+**Finish now** posts to `/sessions/{id}/optimizations/{job_id}/finish-now` through
+that same transport. The agent uses `optimizer(action="finish_now")`. Both paths
+record `finish_now_requested_by` as `user` or `agent` for the result review and
+chat archive. The solver's `termination_reason` remains authoritative, including
+when it finishes before the control request returns. A failed request allows a
+retry. Repeated requests do not resubmit an accepted control.
+
+Status events retain backend creation, start, and finish timestamps. The widget
+updates elapsed running time locally each second and shows waiting time before
+a job starts. Completion events, agent reviews, and exports include
+`elapsed_seconds`, measured from the backend start to finish timestamps.
+
 <figure markdown="1" id="ai-optimizer">
 
 **Figure 5. Independent optimization and serialized result review.**
@@ -688,30 +700,39 @@ renderers and middle truncation are not used by these tools.
 
 ## Autonomous roster validation
 
-The prompt encourages an optimization and inspection loop for usable rosters.
-For scheduling edits alone, the agent offers the loop. Acceptance authorizes
-continued work within the agreed requirements, without permission at each
-iteration. The optimizer can test the working copy before the run finishes. The
-run then applies the validated schedule.
+The agent helps build and edit schedule data by identifying missing requirements,
+ambiguities and possible oversights. It asks about unexplained items, groups,
+roles and qualifications without inventing rules. Clarification takes priority
+over automatic optimization even when the available data is sufficient for the
+optimizer. Overlooked requirements can make its output unusable and waste
+compute and user time. Unspecified rules need confirmation before being treated
+as unrestricted or informational.
 
-The agent confirms missing rest and fairness policy before constructing a roster.
-After a successful
-optimizer start, the host emits a running message and ends the current exchange.
-It skips remaining tool calls in that batch and preserves queued user messages.
-The optimizer completion starts a review turn with the new submitted source and
-workbook. The agent inspects whether the result meets the user's goals, then
-adjusts within the agreed requirements or retries optimization if needed.
-It stops when the result is ready or further progress needs a user decision.
-Draft, explanation and explicit no-optimization requests retain their scope.
+The agent clarifies ambiguous goals or requested actions. It can apply clear
+edits within the stated requirements and flag missing data. It waits for pending answers before
+optimizing unless the user explicitly asks to optimize or proceed despite the
+unknowns. Requests not to optimize still apply.
 
-The 77-word clause replaces 315 words of mixed instructions.
-`optimization-loop-offer-after-edit` improved from 0/3 to 3/3 against the previous
-full prompt. Acceptance, refusal, outcome, authorized retry, draft and read-only
-cases passed 3/3 with the new wording. These checks measure initiative rather
-than the older automatic-only contracts. The unchanged immediate-start diagnostic
-passed 2/3, and the detailed automatic-policy-retry smoke offered another solve
-instead of starting it. Provider and E2B calls were live. Completion fixtures
-used checked assignments and exported workbooks, without HTTP optimizer jobs.
+Once the necessary questions are answered, the agent validates its schedule data
+changes by optimizing and inspecting the output. It can adjust the schedule or
+optimizer within the agreed requirements and repeat. New questions that need
+user judgment pause the loop unless the user explicitly asks to proceed without
+answers. The separate optimizer-goal prompt was removed to keep one policy for
+when to act.
+
+Focused behavior checks live in `core/tests/ai/`. The guidance case allows schedule
+data edits and accepts helpful questions, explanations and options. The explicit-edit case checks that
+a clear action request is applied without another confirmation and that no
+optimizer call is attempted. Cases with `optimizer: {invoked: false}` expose
+the production tool and reject any call during the turn. The tester does not
+launch solver jobs or validate completion loops. Legacy AI tests remain for a dedicated removal
+branch after the test migration is merged.
+
+After a successful optimizer start, the host emits a running message and ends
+the current exchange. It skips remaining tool calls in that batch and preserves
+queued user messages. The optimizer completion starts a review turn with the
+submitted source and workbook. Draft, explanation and explicit no-optimization
+requests retain their scope.
 
 ## Schedule change lifecycle
 

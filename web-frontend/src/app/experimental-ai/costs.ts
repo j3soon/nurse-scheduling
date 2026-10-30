@@ -21,6 +21,7 @@
 
 export interface CostSummary {
   version?: number;
+  streaming?: { calls: number; output_tokens: number; seconds: number };
   usd: string;
   calls: number;
   pending: number;
@@ -35,6 +36,8 @@ export interface ProviderCallCost {
   costUsd: string | null;
   providerCallId: string | null;
   responseModel: string | null;
+  streamingSeconds?: number | null;
+  timeToFirstOutputSeconds?: number | null;
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number;
     cached_prompt_tokens?: number | null; reasoning_tokens?: number } | null;
 }
@@ -49,7 +52,11 @@ export function isCostSummary(value: unknown): value is CostSummary {
   const item = value as CostSummary;
   return isUsd(item.usd) && [item.calls, item.pending, item.unavailable].every(count => Number.isSafeInteger(count) && count >= 0)
     && (item.version === undefined || (Number.isSafeInteger(item.version) && item.version >= 0))
-    && item.pending + item.unavailable <= item.calls;
+    && item.pending + item.unavailable <= item.calls
+    && (item.streaming === undefined || (!!item.streaming && typeof item.streaming === 'object'
+      && Number.isSafeInteger(item.streaming.calls) && item.streaming.calls > 0 && item.streaming.calls <= item.calls
+      && Number.isSafeInteger(item.streaming.output_tokens) && item.streaming.output_tokens > 0
+      && Number.isFinite(item.streaming.seconds) && item.streaming.seconds > 0));
 }
 
 export function latestCostSummary(previous: CostSummary | null, next: CostSummary): CostSummary {
@@ -66,6 +73,9 @@ export function isProviderCallCost(value: unknown): value is ProviderCallCost {
     && (item.status !== 'reported' || item.costUsd !== null)
     && (item.providerCallId === null || typeof item.providerCallId === 'string')
     && (item.responseModel === null || typeof item.responseModel === 'string')
+    && [item.streamingSeconds, item.timeToFirstOutputSeconds].every(value => value == null
+      || (typeof value === 'number' && Number.isFinite(value) && value >= 0))
+    && (item.streamingSeconds == null || item.streamingSeconds > 0)
     && (usage === null || (typeof usage === 'object' && !!usage
       && [usage.prompt_tokens, usage.completion_tokens, usage.total_tokens].every(count => Number.isSafeInteger(count) && count >= 0)
       && [usage.cached_prompt_tokens, usage.reasoning_tokens].every(count => count == null || (Number.isSafeInteger(count) && count >= 0))));
@@ -80,10 +90,35 @@ export function formatUsd(value: string): string {
 export function costLabel(summary: CostSummary, includeCalls = true): string {
   return formatUsd(summary.usd) + (includeCalls ? ` · ${summary.calls} ${summary.calls === 1 ? 'call' : 'calls'}` : '')
     + (includeCalls && summary.pending ? ` · ${summary.pending} pending` : '')
-    + (summary.unavailable ? ` · ${summary.unavailable} unavailable` : '');
+    + (summary.unavailable ? ` · ${summary.unavailable} cost unavailable` : '');
 }
 
 export function replaceCall(calls: ProviderCallCost[] | undefined, call: ProviderCallCost): ProviderCallCost[] {
   if (!calls?.some(item => item.callId === call.callId)) return [...(calls ?? []), call];
   return calls.map(item => item.callId === call.callId ? call : item);
+}
+
+export function formatSpeed(tokens: number | undefined, seconds: number | null | undefined): string {
+  return tokens && seconds && seconds > 0
+    ? `${(tokens / seconds).toLocaleString('en-US', { maximumFractionDigits: 1 })} tok/s` : 'Speed unavailable';
+}
+
+export function formatSeconds(seconds: number): string {
+  return `${seconds.toLocaleString('en-US', { maximumFractionDigits: 3 })}s`;
+}
+
+export function turnDetailsLabel(summary: CostSummary): string {
+  const price = formatUsd(summary.usd);
+  const speed = formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds);
+  return `Turn details · ${price.startsWith('<') ? price : '~' + price} · ${speed}`
+    + costLabel(summary).slice(price.length);
+}
+
+export function turnMeasurementLines(summary: CostSummary): string[] {
+  return [
+    `Estimated cost: ${formatUsd(summary.usd)}`,
+    `Provider streaming speed: ${formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds)}`,
+    `Speed measured for ${summary.streaming?.calls ?? 0} of ${summary.calls} ${summary.calls === 1 ? 'call' : 'calls'}.`,
+    'Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.',
+  ];
 }

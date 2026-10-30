@@ -30,6 +30,7 @@ import { ModelControls } from './ModelControls';
 import { costLabel } from './costs';
 import type { ModelSelection } from './aiClient';
 import { readStoredConversation } from './chatConversation';
+import { chatKey, chatTitle, readChatHistory } from './chatHistory';
 import { isAuthenticationError } from './aiClient';
 
 import { ChangeEvent, DragEvent, FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -48,8 +49,9 @@ import { generateYamlFromState } from '@/utils/yamlGenerator';
 import yaml from 'js-yaml';
 
 import { retentionLabel } from './chatPresentation';
+import OptimizationElapsed from './OptimizationElapsed';
 
-import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, getChatExportUrl, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
+import { AiCapabilities, DEFAULT_SESSION_RETENTION_SECONDS, LOCAL_AI_API_URL, PRODUCTION_AI_API_URL, cancelOptimization, finishOptimizationNow, getChatExportUrl, downloadOptimization, downloadGeneratedZip, getAiBaseUrl, getCapabilities, getBackendVersion, isOfficialAiEndpoint, normalizeAiEndpoint } from './aiClient';
 
 import { messageId } from './assistantEvents';
 
@@ -229,6 +231,7 @@ export default function ExperimentalAiPage() {
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [downloadingOptimizationId, setDownloadingOptimizationId] = useState<string | null>(null);
   const [cancellingOptimizationId, setCancellingOptimizationId] = useState<string | null>(null);
+  const [finishingOptimizationId, setFinishingOptimizationId] = useState<string | null>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [aiEndpoint, setAiEndpoint] = useState(getAiBaseUrl);
   const [serverStatus, setServerStatus] = useState<AiServerStatus>('checking');
@@ -244,6 +247,7 @@ export default function ExperimentalAiPage() {
   const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
   const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
   const [selection, setSelection] = useState<ModelSelection>();
+  const [modelControlsKey, setModelControlsKey] = useState(0);
   const [savedChatExportEnabled, setSavedChatExportEnabled] = useState(false);
   const [isExportingChat, setIsExportingChat] = useState(false);
   const [chatExportNotice, setChatExportNotice] = useState<string | null>(null);
@@ -284,12 +288,14 @@ export default function ExperimentalAiPage() {
   const resetChatUi = useCallback(() => {
     setDownloadingOptimizationId(null);
     setCancellingOptimizationId(null);
+    setFinishingOptimizationId(null);
     setIsExportingChat(false);
     setChatExportNotice(null);
     chatExportFrameRef.current?.remove();
     chatExportFrameRef.current = null;
   }, []);
   const {
+    recentChats, historyError, removeRecentChat, clearRecentChats, scheduleDiffers,
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
@@ -334,6 +340,7 @@ export default function ExperimentalAiPage() {
     // Reset the pending request when the server reports a different optimizer job.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCancellingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
+    setFinishingOptimizationId(current => current === activeOptimization?.jobId ? current : null);
   }, [activeOptimization?.jobId]);
 
   useTabSwitchWarning(draft.trim().length > 0 || selectedAttachments.length > 0);
@@ -622,8 +629,7 @@ export default function ExperimentalAiPage() {
     }
   };
 
-  const selectAiEndpoint = (requestedEndpoint: string) => {
-    if (activeSessionId !== null || messages.length > 0 || isStreaming) return;
+  const activateAiEndpoint = (requestedEndpoint: string) => {
     const endpoint = requestedEndpoint === '/ai' ? requestedEndpoint : normalizeAiEndpoint(requestedEndpoint);
     if (!endpoint) {
       setServerError('Enter a valid HTTP or HTTPS AI server URL.');
@@ -631,13 +637,15 @@ export default function ExperimentalAiPage() {
     }
     const token = authTokensRef.current[endpoint] ?? null;
     setAiEndpoint(endpoint);
-    if (endpoint !== aiEndpoint) setSelection(undefined);
+    if (endpoint !== aiEndpoint) {
+      setSelection(undefined);
+      setAuthRequired(false);
+      setFileCapability(DISABLED_FILE_CAPABILITY);
+      setBackendVersion(undefined);
+    }
     setAuthToken(token);
     setRememberAuthToken(readStoredAuthTokens()[endpoint] !== undefined);
-    setAuthRequired(false);
     setAuthRejected(false);
-    setFileCapability(DISABLED_FILE_CAPABILITY);
-    setBackendVersion(undefined);
     setServerError(null);
     setCapabilitiesError(null);
     setIsEditingServer(false);
@@ -645,6 +653,38 @@ export default function ExperimentalAiPage() {
       window.localStorage.setItem(AI_SERVER_STORAGE_KEY, endpoint);
     } catch {
       // A browser that refuses storage still applies the server for this visit.
+    }
+  };
+
+  const selectAiEndpoint = (requestedEndpoint: string) => {
+    if (activeSessionId !== null || messages.length > 0 || isStreaming) return;
+    activateAiEndpoint(requestedEndpoint);
+  };
+
+  const discardDraft = () => {
+    if ((draft.trim() || selectedAttachments.length) && !window.confirm('Discard the draft and pending attachments?')) return false;
+    selectedAttachments.forEach(attachment => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setDraft('');
+    setSelectedAttachments([]);
+    return true;
+  };
+
+  const selectRecentChat = (key: string) => {
+    if (isStreaming || removingUploadId !== null || removingDownloadId !== null) return;
+    try {
+      const entry = readChatHistory().find(entry => chatKey(entry.conversation) === key);
+      if (!entry || (entry.conversation.sessionId === activeSessionId && entry.conversation.endpoint === aiEndpoint)) return;
+      if (!discardDraft()) return;
+      setModelControlsKey(key => key + 1);
+      restoreConversation(entry.conversation, true);
+      activateAiEndpoint(entry.conversation.endpoint);
+      if (entry.conversation.endpoint !== aiEndpoint) setBackendVersion(entry.conversation.backendVersion);
+      if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
+      optimizationDownloadUrlRef.current = null;
+    } catch {
+      setError('The saved chat could not be opened from browser storage.');
     }
   };
 
@@ -656,15 +696,11 @@ export default function ExperimentalAiPage() {
   };
 
   const startNewConversation = () => {
-    if (messages.length > 0 && !window.confirm('Start a new chat? The current transcript will be cleared.')) return;
-    selectedAttachments.forEach(attachment => {
-      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-    });
+    if (isStreaming || !discardDraft()) return;
     if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
     optimizationDownloadUrlRef.current = null;
+    setModelControlsKey(key => key + 1);
     newConversation();
-    setDraft('');
-    setSelectedAttachments([]);
   };
 
   const addAttachments = (files: File[]) => {
@@ -823,6 +859,20 @@ export default function ExperimentalAiPage() {
       }
     }
   };
+  const finishActiveOptimization = async () => {
+    const session = captureSession();
+    if (session === null || activeOptimization === null || finishingOptimizationId !== null) return;
+    const jobId = activeOptimization.jobId;
+    setFinishingOptimizationId(jobId);
+    try {
+      await finishOptimizationNow(session.id, jobId, authToken, session.endpoint);
+    } catch (finishError) {
+      if (session.ownsConversation()) {
+        setFinishingOptimizationId(current => current === jobId ? null : current);
+        reportRequestError(finishError, 'The optimizer could not finish early.');
+      }
+    }
+  };
   const toggleDictation = () => {
     if (isListening) {
       speechRecognitionRef.current?.stop();
@@ -904,10 +954,9 @@ export default function ExperimentalAiPage() {
     ? tokenDescription
     : 'The AI server has not reported context tokens.';
 
-  // The Session files panel is fixed on the right at xl, so the chat and composer reserve
-  // equal space on both sides to stay centered without overlapping it.
+  // Reserve space for the fixed history and file panels on wide screens.
   return (
-    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl min-w-0 flex-col px-2 pt-4 sm:px-6 sm:pt-8 ${fileCapability.retained ? 'xl:max-w-[min(64rem,calc(100vw-36rem))]' : ''}`} style={{ paddingBottom: composerHeight + keyboardInset + 56 }}>
+    <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl min-w-0 flex-col px-2 pt-4 sm:px-6 sm:pt-8 xl:max-w-[min(64rem,calc(100vw-36rem))]`} style={{ paddingBottom: composerHeight + keyboardInset + 56 }}>
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
@@ -930,7 +979,7 @@ export default function ExperimentalAiPage() {
           >
             Request beta access
           </a>
-          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products. This chat is also stored unencrypted in this browser until it expires or you start a new chat.{' '}
+          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products. Recent chats are stored unencrypted on this device for seven days after their last activity. Remove a chat or clear history to forget it on this device. Backend retention is separate.{' '}
           <a
             className="font-medium underline"
             href={GITHUB_PRIVACY_URL}
@@ -1078,7 +1127,7 @@ export default function ExperimentalAiPage() {
         <div className="mt-3">
           <MobileDetails label="Chat details and settings" openWhen={hasVersionMismatch}>
             <p className="mt-2 text-xs font-medium text-gray-500">
-              Current snapshot: {peopleData.items.length} people, {dateData.items.length} dates. Captured when you send the first question.
+              Browser schedule data: {peopleData.items.length} people, {dateData.items.length} dates. Sent when you send a message.
             </p>
             <p className="mt-1 text-xs text-gray-500">
               Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
@@ -1106,7 +1155,7 @@ export default function ExperimentalAiPage() {
                 <input type="checkbox" checked={showCosts}
                   onChange={event => rememberPreferences({ showCosts: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
-                Show turn costs
+                Show turn details
               </label>
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input type="checkbox" checked={showModels}
@@ -1155,6 +1204,40 @@ export default function ExperimentalAiPage() {
           </MobileDetails>
         </div>
       </div>
+
+      <aside aria-label="Recent chats" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:left-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+        <MobileDetails label={`Recent chats (${recentChats.length})`} desktopCollapsible>
+          <p className="mt-2 text-xs text-gray-600">Kept for 7 days after activity. Chats may be lost on server restart. Use Export chat to keep a copy.</p>
+          <button type="button" onClick={startNewConversation} disabled={isStreaming || removingUploadId !== null || removingDownloadId !== null}
+            className="mt-3 min-h-11 w-full rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">New chat</button>
+          {recentChats.length === 0 ? <p className="mt-3 text-sm text-gray-500">No recent chats.</p> : (
+            <ul className="mt-3 space-y-2">
+              {recentChats.map(({ conversation, lastActivityAt }) => {
+                const key = chatKey(conversation);
+                const active = conversation.sessionId === activeSessionId && conversation.endpoint === aiEndpoint;
+                return (
+                  <li key={key} className={`rounded-lg border ${active ? 'border-blue-300 bg-blue-50' : 'border-gray-200'}`}>
+                    <button type="button" onClick={() => selectRecentChat(key)} aria-current={active ? 'true' : undefined}
+                      disabled={isStreaming || removingUploadId !== null || removingDownloadId !== null}
+                      className="w-full rounded-lg px-3 pt-3 text-left disabled:opacity-50">
+                      <span className="block break-words text-sm font-medium text-gray-900">{chatTitle(conversation)}</span>
+                      <time dateTime={new Date(lastActivityAt).toISOString()} className="mt-1 block text-xs text-gray-500">{new Date(lastActivityAt).toLocaleString()}</time>
+                      <span className="mt-1 block break-all text-xs text-gray-500">{conversation.endpoint}</span>
+                    </button>
+                    <button type="button" onClick={() => removeRecentChat(key)} aria-label={`Remove chat: ${chatTitle(conversation)}`}
+                      className="min-h-11 px-3 text-xs text-red-700 hover:underline">Remove</button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {recentChats.length > 0 && <button type="button" onClick={() => {
+            if (window.confirm('Clear all recent chats on this device? Backend sessions will be kept until their retention limit.')) clearRecentChats();
+          }} className="mt-2 min-h-11 text-xs text-red-700 underline">Clear history</button>}
+          <p className="mt-2 text-xs text-gray-500">Remove and Clear history only forget browser records. The open conversation stays visible.</p>
+        </MobileDetails>
+        {historyError && <p role="status" className="mt-2 text-xs text-amber-800">{historyError}</p>}
+      </aside>
 
       {fileCapability.retained && (
         <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
@@ -1214,10 +1297,19 @@ export default function ExperimentalAiPage() {
         onDrop={dropAttachments}
         aria-label="Message composer"
         style={{ bottom: keyboardInset }}
-        className={`fixed inset-x-2 bottom-0 sm:inset-x-10 z-30 mx-auto max-w-5xl space-y-3 ${fileCapability.retained ? 'xl:inset-x-72' : ''} bg-gradient-to-t from-white via-white to-white/90 px-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 ${
+        className={`fixed inset-x-2 bottom-0 sm:inset-x-10 z-30 mx-auto max-w-5xl space-y-3 xl:inset-x-72 bg-gradient-to-t from-white via-white to-white/90 px-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >
+        <p role="status" aria-label="Schedule data status" className={`mb-2 rounded-lg border px-3 py-2 text-xs ${scheduleDiffers ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-white text-gray-600'}`}>
+          {activeSessionId === null
+            ? 'Sending your first message will send the current browser schedule data to this chat.'
+            : scheduleDiffers
+              ? isStreaming
+                ? 'Browser schedule data differs from this chat. This response keeps its schedule data. Browser changes will be sent when the next response starts.'
+                : 'Browser schedule data differs from this chat. Sending your next message will send the current browser schedule data.'
+              : 'Browser schedule data matches this chat.'}
+        </p>
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/90 text-sm font-semibold text-blue-800">
             Drop files to attach
@@ -1261,6 +1353,7 @@ export default function ExperimentalAiPage() {
           >
             <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
             <span>Optimizer running in the background · {activeOptimization.state}</span>
+            <OptimizationElapsed key={activeOptimization.jobId} createdAt={activeOptimization.createdAt} startedAt={activeOptimization.startedAt} />
             {activeOptimization.points.length > 0 && (
               <div className="ml-auto flex items-center gap-2 text-violet-800">
                 <span className="font-semibold tabular-nums">
@@ -1273,9 +1366,19 @@ export default function ExperimentalAiPage() {
             )}
             <button
               type="button"
+              onClick={() => void finishActiveOptimization()}
+              disabled={!activeOptimization.earlyCompletionAvailable || Boolean(activeOptimization.finishNowRequestedBy)
+                || finishingOptimizationId === activeOptimization.jobId || cancellingOptimizationId === activeOptimization.jobId
+                || activeOptimization.state === 'cancelling' || isReconnecting}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+            >
+              {finishingOptimizationId === activeOptimization.jobId || activeOptimization.finishNowRequestedBy ? 'Finishing…' : 'Finish now'}
+            </button>
+            <button
+              type="button"
               onClick={() => void cancelActiveOptimization()}
               disabled={cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' || isReconnecting}
-              className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
             >
               <FiSquare aria-hidden="true" className="h-3 w-3" />
               {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? 'Cancelling optimizer…' : 'Cancel optimizer'}
@@ -1324,6 +1427,7 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         {modelSelectionEnabled && serverStatus === 'online' && (!authRequired || authToken) && <ModelControls
+          key={modelControlsKey}
           endpoint={aiEndpoint} token={authToken} sessionId={activeSessionId} disabled={conversationUnavailable}
           modelLocked={messages.some(message => message.request?.active)} runActive={isStreaming}
           onChange={setSelection}

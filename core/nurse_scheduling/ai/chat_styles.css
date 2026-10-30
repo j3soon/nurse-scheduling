@@ -109,6 +109,7 @@
 .chat .user:not(.app):not(.status):not(.optimizer) .message-time { color: #eff6ff; }
 .chat .model-selection { margin-top: 8px; word-break: break-all; color: #6b7280; font-size: 12px; line-height: 16px; }
 .chat .cost-details { margin-top: 8px; color: #4b5563; font-size: 12px; line-height: 16px; }
+.chat .turn-metrics { margin-top: 8px; }
 .chat .cost-calls { margin-top: 8px; }
 .chat .cost-call { min-width: 0; overflow-wrap: break-word; border-radius: 8px; background: #f9fafb; padding: 8px; }
 .chat .cost-call + .cost-call { margin-top: 8px; }

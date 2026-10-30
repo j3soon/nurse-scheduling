@@ -30,6 +30,14 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   them, and remember that `127.0.0.1` differs between the two environments.
 
 ## Workflow
+- AI testing transition: use `core/tests/ai/` for minimal, human-reviewed,
+  quick AI tests. `core/tests/ai_eval/` is legacy. Do not run, extend, repair,
+  or remove legacy AI tests in this branch. This takes precedence over older
+  legacy evaluation instructions in module guidance and skills.
+  After this branch is completed and merged, use a dedicated removal branch
+  to delete the legacy tests and their scripts, CI checks, documentation, and
+  evidence references. Remove this transition note and outdated legacy
+  guidance when that cleanup is complete.
 - Dev containers have no SSH key, so `git fetch` and `git push` through an SSH
   `origin` fail. Fetch from the HTTPS URL, such as
   `git fetch https://github.com/j3soon/nurse-scheduling.git dev`, and compare
@@ -181,6 +189,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Style
 - Keep comments and docs minimal, concise, yet informative.
+- Keep the root README focused on setup and usage for users. Put CI details in
+  the relevant module documentation.
 - Use plain technical English, inspired by ASD-STE100, in prompts, docs,
   commit descriptions, and replies. State the problem or task first. Use active
   voice, concrete verbs, and one main idea per sentence. Use the same term for

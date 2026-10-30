@@ -1,0 +1,19 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: 你好
+  - assistant:
+      judge: >-
+        Pass when the assistant replies in Traditional Chinese.
+        Reject Simplified Chinese prose.
+  - schedule:
+      unchanged: true
+
+  - user: 请简短介绍你能帮我做什么。
+  - assistant:
+      judge: >-
+        Pass when the assistant replies in Traditional Chinese, even though the
+        user writes in Simplified Chinese. English app names and code identifiers
+        are allowed.
+  - schedule:
+      unchanged: true

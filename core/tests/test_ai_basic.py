@@ -69,7 +69,7 @@ from nurse_scheduling.ai.context import (
     upload_event,
 )
 from nurse_scheduling.ai.history import ChatHistory
-from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerJobPayload
+from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL, OptimizerArtifact, OptimizerError, OptimizerJobPayload
 from nurse_scheduling.ai.pi.bash import BASH_TOOL
 from nurse_scheduling.ai.pi.read import READ_TOOL
 from nurse_scheduling.ai.provider import (
@@ -2330,6 +2330,62 @@ def test_browser_cancels_an_optimizer_job_without_provider_or_sandbox_work() -> 
             assert backend.cancelled == [job.remote_id]
             assert provider.calls == []
             assert factory.created == []
+
+    asyncio.run(scenario())
+
+
+def test_browser_finishes_an_optimizer_job_without_provider_or_sandbox_work() -> None:
+    async def scenario() -> None:
+        class Backend(BackgroundTestOptimizer):
+            def __init__(self):
+                super().__init__()
+                self.finished = []
+
+            async def finish_now(self, job_id):
+                self.finished.append(job_id)
+                if len(self.finished) == 1:
+                    raise OptimizerError("offline")
+                return OptimizerJobPayload(id=job_id, state="running")
+
+        backend = Backend()
+        provider = FakeProvider()
+        factory = FakeSandboxFactory()
+        app = create_test_app(
+            settings=make_settings(optimizer_poll_interval_seconds=0.001),
+            provider=provider,
+            sandbox_factory=factory,
+            optimizer_backend=backend,
+        )
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as client,
+        ):
+            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            other_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            job = await app.state.session_optimizer.start(session_id, schedule_yaml(), None)
+            route = f"/sessions/{session_id}/optimizations/{job.id}/finish-now"
+            assert (await client.post(route, headers={"Authorization": "Bearer invalid"})).status_code == 401
+            assert (await client.post(f"/sessions/{other_id}/optimizations/{job.id}/finish-now")).status_code == 404
+            assert (await client.post(f"/sessions/{session_id}/optimizations/missing/finish-now")).status_code == 404
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
+            ) as stranger:
+                assert (await stranger.post(route)).status_code == 404
+            assert backend.finished == []
+            assert (await client.post(route)).status_code == 502
+            assert job.finish_now_requested_by is None
+            assert (await client.post(route)).status_code == 202
+            assert (await client.post(route)).status_code == 202
+            events = app.state.session_event_stream.events_after(session_id)
+            assert any(
+                event.type == "optimization" and event.data.get("finish_now_requested_by") == "user" for event in events
+            )
+            assert backend.finished == [job.remote_id, job.remote_id]
+            assert provider.calls == []
+            assert factory.created == []
+            assert job.finish_now_requested_by == "user"
 
     asyncio.run(scenario())
 

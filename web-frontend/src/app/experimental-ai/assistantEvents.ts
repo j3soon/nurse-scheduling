@@ -48,7 +48,7 @@ export type AssistantEvent =
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'schedule_change'; before: string; after: string }
-  | { type: 'schedule_applied'; diff: string; runId?: string; notice?: string };
+  | { type: 'schedule_applied'; diff: string; runId?: string; notice?: string; browserApplied?: boolean };
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
   return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
@@ -190,6 +190,7 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       };
     case 'schedule_applied': {
       const entry: ActivityEntry = { kind: 'schedule-applied', text: event.diff,
+        ...(event.browserApplied === false ? { browserApplied: false } : {}),
         ...(event.runId ? { runId: event.runId } : {}), ...(event.notice ? { notice: event.notice } : {}) };
       const retained = event.runId ? activity.filter(item => item.kind !== 'schedule-applied' || item.runId !== event.runId) : activity;
       return { ...message, activity: [...retained, entry] };

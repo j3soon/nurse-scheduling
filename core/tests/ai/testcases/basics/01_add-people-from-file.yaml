@@ -1,0 +1,14 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: >-
+      Add people from the attached files. Directly modify the schedule without confirming.
+    attachment: people.txt
+  - tool: read
+    path: /workspace/attachments/01-people.txt
+  - schedule:
+      added:
+        people.items:
+          - id: Alice
+          - id: Bob
+          - id: Carol

@@ -1,0 +1,19 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: >-
+      Add the people IDs Alice and Bob to the schedule data. Apply this
+      directly without asking for confirmation. Do not optimize.
+  - schedule:
+      added:
+        people.items:
+          - id: Alice
+          - id: Bob
+  - optimizer:
+      invoked: false
+  - assistant:
+      judge: >-
+        Pass when the assistant adds Alice and Bob without requesting confirmation
+        or requiring unrelated scheduling information first. It also notes that
+        the date range and shift types are still missing for building a schedule,
+        without inventing those details.

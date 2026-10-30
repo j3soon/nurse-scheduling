@@ -114,7 +114,9 @@ Fields:
 Rules:
 - A positive `weight` encourages the complete sequence and a negative weight discourages it.
 - `.inf` requires the sequence and `-.inf` forbids it at each selected starting date.
-- Preserve every shift token in the requested sequence. For example, E followed by D is [E, D], not [Evening, Day].
+- Preserve explicitly selected concrete shift IDs. For example, concrete E followed by D is [E, D].
+- Shift codes in ordinary-language rest rules may name categories. Confirm their scope before treating them as concrete-only selectors.
+- For category-level rules covering multiple shift variants, define and reference shift-type groups instead of enumerating member combinations. Confirm unclear membership, such as whether A belongs to Day. Do not broaden an explicitly concrete selector.
 - Treat "X followed by Y" as the ordered pattern [X, Y]. Never reverse the sequence while paraphrasing the request.
 - Omit `description` unless the user explicitly asks for one. Do not synthesize a label from the request.
 
@@ -158,6 +160,7 @@ Rules:
 - Coefficient entries are [shift-type or group ID, positive integer] pairs. They must be unique and covered by the single selected requirement entry.
 - OFF is not allowed in this preference type.
 - Only people selected by `qualifiedPeople` may cover the requirement's shift types on its dates.
+- This restricts eligibility for those shift types, not just a counted subset of their staff. Overlapping requirements apply all eligibility restrictions. To require seniors alongside general staff, use separate qualified and general shift types, not overlapping headcounts or soft staffing targets.
 - A requested shift type, staffing count, qualified people selector, and date selector map directly to `shiftType`, `requiredNumPeople`, `qualifiedPeople`, and `date`. Confirm those selectors and any existing requirement in one focused search. Do not inspect unrelated shift requests or expand group members to infer eligibility.
 - Without `preferredNumPeople`, staffing must equal `requiredNumPeople`. With it, staffing must stay between `requiredNumPeople` and `preferredNumPeople`, inclusive. Both bounds are hard constraints. Request weights cannot override them.
 - A preference with `preferredNumPeople` requires a finite `weight`. Infinity weights are rejected. Use a negative weight to encourage reaching the preferred count, and use one preference rather than separate required and preferred entries.

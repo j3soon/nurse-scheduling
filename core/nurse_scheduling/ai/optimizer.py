@@ -25,7 +25,8 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from datetime import datetime
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -82,6 +83,9 @@ class OptimizerJobPayload(BaseModel):
     state: str
     terminal: bool = False
     queue_position: int | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
     request: dict[str, Any] = Field(default_factory=dict)
     backend: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
@@ -134,6 +138,24 @@ class SessionOptimization:
     artifact_saved: bool = False
     retired: asyncio.Event = field(default_factory=asyncio.Event)
     deleted: bool = False
+    finish_now_requested_by: Literal["user", "agent"] | None = None
+    control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def completion_details(self) -> dict[str, Any]:
+        """Keep timing and early-completion attribution in events, reviews, and archives."""
+        payload = self.payload
+        elapsed = (
+            max(0, (payload.finished_at - payload.started_at).total_seconds())
+            if payload.started_at is not None and payload.finished_at is not None
+            else None
+        )
+        return {
+            "created_at": payload.created_at.isoformat() if payload.created_at else None,
+            "started_at": payload.started_at.isoformat() if payload.started_at else None,
+            "finished_at": payload.finished_at.isoformat() if payload.finished_at else None,
+            "elapsed_seconds": elapsed,
+            "finish_now_requested_by": self.finish_now_requested_by,
+        }
 
     def observe(self, payload: OptimizerJobPayload) -> None:
         """Terminal snapshots dominate late control and poll responses."""
@@ -425,12 +447,15 @@ class SessionOptimizer:
         return job
 
     async def _cancel_retired(self, job: SessionOptimization) -> None:
-        try:
-            payload = await self._backend.cancel(job.remote_id)
-        except OptimizerError as exc:
-            logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
-            return
-        job.observe(payload)
+        async with job.control_lock:
+            if _is_terminal(job.payload):
+                return
+            try:
+                payload = await self._backend.cancel(job.remote_id)
+            except OptimizerError as exc:
+                logger.warning("Optimizer cancellation failed job_id=%s error=%s", job.id, exc)
+                return
+            job.observe(payload)
 
     async def _delete_retired(self, job: SessionOptimization) -> None:
         if job.deleted:
@@ -441,44 +466,66 @@ class SessionOptimizer:
             logger.warning("Optimizer cleanup failed job_id=%s error=%s", job.id, exc)
         job.deleted = True
 
-    async def finish_now(self, session_id: str) -> tuple[SessionOptimization, bool]:
-        job = self._latest(session_id)
+    async def finish_now(
+        self, session_id: str, job_id: str | None = None, *, requested_by: Literal["user", "agent"] = "agent"
+    ) -> tuple[SessionOptimization, bool]:
+        job = self._jobs.get(job_id) if job_id is not None else self._latest(session_id)
+        if job_id is not None and (job is None or job.session_id != session_id):
+            raise OptimizerJobUnavailable("Optimizer job not found.")
         if job is None:
             raise OptimizerError("No optimizer job has been started in this chat session.")
-        if _is_terminal(job.payload):
-            return job, False
-        try:
-            payload = await self._backend.finish_now(job.remote_id)
-        except OptimizerError as exc:
-            logger.warning("Optimizer finish-now request failed job_id=%s error=%s", job.id, exc)
-            raise OptimizerError(f"The optimizer did not accept the finish-now request. {exc}") from exc
-        # Polling can reach a terminal state while this request is in flight. Keeping
-        # the older snapshot would block the session from ever starting another run.
-        if self._jobs.get(job.id) is job:
-            job.observe(payload)
-        if not _is_terminal(job.payload):
-            await self._notify_update(job)
-        return job, True
+        async with job.control_lock:
+            if (
+                self._jobs.get(job.id) is not job
+                or _is_terminal(job.payload)
+                or job.payload.state == "cancelling"
+                or job.finish_now_requested_by is not None
+            ):
+                return job, False
+            # Completion can arrive before the control response. Record intent before
+            # awaiting it so the review retains the trigger and the solver's actual reason.
+            job.finish_now_requested_by = requested_by
+            try:
+                payload = await self._backend.finish_now(job.remote_id)
+            except asyncio.CancelledError:
+                if not _is_terminal(job.payload):
+                    job.finish_now_requested_by = None
+                    await self._notify_update(job)
+                raise
+            except OptimizerError as exc:
+                if _is_terminal(job.payload):
+                    return job, False
+                job.finish_now_requested_by = None
+                await self._notify_update(job)
+                logger.warning("Optimizer finish-now request failed job_id=%s error=%s", job.id, exc)
+                raise OptimizerError(f"The optimizer did not accept the finish-now request. {exc}") from exc
+            # Terminal snapshots dominate stale control responses.
+            if self._jobs.get(job.id) is job:
+                job.observe(payload)
+            if not _is_terminal(job.payload):
+                await self._notify_update(job)
+            return job, True
 
     async def cancel(self, session_id: str, job_id: str) -> SessionOptimization:
         """Cancel the displayed job without involving a model or another session's job."""
         job = self._jobs.get(job_id)
         if job is None or job.session_id != session_id:
             raise OptimizerJobUnavailable("Optimizer job not found.")
-        if _is_terminal(job.payload) or job.payload.state == "cancelling":
-            return job
-        try:
-            payload = await self._backend.cancel(job.remote_id)
-        except OptimizerError as exc:
-            # Completion can delete the remote job while cancellation is in flight.
-            if _is_terminal(job.payload):
+        async with job.control_lock:
+            if self._jobs.get(job.id) is not job or _is_terminal(job.payload) or job.payload.state == "cancelling":
                 return job
-            logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
-            raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
-        job.observe(payload)
-        if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
-            await self._notify_update(job)
-        return job
+            try:
+                payload = await self._backend.cancel(job.remote_id)
+            except OptimizerError as exc:
+                # Completion can delete the remote job while cancellation is in flight.
+                if _is_terminal(job.payload):
+                    return job
+                logger.warning("Optimizer cancel request failed job_id=%s error=%s", job.id, exc)
+                raise OptimizerError(f"The optimizer did not accept the cancel request. {exc}") from exc
+            job.observe(payload)
+            if self._jobs.get(job.id) is job and not _is_terminal(job.payload):
+                await self._notify_update(job)
+            return job
 
     async def _monitor(self, job: SessionOptimization) -> None:
         unreachable_since: float | None = None
@@ -519,7 +566,13 @@ class SessionOptimizer:
                 continue
             unreachable_since = None
             outage_reported = False
+            previous = job.payload
             job.observe(payload)
+            # Stream-link tokens can renew without a change to the job.
+            if not _is_terminal(job.payload) and job.payload.model_dump(exclude={"links"}) != previous.model_dump(
+                exclude={"links"}
+            ):
+                await self._notify_update(job)
 
     async def _relay_progress(self, job: SessionOptimization) -> None:
         try:
@@ -574,6 +627,7 @@ class SessionOptimizer:
         if self._jobs.get(job.id) is not job:
             return
         result_data = {
+            **job.completion_details(),
             "job_id": job.id,
             "state": job.payload.state,
             "source_sha256": job.source_sha256,
@@ -616,6 +670,7 @@ class SessionOptimizer:
         await self._on_update(
             job.session_id,
             {
+                **job.completion_details(),
                 "job_id": job.id,
                 "state": job.payload.state,
                 "terminal": _is_terminal(job.payload),
@@ -624,6 +679,7 @@ class SessionOptimizer:
                 "result": job.payload.result,
                 "error": job.payload.error,
                 "downloadable": job.artifact is not None or job.artifact_saved,
+                "controls": job.payload.controls,
             },
         )
 

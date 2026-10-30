@@ -450,17 +450,27 @@ def test_tool_follow_up_calls_contribute_to_the_same_turn_total():
 
     provider = basic.ScriptedToolProvider(
         [
-            ProviderCall("first", "model", "reported", "0.1"),
+            ProviderCall("first", "model", "reported", "0.1", TokenUsage(10, 10, 20), streaming_seconds=1),
             ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule.yaml"}'),)),
         ],
-        [ProviderCall("second", "model", "reported", "0.2"), TextDelta("Read the schedule")],
+        [
+            ProviderCall("second", "model", "reported", "0.2", TokenUsage(10, 90, 100), streaming_seconds=3),
+            TextDelta("Read the schedule"),
+        ],
     )
     app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         response = client.post(f"/sessions/{session}/messages", json={"message": "Read schedule"})
         summary = [data for kind, data in basic.parse_sse(response.text) if kind == "cost_summary"][-1]
-        assert summary["run"] == {"usd": "0.3", "calls": 2, "pending": 0, "unavailable": 0}
+        assert summary["run"] == {
+            "usd": "0.3",
+            "calls": 2,
+            "pending": 0,
+            "unavailable": 0,
+            "streaming": {"calls": 2, "output_tokens": 100, "seconds": 4},
+        }
+        assert summary["conversation"]["streaming"] == summary["run"]["streaming"]
 
 
 @pytest.mark.parametrize("failed_status", ["pending", "reported"])
@@ -523,3 +533,171 @@ def test_tiny_totals_and_restored_mixed_prices_fit_the_browser_contract():
     ).public()
     assert len(restored["usd"]) <= 80
     assert Decimal(restored["usd"]) == Decimal("0.1")
+
+
+@pytest.mark.parametrize("kind", ["text", "reasoning", "tool"])
+@pytest.mark.parametrize("reasoning_tokens", [0, 10], ids=["no-reasoning-usage", "reasoning-usage"])
+def test_provider_times_only_generated_output_between_first_and_last_chunk(monkeypatch, kind, reasoning_tokens):
+    from types import SimpleNamespace
+
+    from nurse_scheduling.ai import provider as module
+
+    now = 0.0
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: now, monotonic=module.time.monotonic))
+    if kind == "tool":
+        deltas = [
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "read",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": '{"path":'},
+                    }
+                ]
+            },
+            {"tool_calls": [{"index": 0, "function": {"arguments": '"/workspace/schedule.yaml"}'}}]},
+        ]
+    else:
+        key = "content" if kind == "text" else "reasoning_content"
+        deltas = [{key: "First"}, {key: "last"}]
+
+    class TimedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal now
+            for at, event in [
+                (1, {"choices": [{"delta": {"role": "assistant", "reasoning_content": ""}, "finish_reason": None}]}),
+                (5, {"choices": [{"delta": deltas[0], "finish_reason": None}]}),
+                (7, {"choices": [{"delta": deltas[1], "finish_reason": None}]}),
+                (10, {"choices": [{"delta": {}, "finish_reason": "tool_calls" if kind == "tool" else "stop"}]}),
+                (
+                    14,
+                    {
+                        "choices": [],
+                        "usage": {
+                            "prompt_tokens": 100,
+                            "completion_tokens": 20,
+                            "total_tokens": 120,
+                            "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
+                        },
+                    },
+                ),
+            ]:
+                now = at
+                yield f"data: {json.dumps(event)}\n\n".encode()
+            now = 30
+            yield b"data: [DONE]\n\n"
+
+    original = httpx.AsyncClient
+
+    def respond(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "test-model", "context_length": 262144}]})
+        return httpx.Response(200, stream=TimedStream())
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: original(**{**kwargs, "transport": httpx.MockTransport(respond)})
+    )
+    provider = OpenAiCompatibleProvider(basic.make_settings(), include_usage=True, include_costs=True)
+    events = asyncio.run(collect(provider.stream_events([])))
+    call = [event for event in events if isinstance(event, ProviderCall)][-1]
+    assert call.status == "unavailable"  # Missing price does not hide measured speed.
+    measurable = not reasoning_tokens or kind == "reasoning"
+    assert call.streaming_seconds == (2 if measurable else None)
+    assert call.time_to_first_output_seconds == 5
+    totals = CostTotals()
+    totals.update(call)
+    if measurable:
+        assert totals.public()["streaming"] == {"calls": 1, "output_tokens": 20, "seconds": 2}
+    else:
+        assert "streaming" not in totals.public()
+    assert ProviderCall.restored(asdict(call)) == call
+    from nurse_scheduling.ai.chat_export import _provider_cost_lines
+
+    exported = _provider_cost_lines({**asdict(call), "call_id": call.id}, 1, False)
+    speed = next(line for line in exported if line.startswith("Provider streaming speed:"))
+    assert ("unavailable" in speed.lower()) is not measurable
+
+
+def test_streaming_totals_replace_updates_and_restore_without_averaging_speeds():
+    first = ProviderCall("one", "model", "reported", "0.1", TokenUsage(10, 10, 20), streaming_seconds=1)
+    second = ProviderCall("two", "model", "unavailable", usage=TokenUsage(10, 90, 100), streaming_seconds=3)
+    missing_usage = ProviderCall("three", "model", "reported", "0", streaming_seconds=5)
+    single_chunk = replace(first, id="four", streaming_seconds=None)
+    totals = CostTotals()
+    for call in (first, second, missing_usage, single_chunk):
+        totals.update(call)
+    totals.update(replace(first, cost_usd="0.2"), first)
+    measured = totals.public()["streaming"]
+    assert measured == {"calls": 2, "output_tokens": 100, "seconds": 4}
+    assert measured["output_tokens"] / measured["seconds"] == 25
+    assert CostTotals.restored(totals.public()).public() == totals.public()
+    assert ProviderCall.restored(asdict(first)) == first
+
+
+def test_single_output_chunk_keeps_first_output_time_but_has_no_speed(monkeypatch):
+    patch_gateway(monkeypatch, [0.1])
+    provider = OpenAiCompatibleProvider(basic.make_settings(), include_usage=True, include_costs=True)
+    events = asyncio.run(collect(provider.stream_events([])))
+    call = [event for event in events if isinstance(event, ProviderCall)][-1]
+    assert call.time_to_first_output_seconds is not None
+    assert call.streaming_seconds is None
+
+
+@pytest.mark.parametrize("saved_totals", [False, True])
+def test_postgres_restores_streaming_usage_from_call_checkpoints(postgres_history, saved_totals):
+    from .test_ai_history import session_state
+
+    session, owner, run = str(uuid4()), str(uuid4()), str(uuid4())
+    call = ProviderCall(
+        "one", "model", usage=TokenUsage(10, 20, 30), streaming_seconds=2, time_to_first_output_seconds=5
+    )
+    totals = CostTotals()
+    totals.update(call)
+    state = session_state(owner)
+    if saved_totals:
+        state[2].update(cost_totals=totals.public(), cost_totals_version=1, pending_provider_calls=[asdict(call)])
+    postgres_history.save_session(session, state)
+    postgres_history.append_events(
+        session,
+        [
+            (
+                2,
+                2,
+                run,
+                "provider_call",
+                {
+                    **asdict(replace(call, status="reported", cost_usd="0.1")),
+                    "call_id": call.id,
+                },
+            )
+        ],
+    )
+    restored = postgres_history.load_session(session, owner)["state"]
+    assert restored["cost_totals"]["streaming"] == {"calls": 1, "output_tokens": 20, "seconds": 2}
+    postgres_history.save_session(session, (session_state(owner)[0], session_state(owner)[1], restored))
+    assert postgres_history.load_session(session, owner)["state"]["cost_totals"] == restored["cost_totals"]
+
+
+def test_session_keeps_run_speed_separate_from_conversation_speed_and_replays():
+    provider = basic.ScriptedToolProvider(
+        [
+            ProviderCall("one", "model", "reported", "0.1", TokenUsage(10, 20, 30), streaming_seconds=2),
+            TextDelta("First"),
+        ],
+        [
+            ProviderCall("two", "model", "reported", "0.1", TokenUsage(10, 90, 100), streaming_seconds=3),
+            TextDelta("Second"),
+        ],
+    )
+    app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
+    with basic.AuthenticatedTestClient(app) as client:
+        session = basic.create_session(client)
+        path = f"/sessions/{session}/messages"
+        first = {"message": "First", "message_id": "one"}
+        client.post(path, json=first)
+        assert client.post(path, json=first).status_code == 202
+        response = client.post(path, json={"message": "Second"})
+        summary = [data for kind, data in basic.parse_sse(response.text) if kind == "cost_summary"][-1]
+        assert summary["run"]["streaming"] == {"calls": 1, "output_tokens": 90, "seconds": 3}
+        assert summary["conversation"]["streaming"] == {"calls": 2, "output_tokens": 110, "seconds": 5}

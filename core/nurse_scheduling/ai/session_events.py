@@ -48,6 +48,8 @@ class ProviderCallEvent(RunFields):
     usage: dict[str, Any] | None
     provider_call_id: str | None
     response_model: str | None
+    streaming_seconds: float | None
+    time_to_first_output_seconds: float | None
 
 
 class CostSummaryEvent(RunFields):

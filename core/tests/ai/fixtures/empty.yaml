@@ -1,0 +1,17 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This test is mostly AI generated.
+apiVersion: alpha
+description: ''
+dates:
+  range: {}
+  items: []
+  groups: []
+people:
+  items: []
+  groups: []
+shiftTypes:
+  items: []
+  groups: []
+preferences:
+  - type: at most one shift per day

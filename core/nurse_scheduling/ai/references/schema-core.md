@@ -74,7 +74,11 @@ Path: dates.range
 
 Inclusive calendar range for the schedule.
 
-Fields:
+When resetting to empty schedule data, use `range: {}`. Clear the description,
+all items and groups, and export settings. Keep only the `at most one shift per day`
+preference. This empty editor state is valid. Set a date range before optimization.
+
+Fields for a configured range:
 - required `startDate`: YYYY-MM-DD
 - required `endDate`: YYYY-MM-DD
 

@@ -61,6 +61,10 @@ Use Playwright locator actions for form controls. Before interacting with
 statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
+For exact elapsed-time assertions, install the Playwright clock before navigation
+at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
+time advancing during setup. Use `runFor` to check timer updates.
+
 Treat transcript visibility preferences as display settings. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
@@ -238,8 +242,21 @@ A cursor-only event need not rerender the chat or restart its debounced save.
 When adding AI session events, update the SSE decoder, chat hook callback dispatch,
 assistant reducer, saved transcript projection, and exports together. Check the
 visible browser result because decoder and reducer tests do not cover dispatch.
+Optimizer progress events must preserve the current job's timestamps, controls,
+and early-completion request attribution.
 When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 `chatConversation.ts`. Otherwise a reload discards the saved browser chat.
+
+Store AI chat history with the saving frontend `appVersion`, without a separate
+numeric storage version.
+
+When switching saved AI chats, preserve browser schedule data during event replay.
+Reset pending model and reasoning choices on explicit chat switches. Preserve
+choices made while the current conversation creates its first session.
+Keep local history expiry separate from backend session expiry. Test that forgetting
+an open chat also prevents later saves and pagehide from recreating its record.
+Scope transcript assertions to the Chat messages region when history titles repeat
+the same question.
 
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,

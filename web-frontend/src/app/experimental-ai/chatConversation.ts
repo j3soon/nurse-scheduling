@@ -26,8 +26,16 @@ import { normalizeAiEndpoint, type ContextUsage } from './aiClient';
 import { isCostSummary, isProviderCallCost, type CostSummary } from './costs';
 
 export const AI_CONVERSATION_STORAGE_KEY = 'nurse-scheduling-ai-conversation';
+export const HISTORY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function clearStoredConversation(): void {
+  try { window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
+}
 
 export interface StoredChatConversation {
+  lastActivityAt?: number;
+  historyPending?: boolean;
+  preserveBrowserSchedule?: boolean;
   sessionId: string;
   endpoint: string;
   expiresAt: number;
@@ -61,6 +69,7 @@ function isActivityEntry(value: unknown): value is ActivityEntry {
     return 'text' in value && typeof value.text === 'string'
       && (!('context' in value) || value.context === 'complete' || value.context === 'omitted')
       && (!('notice' in value) || typeof value.notice === 'string')
+      && (!('browserApplied' in value) || typeof value.browserApplied === 'boolean')
       && (!('runId' in value) || typeof value.runId === 'string');
   }
   if (value.kind === 'schedule-check') {
@@ -129,10 +138,26 @@ function isChatMessage(value: unknown): value is ChatMessage {
 export function readStoredConversation(): StoredChatConversation | null {
   try {
     const raw = window.sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY);
-    if (raw === null) return null;
-    const value = JSON.parse(raw) as Partial<StoredChatConversation>;
+    const conversation = raw === null ? null : parseStoredConversation(JSON.parse(raw));
+    if (conversation?.lastActivityAt !== undefined && conversation.lastActivityAt + HISTORY_RETENTION_MS <= Date.now()) {
+      window.sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+      return null;
+    }
+    return conversation;
+  } catch {
+    return null;
+  }
+}
+
+export function parseStoredConversation(input: unknown): StoredChatConversation | null {
+  try {
+    if (typeof input !== 'object' || input === null) return null;
+    const value = { ...input } as Partial<StoredChatConversation>;
     if (
-      typeof value.sessionId !== 'string'
+      (value.lastActivityAt !== undefined && !Number.isFinite(value.lastActivityAt))
+      || (value.historyPending !== undefined && typeof value.historyPending !== 'boolean')
+      || (value.preserveBrowserSchedule !== undefined && typeof value.preserveBrowserSchedule !== 'boolean')
+      || typeof value.sessionId !== 'string'
       || !value.sessionId
       || typeof value.endpoint !== 'string'
       || !(value.endpoint === '/ai' || normalizeAiEndpoint(value.endpoint))

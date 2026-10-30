@@ -1,0 +1,23 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - date: 2026-10-28T09:00:00+08:00
+  - user: >-
+      Build schedule data for next month. People are P1-P10.
+      A/D/E/N need 1/2/2/2 people daily. P1 and P2 are head nurses and P3-P6 are
+      seniors. No primary shifts, histories, requests or holiday import.
+      Forbid N to D and N to E, limit consecutive workdays to five, and
+      balance total days off and days off on free days equally across people.
+      A is restricted to head nurses, D/E/N each requires at least one senior nurse.
+      Encourage consecutive days in the same shift category.
+  - schedule:
+      allow_changes: true
+  - optimizer:
+      invoked: false
+  - assistant:
+      count: 1
+      judge: >-
+        Pass when the response asks whether P1 and P2 also count as seniors
+        for the senior staffing requirement. Identifying the possible overlap
+        is not enough without seeking confirmation. Combined questions and
+        clear schedule data edits are allowed. Do not require exact wording.

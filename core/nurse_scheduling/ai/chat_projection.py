@@ -69,6 +69,12 @@ def _optimization_text(data: dict) -> str:
             lines.append(f"{label}: " + str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\n "))
 
     result, request, backend, error = (data.get(key) or {} for key in ("result", "request", "backend", "error"))
+    if data.get("elapsed_seconds") is not None:
+        total = max(0, int(data["elapsed_seconds"]))
+        hours, remainder = divmod(total, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        add("Elapsed time", f"{f'{hours}h ' if hours else ''}{f'{minutes}m ' if hours or minutes else ''}{seconds}s")
+    add("Finish now requested by", data.get("finish_now_requested_by"))
     for label, value in (
         ("Outcome", result.get("outcome")),
         ("Final score", result.get("score")),
@@ -435,7 +441,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         if turn["calls"]:
             totals = CostTotals()
             for call in turn["calls"].values():
-                totals.update(ProviderCall(call["call_id"], call["model"], call["status"], call.get("cost_usd")))
+                totals.update(ProviderCall.restored(call))
             turn["cost_assistant"]["costSummary"] = totals.public()
             turn["cost_assistant"]["providerCalls"] = list(turn["calls"].values())
         run = runs.get(run_id, {})

@@ -19,6 +19,15 @@ when reproducing failures: a dev container mounts the checkout at
 `/workspace` with system-wide packages, while a host checkout needs the
 module setup commands.
 
+## AI test migration
+
+Follow the repository's `AGENTS.md` transition policy. New AI behavior checks
+belong in `core/tests/ai/`: keep cases minimal, human-reviewed, and quick.
+Do not run or extend `core/tests/ai_eval/` or its ladder and receipt machinery.
+The older evaluation instructions below are historical during this migration.
+Remove that legacy workflow and this transition section in the dedicated
+removal branch after the migration branch is merged.
+
 ## Read the chat and tool calls
 
 Treat traces and their attachments as potentially sensitive. Keep raw traces

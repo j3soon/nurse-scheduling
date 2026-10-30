@@ -263,6 +263,7 @@ class SessionRecovery:
         status = {
             # Event links carry stream tokens signed with this service's optimizer credential.
             **job.payload.model_dump(mode="json", exclude={"id", "links"}),
+            **job.completion_details(),
             "job_id": job.id,
             "request": job.request,
             "backend": job.backend,

@@ -16,7 +16,8 @@ project packages are installed system-wide, so run `python`, `pytest`, and
 - `pytest <affected_test_paths>`
 - `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
-  files run all `test_ai_*.py` files. Other source, helper, dependency, and deleted-file changes run the
+  files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
+  `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
   normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
   suites. Tests marked `requires_solver` skip automatically when their optional
   runtime package is absent. An installed runtime that fails its availability
@@ -146,6 +147,15 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
 ## Experimental AI
+- AI test migration: follow the root `AGENTS.md` transition policy. Use only
+  focused, human-reviewed cases in `tests/ai/` for new behavior checks.
+  Default pytest runs deselect the legacy checks that bind shipped prompts to
+  old evaluation evidence and removed prompt steps. Remove these temporary
+  `pyproject.toml` exclusions in the dedicated legacy-removal branch.
+  `tests/ai_eval/` and its ladder and receipt workflows below are legacy and
+  are not maintenance requirements for this branch. Remove the legacy tests,
+  references, and these transition instructions in the dedicated removal
+  branch after this branch is merged.
 - Prioritize maintainability, readability, and simplicity. Avoid over-engineering.
   Follow Pi agent v1.0.0 across all aspects of AI agent design and behavior.
   Add a limit or restriction only when a concrete service requirement makes it
@@ -253,7 +263,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   Preserve reported subnormal costs and keep decimal summaries within the client
   length limit. Test Stop while cost checkpoints are pending. Version cost
   snapshots by their cost publication, because unrelated stream events can advance
-  while a checkpoint waits.
+  while a checkpoint waits. Keep provider streaming durations on the same call
+  records. Aggregate speed from matched output-token and duration sums, and keep
+  missing speed measurements separate from missing prices.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
   Keep schedules and attachments separate from model instructions.
@@ -547,7 +559,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   comments and key order, stays unchanged. Report the restoration to the model
   and user. Keep the workspace, inspection context, preview and optimizer input
   on the same validated text. Do not auto-repair optional staffing, rest,
-  eligibility or preference rules.
+  eligibility or preference rules. Test edits after a reset when changing
+  validation. Empty editor schedule data must not require optimization dates.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
@@ -597,6 +610,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   changing retry behavior. Preserve finish reasons in evaluation reports. A reply
   ending mid-word does not prove a transport failure when the provider reports
   completion. Keep response content and credentials out of diagnostic logs.
+  After changing provider stream handling or usage metadata, run a live session
+  turn with a tool follow-up when credentials are available. State whether
+  provider validation used live requests or mocks.
 - Retry provider timeouts with bounded exponential backoff. After visible text,
   omit the failed attempt from model context and retry the original request.
   Keep the partial output visible and label it as omitted from future context. Discard incomplete tool calls and release tools only after confirmed
@@ -721,6 +737,19 @@ stderr. Do not replace an explicitly selected file with a fallback.
   in `tests/test_schedule_pulp_highs.py` and `tests/test_schedule_pulp_scip.py`.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
+- Add human-reviewed AI regression conversations under `tests/ai/testcases/`.
+  Validate definitions with `python -m tests.ai.runner validate` without AI
+  credentials. Run behavior with `python -m tests.ai.runner run` and the existing
+  provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
+  Keep this tester independent of `ai_eval` and `ai_fixtures`. Older `ai_eval`
+  code can read reviewed YAML cases for prompt evidence. Do not import `ai_eval`
+  from the reviewed tester. Inspect failed replies before changing production
+  guidance. Accept equivalent phrasing in
+  text assertions and require tool calls only when their use is part of the
+  intended behavior. Do not weaken assertions to hide a live behavior failure.
+  Let production provider retries finish before reporting an execution failure.
+  Keep interrupted drafts in transcripts, but exclude them from assertions and
+  judge input.
 - Use `--show-model-build-stats` when checking or benchmarking model-building
   optimizations against real testcases. It emits a compact aggregated summary
   and suppresses the full schedule output.
@@ -743,6 +772,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
   text hashes or their fixtures, cover LF and CRLF inputs and check that changed
   content is rejected. Fix ZIP creator metadata as well as timestamps when
   generated archive bytes must match across platforms.
+  Serialize paths used as fingerprint keys with `Path.as_posix()` so Windows
+  path separators do not change the hash.
 - Give `pytest.mark.parametrize` explicit `ids` when a parameter is a large
   binary or text payload. Pytest derives the node ID from the parameter value
   and exports it through `PYTEST_CURRENT_TEST`, which fails on Windows once the

@@ -20,12 +20,20 @@
 // This code is mostly AI generated.
 
 const detailLabels = new Set([
+  'Elapsed time', 'Finish now requested by',
   'Outcome', 'Final score', 'Solver', 'Solver status', 'Termination reason', 'Solver timeout',
   'Backend URL', 'Backend version', 'API version', 'Service', 'Deployment', 'Instance',
   'Backend request timeout', 'Claimed performance', 'Error code', 'Error',
 ]);
 
 import type { OptimizationActivity } from './aiClient';
+
+export function formatOptimizationDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  return `${hours ? `${hours}h ` : ''}${hours || minutes ? `${minutes}m ` : ''}${total % 60}s`;
+}
 
 export function parseOptimizerMessage(content: string): {
   summary: string;
@@ -58,6 +66,8 @@ export function optimizationMessage(activity: OptimizationActivity): string {
     // Indent continuation lines so field values cannot introduce another label.
     if (value !== undefined) details.push(`${label}: ${String(value).replace(/\r\n?|\n/g, '\n ')}`);
   };
+  if (activity.elapsedSeconds !== undefined) add('Elapsed time', formatOptimizationDuration(activity.elapsedSeconds));
+  add('Finish now requested by', activity.finishNowRequestedBy);
   add('Outcome', activity.result?.outcome);
   add('Final score', activity.result?.score);
   add('Solver', activity.request?.solver);

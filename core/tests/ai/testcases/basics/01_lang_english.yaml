@@ -1,0 +1,9 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: Hi
+  - assistant:
+      judge: >-
+        Pass when the assistant replies in English.
+  - schedule:
+      unchanged: true

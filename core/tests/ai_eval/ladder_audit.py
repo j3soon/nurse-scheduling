@@ -42,10 +42,12 @@ def build_plan(
     case_ids = list(dict.fromkeys(case for step in steps for case in step.cases))
     if not case_ids or any(case not in cases for case in case_ids):
         raise ValueError("Ladder cases must be nonempty and all exist")
-    if any(not step.cases for step in steps):
+    if any(not step.cases and not step.reviewed_cases for step in steps):
         raise ValueError("Every ladder section needs targeted cases")
     cohorts = []
     for number, step in enumerate(steps, 1):
+        if not step.cases:
+            continue
         name = f"{number:02d}-{step.id}"
         flag = "--prompt-ablate-step" if step.comparison_mode == "ablation" else "--prompt-compare-step"
         args = [flag, str(number)]
@@ -70,6 +72,7 @@ def build_plan(
         "repeat": repeat,
         "jobs": jobs if jobs is not None else "auto",
         "cases": case_ids,
+        "reviewed_cases": {step.id: step.reviewed_cases for step in steps if step.reviewed_cases},
         "prompt_sha256": hashlib.sha256(compose_system_prompt().encode()).hexdigest(),
         "case_sha256": {case: case_digest(cases[case]) for case in case_ids},
         "fixture_sha256": {

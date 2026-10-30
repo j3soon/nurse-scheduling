@@ -1,0 +1,17 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: I heard there's an AI assistant in this app, can you navigate there for me?
+  - assistant:
+      contains_any:
+        - already
+        - right place
+        - found it
+        - this chat
+        - chatting with
+      judge: >-
+        The assistant clearly explains that the user is already interacting with
+        the app's AI assistant in the current chat. Reject replies that only
+        direct the user to another page or contradict that explanation.
+  - schedule:
+      unchanged: true

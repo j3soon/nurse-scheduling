@@ -32,6 +32,9 @@ class CostTotals:
     calls: int = 0
     pending: int = 0
     unavailable: int = 0
+    streaming_calls: int = 0
+    streaming_output_tokens: int = 0
+    streaming_seconds: float = 0
 
     def update(self, call: ProviderCall, previous: ProviderCall | None = None) -> None:
         """Replace one call's contribution without counting its streamed updates twice."""
@@ -42,18 +45,43 @@ class CostTotals:
             self.pending += sign * (item.status == "pending")
             self.unavailable += sign * (item.status == "unavailable")
             self.usd += sign * Decimal(item.cost_usd or "0")
+            if (
+                item.streaming_seconds is not None
+                and item.streaming_seconds > 0
+                and item.usage
+                and item.usage.completion_tokens > 0
+            ):
+                self.streaming_calls += sign
+                self.streaming_output_tokens += sign * item.usage.completion_tokens
+                self.streaming_seconds += sign * item.streaming_seconds
 
     def public(self) -> dict[str, Any]:
         # Apply arithmetic precision after recovery and keep tiny values compact.
-        return {
+        result = {
             "usd": str(+self.usd),
             "calls": self.calls,
             "pending": self.pending,
             "unavailable": self.unavailable,
         }
+        if self.streaming_calls:
+            result["streaming"] = {
+                "calls": self.streaming_calls,
+                "output_tokens": self.streaming_output_tokens,
+                "seconds": self.streaming_seconds,
+            }
+        return result
 
     @classmethod
     def restored(cls, data: dict | None) -> "CostTotals":
         if data is None:
             return cls()
-        return cls(Decimal(data["usd"]), data["calls"], data["pending"], data["unavailable"])
+        streaming = data.get("streaming", {})
+        return cls(
+            Decimal(data["usd"]),
+            data["calls"],
+            data["pending"],
+            data["unavailable"],
+            streaming.get("calls", 0),
+            streaming.get("output_tokens", 0),
+            streaming.get("seconds", 0),
+        )

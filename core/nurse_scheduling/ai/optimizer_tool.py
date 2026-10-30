@@ -110,4 +110,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
 def _job_summary(job: SessionOptimization) -> str:
     details = job.payload.result or job.payload.error
     suffix = f" Result: {json.dumps(details, ensure_ascii=False)}" if details else ""
+    metadata = {key: value for key, value in job.completion_details().items() if value is not None}
+    if metadata:
+        suffix += f" Run details: {json.dumps(metadata, ensure_ascii=False)}"
     return f"Optimizer job {job.id} is {job.payload.state}.{suffix}"
