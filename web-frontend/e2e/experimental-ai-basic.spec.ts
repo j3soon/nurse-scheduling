@@ -969,6 +969,10 @@ test('authenticates AI session requests with an explicitly remembered token', as
   const tokenStatus = await page.getByText('Token saved on this device').boundingBox();
   const versionsBox = await versions.boundingBox();
   expect(versionsBox!.y).toBeGreaterThan(tokenStatus!.y + tokenStatus!.height);
+  const privacyBox = await page.getByRole('link', { name: 'Privacy Policy', exact: true }).boundingBox();
+  const optionsBox = await page.getByRole('checkbox', { name: 'Show reasoning' }).boundingBox();
+  expect(privacyBox!.y).toBeGreaterThan(versionsBox!.y + versionsBox!.height);
+  expect(optionsBox!.y).toBeGreaterThan(privacyBox!.y + privacyBox!.height);
 
   await expect(composer).toBeEnabled();
   await composer.fill('Use the protected service.');
@@ -1671,11 +1675,21 @@ test('keeps phone chat readable and the growing composer clear of the last reply
   await expect(input).toBeEnabled();
   const composer = page.getByRole('form', { name: 'Message composer' });
   expect((await composer.boundingBox())!.width).toBeGreaterThanOrEqual(328);
-  await expect(page.getByText('All AI chats are logged', { exact: false })).toBeVisible();
-  // The mocked backend version differs from the build, so the collapsed panel opens to show the warning.
+  const versions = page.getByRole('group', { name: 'AI versions' });
+  const privacy = page.getByRole('link', { name: 'Privacy Policy', exact: true });
+  const settings = page.getByRole('button', { name: 'Chat details and settings', exact: true });
+  await expect(privacy).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Request beta access' })).toBeVisible();
+  await expect(page.getByText('When a response finishes', { exact: false })).toHaveCount(0);
   await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
-  await expect(page.getByRole('group', { name: 'AI versions' })).not.toBeVisible();
+  await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  expect((await versions.boundingBox())!.y).toBeLessThan((await privacy.boundingBox())!.y);
+  expect((await privacy.boundingBox())!.y).toBeLessThan((await settings.boundingBox())!.y);
+  await settings.click();
+  await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).toBeVisible();
+  await settings.click();
+  await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).not.toBeVisible();
+  await expect(versions).toBeVisible();
   await input.fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const reply = page.getByText('Final reply for phone layout.', { exact: true });
@@ -1704,6 +1718,11 @@ test.describe('phone chat keyboard', () => {
     await expect(input).toBeEnabled();
     // Phone keyboards provide dictation, so the page omits its own microphone.
     await expect(page.getByRole('button', { name: 'Start dictation' })).toBeHidden();
+    await expect(page.getByRole('link', { name: 'Privacy Policy', exact: true })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'AI versions' })).toBeVisible();
+    await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: '../artifacts/ai-chat-setup-phone.png' });
     await input.fill('First line');
     await input.press('End');
     await input.press('Enter');

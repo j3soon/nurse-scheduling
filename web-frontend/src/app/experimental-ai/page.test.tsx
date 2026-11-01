@@ -554,11 +554,11 @@ describe('ExperimentalAiPage', () => {
       'href',
       'https://github.com/j3soon/nurse-scheduling#ai-beta-access',
     );
-    expect(screen.getByRole('link', { name: 'Privacy details' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute(
       'href',
       'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md',
     );
-    expect(screen.getByText(/All AI chats are logged and are not currently anonymized/)).toBeInTheDocument();
+    expect(screen.queryByText(/When a response finishes/)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(sendButton).toHaveTextContent('');
@@ -1588,14 +1588,6 @@ describe('ExperimentalAiPage', () => {
       responseCompletedAt: expect.any(Number),
     }));
     expect(stored.messages[0].status).toBe(event === 'done' ? undefined : 'stopped');
-  });
-
-  it('warns that the chat is stored unencrypted in this browser', async () => {
-    render(<ExperimentalAiPage />);
-
-    expect(await screen.findByText(
-      /Recent chats are stored unencrypted on this device for seven days after their last activity\./,
-    )).toBeInTheDocument();
   });
 
   it('warns once the assistant stops receiving the oldest messages', async () => {

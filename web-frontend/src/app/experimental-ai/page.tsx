@@ -968,28 +968,6 @@ export default function ExperimentalAiPage() {
         <p className="text-sm text-gray-600">
           Ask questions about the Schedule Spec currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.
         </p>
-        <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          When a response finishes, the assistant&apos;s valid Schedule Spec changes replace the Schedule Spec in this browser.
-          Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them. This beta is API-key gated by default.{' '}
-          <a
-            className="font-medium underline"
-            href={GITHUB_AI_BETA_ACCESS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Request beta access
-          </a>
-          . All AI chats are logged and are not currently anonymized. Chat data may be retained and processed for the development, evaluation, and improvement of this product and the AI provider&apos;s products. Recent chats are stored unencrypted on this device for seven days after their last activity. Remove a chat or clear history to forget it on this device. Backend retention is separate.{' '}
-          <a
-            className="font-medium underline"
-            href={GITHUB_PRIVACY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Privacy details
-          </a>
-          .
-        </p>
         {trimmedHistoryCount > 0 && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
             This conversation is long, so the {trimmedHistoryCount === 1 ? 'oldest message is' : `${trimmedHistoryCount} oldest messages are`}
@@ -1107,7 +1085,7 @@ export default function ExperimentalAiPage() {
           )}
         </div>
         {(authRequired || authToken !== null) && (
-          <div className="mt-3 max-w-md rounded-lg border border-gray-200 bg-white px-3 py-2">
+          <div className="mt-1 max-w-md rounded-lg border border-gray-200 bg-white px-3 py-2">
             <BackendTokenField
               endpoint="AI assistant"
               token={authToken}
@@ -1124,15 +1102,61 @@ export default function ExperimentalAiPage() {
             )}
           </div>
         )}
-        <div className="mt-3">
-          <MobileDetails label="Chat details and settings" openWhen={hasVersionMismatch}>
+        <div role="group" aria-label="AI versions" className={`mt-3 max-w-2xl rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>
+              Frontend{' '}
+              <AppVersionText
+                version={CURRENT_APP_VERSION}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+            <span>
+              Backend{' '}
+              <AppVersionText
+                version={backendVersion ?? 'unknown'}
+                versionHref={GITHUB_TAGS_URL}
+                versionClassName="hover:text-gray-600"
+                commitClassName="hover:text-gray-600"
+              />
+            </span>
+          </div>
+          {hasVersionMismatch && (
+            <p className="mt-1 font-medium text-amber-700">
+              Frontend and backend versions do not match. If nothing breaks, you can continue.
+            </p>
+          )}
+        </div>
+        <p className="mt-3 px-3 text-xs text-gray-500">
+          <a
+            className="text-blue-600 underline hover:text-blue-800"
+            href={GITHUB_PRIVACY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Privacy Policy
+          </a>
+          {' · '}
+          <a
+            className="text-blue-600 underline hover:text-blue-800"
+            href={GITHUB_AI_BETA_ACCESS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Request beta access
+          </a>
+        </p>
+        <div className="mt-3 sm:px-3">
+          <MobileDetails label="Chat details and settings">
             <p className="mt-2 text-xs font-medium text-gray-500">
               Browser Schedule Spec: {peopleData.items.length} people, {dateData.items.length} dates. Sent when you send a message.
             </p>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-2 text-xs text-gray-500">
               Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
             </p>
-            <div className="flex flex-wrap gap-4">
+            <div className="mt-2 flex flex-wrap gap-4">
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input
                   type="checkbox"
@@ -1174,33 +1198,6 @@ export default function ExperimentalAiPage() {
                 Send feedback
               </button>
             )}
-            <div role="group" aria-label="AI versions" className={`mt-3 rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <span>
-                  Frontend{' '}
-                  <AppVersionText
-                    version={CURRENT_APP_VERSION}
-                    versionHref={GITHUB_TAGS_URL}
-                    versionClassName="hover:text-gray-600"
-                    commitClassName="hover:text-gray-600"
-                  />
-                </span>
-                <span>
-                  Backend{' '}
-                  <AppVersionText
-                    version={backendVersion ?? 'unknown'}
-                    versionHref={GITHUB_TAGS_URL}
-                    versionClassName="hover:text-gray-600"
-                    commitClassName="hover:text-gray-600"
-                  />
-                </span>
-              </div>
-              {hasVersionMismatch && (
-                <p className="mt-1 font-medium text-amber-700">
-                  Frontend and backend versions do not match. If nothing breaks, you can continue.
-                </p>
-              )}
-            </div>
           </MobileDetails>
         </div>
       </div>

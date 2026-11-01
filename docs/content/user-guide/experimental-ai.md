@@ -227,7 +227,8 @@ The blue development-version banner appears only in non-release builds.
 
 1. Finish editing or load the intended Schedule Spec.
 2. Open **Experimental AI**.
-3. Confirm the displayed people and date counts.
+3. Confirm the displayed people and date counts. On phones, open **Chat details
+   and settings** to show them.
 4. If **Attach files** is available, optionally select files and confirm the
    displayed names. Remove an incorrect file with its **×** button.
 5. Enter a question and select **Send**. Press <kbd>Enter</kbd> to send or
