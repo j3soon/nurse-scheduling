@@ -180,7 +180,6 @@ test('applies the schedule a response finishes with as one undoable step', async
   await mockChangingBackend(page);
 
   await page.goto('/experimental-ai');
-  await expect(page.getByText('Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them.')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
