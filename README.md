@@ -23,9 +23,9 @@ This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) provid
 
 Development builds may introduce breaking changes. Use the stable or versioned deployments when repeatability is important.
 
-A **Schedule Spec** defines the people, dates, shifts, constraints, preferences,
-and export settings. The app stores it as YAML. A **Schedule** contains the actual
-shift assignments produced by the optimizer or entered manually.
+A **Schedule Spec** defines the people, dates, shift types, constraints, preferences,
+and export settings. The app imports and exports it as YAML. A **Schedule**
+contains the actual shift assignments produced by the optimizer or entered manually.
 
 ## Project Scope
 

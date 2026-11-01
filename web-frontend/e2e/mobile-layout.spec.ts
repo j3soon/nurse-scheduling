@@ -124,7 +124,7 @@ test('reorders preference cards and edits the saved YAML on a phone', async ({ p
   await page.getByRole('button', { name: 'Move Current Shift Counts item 2 up', exact: true }).tap();
   await page.goto('/save-and-load');
   await page.getByRole('button', { name: 'Edit YAML', exact: true }).tap();
-  const input = page.getByPlaceholder('Enter YAML configuration...');
+  const input = page.getByPlaceholder('Enter Schedule Spec YAML...');
   const original = await input.inputValue();
   expect(original.indexOf('Night count')).toBeLessThan(original.indexOf('Day count'));
   await input.fill(original.replace('Phone editing schedule', 'Edited from phone'));
@@ -141,7 +141,7 @@ test('reorders a succession pattern without dragging', async ({ page }) => {
   await page.getByRole('button', { name: 'Update', exact: true }).tap();
   await page.goto('/save-and-load');
   await page.getByRole('button', { name: 'Edit YAML', exact: true }).tap();
-  const saved = yaml.load(await page.getByPlaceholder('Enter YAML configuration...').inputValue()) as { preferences: { type: string; pattern?: string[] }[] };
+  const saved = yaml.load(await page.getByPlaceholder('Enter Schedule Spec YAML...').inputValue()) as { preferences: { type: string; pattern?: string[] }[] };
   expect(saved.preferences.find(preference => preference.type === 'shift type successions')?.pattern).toEqual(['D', 'N']);
 });
 

@@ -333,7 +333,7 @@ export default function SaveAndLoadPage() {
             onFileUpload={processYamlFile}
             acceptedFileTypes={['.yaml', '.yml']}
             buttonText="Upload"
-            tooltipText="Upload a YAML file to load configuration. You can click to select a file or drag and drop a file here."
+            tooltipText="Upload Schedule Spec YAML. Click to select a file or drag and drop it here."
             className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
             icon={<FiUpload className="h-4 w-4" />}
           />
@@ -460,7 +460,7 @@ export default function SaveAndLoadPage() {
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-gray-800">
-            {isEditing ? 'Edit YAML Configuration' : 'Current State YAML'}
+            {isEditing ? 'Edit Schedule Spec YAML' : 'Current Schedule Spec YAML'}
           </h3>
           {isEditing && (
             <div className="flex gap-2">
@@ -494,7 +494,7 @@ export default function SaveAndLoadPage() {
                 }}
                 className="w-full h-96 p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0"
                 style={{ fontFamily: 'ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace' }}
-                placeholder="Enter YAML configuration..."
+                placeholder="Enter Schedule Spec YAML..."
               />
               {yamlError && (
                 <div className="px-4 py-2 bg-red-50 border-t border-red-200 text-red-700 text-sm">

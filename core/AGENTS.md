@@ -428,6 +428,8 @@ and current session recovery working.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert
   or repair additional input shapes.
+- Describe incomplete Schedule Specs by naming missing entries, fields, or rules.
+  Call a Schedule Spec missing only when the document itself is unavailable.
 - Keep Schedule Spec facts out of the prompt summary in `describe_schedule_spec` and put
   them in a tool result instead. The evaluation asserts that a reading case
   cannot be answered from the summary alone, so listing item IDs or line numbers

@@ -131,7 +131,7 @@ describe('SaveAndLoadPage', () => {
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
 
-    const editor = screen.getByPlaceholderText('Enter YAML configuration...');
+    const editor = screen.getByPlaceholderText('Enter Schedule Spec YAML...');
     fireEvent.change(editor, { target: { value: 'apiVersion: alpha\ndescription: edited\nappVersion: unknown\n' } });
     await user.click(screen.getByRole('button', { name: /save/i }));
 
@@ -163,7 +163,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'bad: [yaml' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -316,7 +316,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'apiVersion: alpha\ndescription: edited\nappVersion: v0.0.1\n' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -334,7 +334,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    const editor = screen.getByPlaceholderText('Enter YAML configuration...');
+    const editor = screen.getByPlaceholderText('Enter Schedule Spec YAML...');
     fireEvent.change(editor, {
       target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
     });
@@ -342,10 +342,10 @@ describe('SaveAndLoadPage', () => {
 
     expect(confirm).toHaveBeenCalled();
     expect(loadFromYaml).not.toHaveBeenCalled();
-    expect(screen.getByPlaceholderText('Enter YAML configuration...')).toHaveValue(
+    expect(screen.getByPlaceholderText('Enter Schedule Spec YAML...')).toHaveValue(
       'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n',
     );
-    expect(screen.queryByText('Current State YAML')).not.toBeInTheDocument();
+    expect(screen.queryByText('Current Schedule Spec YAML')).not.toBeInTheDocument();
   });
 
   it('copies the current persisted YAML after version mismatch confirmation is cancelled', async () => {
@@ -360,7 +360,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -384,7 +384,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'apiVersion: alpha\ndescription: staged\nappVersion: v0.0.1\n' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -497,7 +497,7 @@ describe('SaveAndLoadPage', () => {
     });
     rerender(saveAndLoadPageElement());
 
-    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+    expect(screen.getByText('Current Schedule Spec YAML')).toBeInTheDocument();
     expect(document.querySelector('pre')).toHaveTextContent('description: uploaded state');
 
     await user.click(screen.getByRole('button', { name: /copy/i }));
@@ -673,7 +673,7 @@ describe('SaveAndLoadPage', () => {
         extraRows: [{ type: 'count', header: 'People', countPeople: ['P1', 'Team'], countShiftTypes: ['D'] }],
       },
     }));
-    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+    expect(screen.getByText('Current Schedule Spec YAML')).toBeInTheDocument();
   });
 
   it('disables anonymized download when both replacement options are unchecked', async () => {
@@ -805,7 +805,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'people:\n  items:\n    - id: P1\n' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -828,7 +828,7 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    const editor = screen.getByPlaceholderText('Enter YAML configuration...');
+    const editor = screen.getByPlaceholderText('Enter Schedule Spec YAML...');
 
     fireEvent.change(editor, { target: { value: 'bad: [yaml' } });
     await user.click(screen.getByRole('button', { name: /save/i }));
@@ -844,15 +844,15 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    fireEvent.change(screen.getByPlaceholderText('Enter YAML configuration...'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter Schedule Spec YAML...'), {
       target: { value: 'bad: [yaml' },
     });
     await user.click(screen.getByRole('button', { name: /save/i }));
     expect(screen.getByText(/unexpected end/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /cancel/i }));
-    expect(screen.queryByPlaceholderText('Enter YAML configuration...')).not.toBeInTheDocument();
-    expect(screen.getByText('Current State YAML')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Enter Schedule Spec YAML...')).not.toBeInTheDocument();
+    expect(screen.getByText('Current Schedule Spec YAML')).toBeInTheDocument();
   });
 
   it('shows copied state temporarily after successful clipboard copy', async () => {
@@ -879,14 +879,14 @@ describe('SaveAndLoadPage', () => {
     renderSaveAndLoadPage();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    const editor = screen.getByPlaceholderText('Enter YAML configuration...') as HTMLTextAreaElement;
+    const editor = screen.getByPlaceholderText('Enter Schedule Spec YAML...') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: 'description: unsaved change\n' } });
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    expect(screen.queryByPlaceholderText('Enter YAML configuration...')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Enter Schedule Spec YAML...')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /edit yaml/i }));
-    expect(screen.getByPlaceholderText('Enter YAML configuration...')).toHaveValue(
+    expect(screen.getByPlaceholderText('Enter Schedule Spec YAML...')).toHaveValue(
       'apiVersion: alpha\ndescription: baseline\n',
     );
   });

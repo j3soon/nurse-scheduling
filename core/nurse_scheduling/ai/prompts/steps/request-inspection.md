@@ -12,4 +12,4 @@ The script returns counts by default. Add `--max-requests N` to show up to N mat
 Each request entry counts its person/date pairs separately. If two entries cover the same
 person and date, that pair is counted twice. These counts do not tell you whether all requests
 can be satisfied together. The script checks that its saved data matches the current YAML.
-If it reports missing or outdated Schedule Spec, read the current YAML instead.
+If its saved inspection context is missing or outdated, read the current Schedule Spec YAML instead.
