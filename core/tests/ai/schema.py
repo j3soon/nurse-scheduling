@@ -74,7 +74,7 @@ def fixture_path(name: Any, fixtures: Path = FIXTURES, *, root: Path | None = No
 
 
 def schedule_fixture(name: Any, fixtures: Path) -> Path:
-    """Reuse schedule YAML within core/tests, keeping attachments in fixtures."""
+    """Reuse Schedule Spec YAML within core/tests, keeping attachments in fixtures."""
     root = ROOT.parent if fixtures.resolve() == FIXTURES.resolve() else fixtures
     path = fixture_path(name, fixtures, root=root)
     if not isinstance(load_yaml(path.read_text(encoding="utf-8")), dict):

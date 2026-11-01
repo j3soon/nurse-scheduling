@@ -43,7 +43,7 @@ before attaching any ward records.
 
 ## Ask the assistant to optimize
 
-Ask the assistant to optimize the current schedule and describe the result or
+Ask the assistant to optimize the current Schedule Spec and describe the result or
 improve a specific outcome. The assistant starts the run in the background, so
 you can continue chatting while it solves.
 
@@ -77,7 +77,7 @@ anonymization as **Optimize and Export**: it replaces person IDs and removes
 description fields. It restores person IDs in the downloaded workbook. Dates,
 shifts, groups, and rules can still reveal sensitive information.
 
-Each run uses a server-side schedule snapshot. Editing or undoing the browser
+Each run uses a server-side Schedule Spec snapshot. Editing or undoing the browser
 schedule does not interrupt the assistant. Send passes the current browser
 schedule to the assistant for your next question.
 
@@ -91,12 +91,12 @@ Ask for a change, such as renaming a person or adding a shift request. The
 assistant edits a temporary copy of the schedule, and the app checks each edit.
 
 1. Ask for the change in the usual way.
-2. Each step that changes the temporary schedule shows **Schedule check passed**
-   or **Schedule check failed**. It contains the check result that the assistant
+2. Each step that changes the temporary schedule shows **Schedule Spec check passed**
+   or **Schedule Spec check failed**. It contains the check result that the assistant
    received. After a failed check, the assistant repairs the problem.
 3. When the response finishes, the last valid schedule replaces the schedule in
-   this browser. **Applied to your schedule** lists every difference.
-   If you changed the browser schedule during the response, a notice explains
+   this browser. **Applied to your Schedule Spec** lists every difference.
+   If you changed the browser Schedule Spec during the response, a notice explains
    that the assistant replaced those changes.
 4. The change is one step in the edit history, so **Undo** or
    <kbd>Ctrl</kbd>+<kbd>Z</kbd> reverts the whole change. The assistant learns about the undo when you send
@@ -191,11 +191,11 @@ until you select one.
 - The `bash` tool shows the command the assistant ran and its bounded output.
   The assistant may read task-sized schedule references from the temporary
   sandbox when it needs schema guidance.
-- **schedule edit** shows the changed lines after a Bash command changes the
+- **Schedule Spec edit** shows the changed lines after a Bash command changes the
   temporary schedule. Red lines were removed and green lines were added. This
-  is a preview. The schedule changes when the response finishes.
+  is a preview. The Schedule Spec changes when the response finishes.
 - A row marked `failed` means that step changed nothing. This is the usual
-reason an answer arrives without a schedule change.
+reason an answer arrives without a Schedule Spec change.
 - The `optimizer` tool shows whether the assistant started, checked, or asked
   the current optimization to finish.
 
@@ -211,7 +211,7 @@ If a turn fails, read the error beside its response. Chat exports retain that
 error with any partial answer. A provider error can include an HTTP status and
 an error ID to share when reporting the problem. A schedule
 validation error explains the invalid value or field. Failed validation discards
-that turn's edits and keeps your current schedule.
+that turn's edits and keeps your current Schedule Spec.
 
 ## Real scenario example
 
@@ -255,7 +255,7 @@ exports. The file panel shows the files currently retained by the session.
 Use **Export Chat** to download one ZIP from the server. Extract it and open
 `chat.html` for a styled transcript or `chat.md` for Markdown. Both link to files
 under `attachments/`, including removed uploads, generated ZIPs, and optimizer
-files. The ZIP also contains the current `schedule.yaml`, structured `chat.json`,
+files. The ZIP also contains the current `schedule-spec.yaml`, structured `chat.json`,
 and `manifest.json` with file origins and hashes. Work still in progress is marked
 as unfinished. Export is unavailable on servers without saved chat history.
 
@@ -272,7 +272,7 @@ the archived ZIP remains until the chat expires.
 
 The assistant runs inside the existing Nurse Scheduling app and can explain
 which page and visible control to use for a task. For example, ask how to add a
-person, upload schedule YAML, configure a rule, or start optimization. It can
+person, upload Schedule Spec YAML, configure a rule, or start optimization. It can
 guide you through those controls, but it cannot navigate, click, or upload for
 you. It can always start optimization itself. An unavailable optimizer API
 reports a tool error instead.
@@ -285,21 +285,24 @@ The panel sits on the right on large screens and can be collapsed on smaller scr
 To replace the schedule currently open in the app directly, use **Upload** on
 **Save and Load**.
 
-The browser sends schedule data when you send a message. The first message
-creates a session with the current schedule YAML. Before later messages, the
-browser sends updated schedule data if it has changed. Editing schedule data
+The browser sends the Schedule Spec when you send a message. The first message
+creates a session with the current Schedule Spec YAML. Before later messages, the
+browser sends updated Schedule Spec if it has changed. Editing Schedule Spec
 or opening a saved chat does not send it to the AI service. A queued message
-that joins the active response uses that response's schedule data. Browser
+that joins the active response uses that response's Schedule Spec. Browser
 changes are sent when a new response starts.
 
 ### Recent chats
 
+AI conversations and recent chats can become unavailable after an app update
+or server restart. Download a chat export before updating if you need a copy.
+
 Use **Recent chats** on the left to reopen a conversation. On a phone, expand
-the panel above the conversation. Selecting a chat keeps browser schedule data
+the panel above the conversation. Selecting a chat keeps browser Schedule Spec
 unchanged, including when earlier AI changes arrive during replay. The status
-above the message field shows whether browser schedule data matches the chat.
-Your next message sends current browser schedule data to that chat. New AI
-changes from that conversation can then update the browser schedule.
+above the message field shows whether browser Schedule Spec matches the chat.
+Your next message sends current browser Schedule Spec to that chat. New AI
+changes from that conversation can then update the browser Schedule Spec.
 
 **New chat** preserves the previous chat in history. Recent chats are stored
 unencrypted on this device for seven days after their last activity. Viewing a
@@ -310,7 +313,7 @@ backend sessions, which normally expire after 30 days of inactivity.
 
 ## Data and limitations
 
-The complete schedule YAML is sent to the configured AI service and placed in
+The complete Schedule Spec YAML is sent to the configured AI service and placed in
 the assistant's temporary workspace. Relevant schedule content reaches the
 model when the assistant inspects it. Uploaded source files stay with the chat
 for active use until removed or the session expires. Removed files stay in the
@@ -320,7 +323,7 @@ the service loads saved file contents only when a response uses its workspace.
 Without PostgreSQL, their bytes share the service's session memory budget.
 
 Each message uses a fresh temporary virtual machine, not your computer or a
-persistent desktop. The service loads the current schedule, relevant references,
+persistent desktop. The service loads the current Schedule Spec, relevant references,
 and retained uploads into it. Other files created during a response disappear
 when that workspace closes. Download generated output with **Download files (ZIP)**.
 A chat message can mention a removed file even when it is no longer available.

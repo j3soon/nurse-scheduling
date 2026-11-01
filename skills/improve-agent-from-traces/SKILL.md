@@ -135,7 +135,7 @@ provider requests, sandbox commands, optimizer submission, solving, and result
 delivery are real or simulated. A live model and a successful optimizer-tool
 reply do not prove that an optimizer job ran.
 
-Validate schedule inputs with `validate_frontend_schedule_yaml` before live
+Validate schedule inputs with `validate_frontend_schedule_spec_yaml` before live
 AI comparisons. A format accepted by the backend but unsupported by the frontend
 can produce misleading agent failures. Check structured answer fields
 and counting units before provider calls. For example, request entries and

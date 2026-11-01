@@ -199,10 +199,13 @@ def write_chat_archive(history: ChatHistory, session_id: str, output: BinaryIO, 
         ).fetchone()
         if row is None or (owner is not None and row[0] != _owner_hash(owner)):
             raise ChatSessionNotFoundError("Chat session not found.")
+        if not isinstance(row[1].get("schedule_spec_yaml"), str):
+            raise ChatSessionNotFoundError("Chat session not found.")
         snapshot = history.export_snapshot(connection, session_id)
         if snapshot is None:
             raise ChatSessionNotFoundError("Chat session not found.")
-        snapshot = {**snapshot, "session_state": row[1], "expires_at": round(float(row[2]) * 1000)}
+        state = row[1]
+        snapshot = {**snapshot, "session_state": state, "expires_at": round(float(row[2]) * 1000)}
         files = _files(connection, session_id)
         at = max([snapshot["snapshot_at"], *(file["removed_at"] or file["created_at"] for file in files)])
         snapshot["snapshot_at"] = at
@@ -212,7 +215,7 @@ def write_chat_archive(history: ChatHistory, session_id: str, output: BinaryIO, 
                 ("chat.html", html.encode("utf-8")),
                 ("chat.md", markdown.encode("utf-8")),
                 ("chat.json", _json(snapshot)),
-                ("schedule.yaml", row[1]["schedule_yaml"].encode("utf-8")),
+                ("schedule-spec.yaml", state["schedule_spec_yaml"].encode("utf-8")),
             ):
                 archive.writestr(_entry(filename, at), content)
             for file in files:

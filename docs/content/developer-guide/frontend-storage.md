@@ -84,7 +84,7 @@ without a separate numeric storage version.
 
 The [conversation parser][conversation-parser] validates snapshots from both
 stores. A snapshot includes the transcript, activity and expiry times, synced
-schedule YAML, browser-normalized schedule YAML, applied-run records, event
+Schedule Spec YAML, browser-normalized Schedule Spec YAML, applied-run records, event
 cursor, pending request metadata, optimization state, context usage, and costs.
 The tab snapshot has no version envelope. Its `backendVersion` identifies the
 AI backend rather than the frontend.

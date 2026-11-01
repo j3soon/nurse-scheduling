@@ -37,22 +37,22 @@ export interface ToolActivity {
   arguments: string;
   result: string;
   ok: boolean;
-  // The trusted schedule check that `result` ends with, when the tool changed the working copy.
-  scheduleCheck?: ScheduleCheck;
+  // The trusted Schedule Spec check that `result` ends with, when the tool changed the working copy.
+  scheduleSpecCheck?: ScheduleSpecCheck;
 }
 
-export interface ScheduleCheck {
+export interface ScheduleSpecCheck {
   ok: boolean;
   text: string;
 }
 
-// A run's validated schedule, which the backend adopted. The browser applies each run once.
-export interface ScheduleApplied {
+// A run's validated Schedule Spec, which the backend adopted. The browser applies each run once.
+export interface ScheduleSpecApplied {
   runId: string;
-  scheduleYaml: string;
+  scheduleSpecYaml: string;
   diff: string;
-  // The backend dropped a browser schedule update that arrived during the run.
-  replacedQueuedSchedule: boolean;
+  // The backend dropped a browser Schedule Spec update that arrived during the run.
+  replacedQueuedScheduleSpec: boolean;
 }
 
 export type ToolStartActivity = Pick<ToolActivity, 'toolCallId' | 'name' | 'arguments'>;
@@ -148,7 +148,7 @@ function parseSessionModelSelection(body: unknown): SessionModelSelection {
 export async function getSessionModelSelection(
   sessionId: string, signal: AbortSignal, authToken: string | null, endpoint: string,
 ): Promise<SessionModelSelection> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     signal, credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
@@ -158,7 +158,7 @@ export async function getSessionModelSelection(
 export async function updateSessionModelSelection(
   sessionId: string, selection: ModelSelection, authToken: string | null, endpoint: string,
 ): Promise<SessionModelSelection> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/model-selection`, {
     method: 'PUT', credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(selection),
@@ -273,7 +273,7 @@ interface SsePayload {
   arguments?: unknown;
   result?: unknown;
   ok?: unknown;
-  schedule_yaml?: unknown;
+  schedule_spec_yaml?: unknown;
   system?: unknown;
   messages?: unknown;
   used_tokens?: unknown;
@@ -303,8 +303,8 @@ interface SsePayload {
   events?: unknown;
   incomplete?: unknown;
   active_run_id?: unknown;
-  schedule_check?: unknown;
-  replaced_queued_schedule?: unknown;
+  schedule_spec_check?: unknown;
+  replaced_queued_schedule_spec?: unknown;
 }
 
 // Older backends omit the ID, so callers fall back to matching by tool name.
@@ -437,17 +437,17 @@ export async function getBackendVersion(signal?: AbortSignal, endpoint = getAiBa
 }
 
 export async function createSession(
-  scheduleYaml: string,
+  scheduleSpecYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
   selection?: ModelSelection,
 ): Promise<string> {
-  const response = await fetch(`${endpoint}/sessions`, {
+  const response = await fetch(`${endpoint}/v1/sessions`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
-      schedule_yaml: scheduleYaml,
+      schedule_spec_yaml: scheduleSpecYaml,
       selection,
       frontend_version: CURRENT_APP_VERSION,
       ai_endpoint: endpoint,
@@ -468,7 +468,7 @@ export async function getSessionStatus(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<number> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     credentials: 'include',
     headers: authorizedHeaders(authToken),
   });
@@ -691,9 +691,9 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
         result: typeof payload.result === 'string' ? payload.result : '',
         ...(typeof payload.replay_arguments === 'string' ? { replayArguments: payload.replay_arguments } : {}),
         ok: payload.ok !== false,
-        ...(isRecord(payload.schedule_check) && typeof payload.schedule_check.ok === 'boolean'
-          && typeof payload.schedule_check.text === 'string'
-          ? { scheduleCheck: { ok: payload.schedule_check.ok, text: payload.schedule_check.text } } : {}),
+        ...(isRecord(payload.schedule_spec_check) && typeof payload.schedule_spec_check.ok === 'boolean'
+          && typeof payload.schedule_spec_check.text === 'string'
+          ? { scheduleSpecCheck: { ok: payload.schedule_spec_check.ok, text: payload.schedule_spec_check.text } } : {}),
       },
     });
   } else if (
@@ -702,22 +702,21 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     && typeof payload.message === 'string'
   ) {
     emit({ type: 'steering', messageId: payload.message_id, message: payload.message });
-  } else if (eventType === 'schedule_change') {
-    if (typeof payload.schedule_yaml !== 'string') {
-      throw new Error('The AI backend returned an invalid schedule change.');
+  } else if (eventType === 'schedule_spec_change') {
+    if (typeof payload.schedule_spec_yaml !== 'string') {
+      throw new Error('The AI backend returned an invalid Schedule Spec change.');
     }
-    emit({ type: 'schedule_change', scheduleYaml: payload.schedule_yaml });
+    emit({ type: 'schedule_spec_change', scheduleSpecYaml: payload.schedule_spec_yaml });
   } else if (eventType === 'download' && typeof payload.download_id === 'string') {
     emit({ type: 'download', downloadId: payload.download_id });
-  } else if (eventType === 'schedule_applied') {
-    // Runs saved before schedule updates were queued omit `replaced_queued_schedule`.
-    if (!runId || typeof payload.schedule_yaml !== 'string' || typeof payload.diff !== 'string'
-      || !['boolean', 'undefined'].includes(typeof payload.replaced_queued_schedule)) {
-      throw new Error('The AI backend returned an invalid schedule change.');
+  } else if (eventType === 'schedule_spec_applied') {
+    if (!runId || typeof payload.schedule_spec_yaml !== 'string' || typeof payload.diff !== 'string'
+      || typeof payload.replaced_queued_schedule_spec !== 'boolean') {
+      throw new Error('The AI backend returned an invalid Schedule Spec change.');
     }
-    emit({ type: 'schedule_applied', applied: {
-      runId, scheduleYaml: payload.schedule_yaml, diff: payload.diff,
-      replacedQueuedSchedule: payload.replaced_queued_schedule === true,
+    emit({ type: 'schedule_spec_applied', applied: {
+      runId, scheduleSpecYaml: payload.schedule_spec_yaml, diff: payload.diff,
+      replacedQueuedScheduleSpec: payload.replaced_queued_schedule_spec,
     } });
   } else if (
     eventType === 'optimization'
@@ -814,7 +813,7 @@ async function postMessage(
   messageId?: string,
   selection?: ModelSelection,
 ): Promise<Response> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/messages`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { Accept: accept, 'Content-Type': 'application/json' }),
@@ -973,7 +972,7 @@ export async function streamSessionEvents(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/events${callbacks.reset ? '?reset=true' : ''}`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/events${callbacks.reset ? '?reset=true' : ''}`, {
     method: 'GET',
     credentials: 'include',
     headers: authorizedHeaders(
@@ -993,7 +992,7 @@ export async function queueMessage(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/messages/queue`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
@@ -1013,7 +1012,7 @@ export async function cancelOptimization(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/cancel`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/cancel`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken),
@@ -1027,14 +1026,14 @@ export async function finishOptimizationNow(
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/finish-now`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/finish-now`, {
     method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
 }
 
 export async function getChatExportUrl(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<string> {
-  const path = `${endpoint}/sessions/${encodeURIComponent(sessionId)}/export`;
+  const path = `${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/export`;
   const response = await fetch(path, {
     method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken),
   });
@@ -1055,7 +1054,7 @@ export async function compactSession(
   options: Omit<SendMessageOptions, 'messageId' | 'selection'> & { signal: AbortSignal },
 ): Promise<string> {
   return acceptRun(sessionId, options.signal, authToken, endpoint, { ...options, messageId }, async signal => {
-    const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/compact`, {
+    const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/compact`, {
       method: 'POST', credentials: 'include', signal,
       headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ message_id: messageId }),
@@ -1073,7 +1072,7 @@ export async function stopSession(
   messageId?: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/stop`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/stop`, {
     method: 'POST',
     credentials: 'include',
     headers: authorizedHeaders(authToken, messageId ? { 'Content-Type': 'application/json' } : undefined),
@@ -1090,7 +1089,7 @@ export async function downloadOptimization(
   endpoint = getAiBaseUrl(),
 ): Promise<Blob> {
   const response = await fetch(
-    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/xlsx`,
+    `${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/optimizations/${encodeURIComponent(jobId)}/xlsx`,
     {
       method: 'GET',
       credentials: 'include',
@@ -1102,7 +1101,7 @@ export async function downloadOptimization(
 }
 
 export async function getUploads(sessionId: string, authToken: string | null, endpoint = getAiBaseUrl(), signal?: AbortSignal): Promise<UploadedFile[]> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/uploads`, {
     credentials: 'include', headers: authorizedHeaders(authToken), signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -1120,7 +1119,7 @@ export async function uploadFiles(
   const form = new FormData();
   files.forEach(file => form.append('files', file, file.name));
   const suffix = uploadId ? `?upload_id=${encodeURIComponent(uploadId)}` : '';
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads${suffix}`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/uploads${suffix}`, {
     method: 'POST', credentials: 'include', headers: authorizedHeaders(authToken), body: form, signal,
   });
   if (!response.ok) throw await responseError(response);
@@ -1166,7 +1165,7 @@ function parseUploadList(files: unknown): UploadedFile[] {
 }
 
 export async function removeUpload(sessionId: string, uploadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/uploads/${encodeURIComponent(uploadId)}`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/uploads/${encodeURIComponent(uploadId)}`, {
     method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
@@ -1179,7 +1178,7 @@ export async function downloadGeneratedZip(
   endpoint = getAiBaseUrl(),
 ): Promise<Blob> {
   const response = await fetch(
-    `${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`,
+    `${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`,
     { credentials: 'include', headers: authorizedHeaders(authToken) },
   );
   if (!response.ok) throw await responseError(response);
@@ -1187,7 +1186,7 @@ export async function downloadGeneratedZip(
 }
 
 export async function removeGeneratedZip(sessionId: string, downloadId: string, authToken: string | null, endpoint = getAiBaseUrl()): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/downloads/${encodeURIComponent(downloadId)}`, {
     method: 'DELETE', credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
@@ -1195,15 +1194,15 @@ export async function removeGeneratedZip(sessionId: string, downloadId: string, 
 
 export async function updateSessionSchedule(
   sessionId: string,
-  scheduleYaml: string,
+  scheduleSpecYaml: string,
   authToken: string | null,
   endpoint = getAiBaseUrl(),
 ): Promise<void> {
-  const response = await fetch(`${endpoint}/sessions/${encodeURIComponent(sessionId)}/schedule`, {
+  const response = await fetch(`${endpoint}/v1/sessions/${encodeURIComponent(sessionId)}/schedule_spec`, {
     method: 'PUT',
     credentials: 'include',
     headers: authorizedHeaders(authToken, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ schedule_yaml: scheduleYaml }),
+    body: JSON.stringify({ schedule_spec_yaml: scheduleSpecYaml }),
   });
   if (!response.ok) throw await responseError(response);
 }

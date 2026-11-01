@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .agent_types import AgentToolOutcome
-from .candidate import REQUIRED_RULE_NOTICE, SCHEDULE_FILENAME, review_schedule_candidate
+from .candidate import REQUIRED_RULE_NOTICE, SCHEDULE_SPEC_FILENAME, review_schedule_spec_candidate
 from .config import MAX_DOWNLOAD_BYTES, MAX_HISTORY_CHARS, AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
@@ -47,16 +47,16 @@ from .sandbox import (
 from .schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
-    load_schedule_example,
-    load_schedule_reference,
+    load_schedule_spec_example,
+    load_schedule_spec_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
 from .system_prompt import compose_system_prompt
 
 logger = logging.getLogger("nurse_scheduling.ai.sandbox_agent")
-WORKSPACE_SCHEDULE = f"/workspace/{SCHEDULE_FILENAME}"
-WORKSPACE_LAST_ACCEPTED_SCHEDULE = "/workspace/last-accepted-schedule.yaml"
+WORKSPACE_SCHEDULE_SPEC = f"/workspace/{SCHEDULE_SPEC_FILENAME}"
+WORKSPACE_LAST_ACCEPTED_SPEC = "/workspace/last-accepted-schedule-spec.yaml"
 WORKSPACE_ATTACHMENTS = "/workspace/attachments"
 WORKSPACE_ANALYSIS = "/workspace/analysis.md"
 MAX_ANALYSIS_BYTES = 64 * 1024
@@ -66,7 +66,7 @@ REFERENCE_USER_GUIDE = "/reference/user-guide"
 REFERENCE_SCHEDULE_EXAMPLE = "/reference/examples/large-ward-with-87-people-2025-11.yaml"
 ATTACHMENT_TOOL_DIRECTORY = Path(__file__).with_name("attachment_tools")
 INSPECTION_HELPERS = {
-    "build_taiwan_holiday_groups.py": "Read-only Taiwan WORKDAY/FREEDAY group generation from the bundled calendar, including official holidays and makeup workdays. Preserves custom groups. Defaults to current schedule. --start/--end override the range. Rejects unsupported dates.",
+    "build_taiwan_holiday_groups.py": "Read-only Taiwan WORKDAY/FREEDAY group generation from the bundled calendar, including official holidays and makeup workdays. Preserves custom groups. Defaults to current Schedule Spec. --start/--end override the range. Rejects unsupported dates.",
     "inspect_request_tiers.py": "Current YAML inventory of all nonzero shift-request weight tiers, with entry and expanded target counts. --max-tiers bounds returned tiers.",
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "XLSX sheets, cells, formulas and saved caches. Use --overview for sheet names, visibility and reported sizes. Use --comments --range Sheet!A1:H20 for stored legacy comments, including blank cells, source parts and truncation, without scanning worksheet cells. Use --styles for stored formatting. Use --summary --range A1:B10 for typed value frequencies and optional --axis row|column counts. With --styles, summaries separate values by style. Reports blanks and truncation without recalculating formulas.",
@@ -140,10 +140,10 @@ class SandboxTurnTimeoutError(SandboxError):
 
 
 @dataclass(frozen=True)
-class AgentScheduleChange:
+class AgentScheduleSpecChange:
     """A server-validated working copy safe to preview in the UI."""
 
-    schedule_yaml: str
+    schedule_spec_yaml: str
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,7 @@ class SandboxAttachment:
 AttachmentLoader = Callable[[SandboxAttachment], Awaitable[bytes]]
 
 
-def analysis_source_sha256(schedule_yaml: str, attachments: Sequence[SandboxAttachment]) -> str:
+def analysis_source_sha256(schedule_spec_yaml: str, attachments: Sequence[SandboxAttachment]) -> str:
     """Identify the exact schedule and upload files for reusable analysis."""
     # A session rejects a retained upload ID with different bytes, so its path identifies
     # the file even when a run snapshot holds only the persisted reference.
@@ -183,7 +183,7 @@ def analysis_source_sha256(schedule_yaml: str, attachments: Sequence[SandboxAtta
         )
         for index, item in enumerate(attachments, start=1)
     ]
-    return hashlib.sha256(json.dumps([schedule_yaml, sources], ensure_ascii=False).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([schedule_spec_yaml, sources], ensure_ascii=False).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -245,7 +245,7 @@ async def _measured_sandbox_run(
     factory: SandboxFactory,
     cleanup_timeout_seconds: float,
     metrics: WorkspaceMetrics,
-    schedule_yaml: str,
+    schedule_spec_yaml: str,
     attachments: Sequence[SandboxAttachment],
     optimizer_result: bytes | None,
     optimizer_context: bytes | None,
@@ -260,7 +260,7 @@ async def _measured_sandbox_run(
         cleanup_timeout_seconds,
         metrics,
         stack,
-        schedule_yaml,
+        schedule_spec_yaml,
         attachments,
         optimizer_result,
         optimizer_context,
@@ -287,7 +287,7 @@ class _LazySandboxRun:
         cleanup_timeout_seconds: float,
         metrics: WorkspaceMetrics,
         stack: AsyncExitStack,
-        schedule_yaml: str,
+        schedule_spec_yaml: str,
         attachments: Sequence[SandboxAttachment],
         optimizer_result: bytes | None,
         optimizer_context: bytes | None,
@@ -300,7 +300,7 @@ class _LazySandboxRun:
         self._cleanup_timeout_seconds = cleanup_timeout_seconds
         self._metrics = metrics
         self._stack = stack
-        self._schedule_yaml = schedule_yaml
+        self._schedule_spec_yaml = schedule_spec_yaml
         self._attachments = tuple(attachments)
         self._optimizer_result = optimizer_result
         self._optimizer_context = optimizer_context
@@ -343,7 +343,7 @@ class _LazySandboxRun:
             if not self._hydrated:
                 await hydrate_sandbox(
                     self._sandbox,
-                    self._schedule_yaml,
+                    self._schedule_spec_yaml,
                     self._attachments,
                     self._optimizer_result,
                     self._optimizer_context,
@@ -420,7 +420,7 @@ class _LazySandboxRun:
 
 async def hydrate_sandbox(
     sandbox: SandboxBackend,
-    schedule_yaml: str,
+    schedule_spec_yaml: str,
     attachments: Sequence[SandboxAttachment] = (),
     optimizer_result: bytes | None = None,
     optimizer_context: bytes | None = None,
@@ -430,25 +430,27 @@ async def hydrate_sandbox(
     """Copy trusted application state and searchable references into one turn."""
     started = time.perf_counter()
     files: dict[str, str | bytes] = {
-        WORKSPACE_SCHEDULE: schedule_yaml,
-        WORKSPACE_LAST_ACCEPTED_SCHEDULE: schedule_yaml,
+        WORKSPACE_SCHEDULE_SPEC: schedule_spec_yaml,
+        WORKSPACE_LAST_ACCEPTED_SPEC: schedule_spec_yaml,
     }
     if (
         analysis is not None
         and analysis.content
         and len(analysis.content) <= MAX_ANALYSIS_BYTES
-        and analysis.source_sha256 == analysis_source_sha256(schedule_yaml, attachments)
+        and analysis.source_sha256 == analysis_source_sha256(schedule_spec_yaml, attachments)
     ):
         files[WORKSPACE_ANALYSIS] = analysis.content
-    files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_example()
+    files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_spec_example()
     try:
         # Compiling a large schedule on the event loop would stall every session's stream.
-        files[WORKSPACE_SOURCE_CONTEXT] = await asyncio.to_thread(_inspection_context_json, schedule_yaml)
+        files[WORKSPACE_SOURCE_CONTEXT] = await asyncio.to_thread(_inspection_context_json, schedule_spec_yaml)
     except Exception:
         # A draft may not compile. Its YAML remains available for direct inspection.
         logger.debug("Current schedule inspection context unavailable", exc_info=True)
     for group, path in REFERENCE_SCHEMAS.items():
-        reference = load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_reference(group)
+        reference = (
+            load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_spec_reference(group)
+        )
         if reference is None:  # pragma: no cover - constants are defined together
             raise ValueError(f"unknown schedule reference group: {group}")
         files[path] = reference
@@ -465,7 +467,7 @@ async def hydrate_sandbox(
         files[WORKSPACE_RESULT_CONTEXT] = (
             optimizer_context
             if optimizer_context is not None
-            else await asyncio.to_thread(_inspection_context_json, schedule_yaml, optimizer_result)
+            else await asyncio.to_thread(_inspection_context_json, schedule_spec_yaml, optimizer_result)
         )
     # Batch trusted references before loading attachments.
     await sandbox.write_files(files)
@@ -484,7 +486,7 @@ async def hydrate_sandbox(
         "sandbox hydrated sandbox_id=%s files=%s schedule_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
         len(files) + sum(attachment.data is None for attachment in attachments),
-        len(schedule_yaml.encode("utf-8")),
+        len(schedule_spec_yaml.encode("utf-8")),
         time.perf_counter() - started,
     )
 
@@ -501,7 +503,7 @@ def attachment_path(attachment: SandboxAttachment, index: int) -> str:
 async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> str:
     started = time.perf_counter()
     try:
-        candidate = await sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=max_schedule_bytes)
+        candidate = await sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=max_schedule_bytes)
     except SandboxFileSizeError as exc:
         raise SandboxCandidateError(
             f"The sandbox candidate exceeds the {max_schedule_bytes}-byte schedule limit."
@@ -509,7 +511,7 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
     except SandboxFileNotFoundError as exc:
         # The model owns the working copy and can delete it, which is a failed
         # turn rather than a sandbox failure.
-        raise SandboxCandidateError(f"The sandbox working copy {WORKSPACE_SCHEDULE} no longer exists.") from exc
+        raise SandboxCandidateError(f"The sandbox working copy {WORKSPACE_SCHEDULE_SPEC} no longer exists.") from exc
     logger.info(
         "sandbox candidate read sandbox_id=%s candidate_bytes=%s latency_seconds=%.3f",
         sandbox.sandbox_id,
@@ -524,11 +526,11 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         raise SandboxCandidateError("The sandbox candidate is not valid UTF-8.") from exc
 
 
-def _inspection_context_json(schedule_yaml: str, workbook: bytes | None = None) -> str:
-    return json.dumps(build_result_context(schedule_yaml, workbook=workbook), ensure_ascii=False, allow_nan=False)
+def _inspection_context_json(schedule_spec_yaml: str, workbook: bytes | None = None) -> str:
+    return json.dumps(build_result_context(schedule_spec_yaml, workbook=workbook), ensure_ascii=False, allow_nan=False)
 
 
-class _ScheduleCandidateTracker:
+class _ScheduleSpecCandidateTracker:
     """Review drafts and keep authoritative recovery contents outside the sandbox."""
 
     def __init__(self, sandbox: SandboxBackend, base_text: str, max_bytes: int) -> None:
@@ -542,27 +544,27 @@ class _ScheduleCandidateTracker:
 
     async def _sync_accepted_copy(self) -> None:
         # Rewrite after every mutating call, including calls that changed only this copy.
-        await self._sandbox.write_file(WORKSPACE_LAST_ACCEPTED_SCHEDULE, self._last_accepted)
+        await self._sandbox.write_file(WORKSPACE_LAST_ACCEPTED_SPEC, self._last_accepted)
 
     async def _reject(self, message: str) -> tuple[AgentToolOutcome, None]:
         await self._sync_accepted_copy()
         self.rejection = (
             f"{message}\nYour edits are kept. "
-            f"The server keeps the last accepted schedule at {WORKSPACE_LAST_ACCEPTED_SCHEDULE}. "
-            "Continue editing the draft or copy the last accepted schedule back to it. "
+            f"The server keeps the last accepted Schedule Spec at {WORKSPACE_LAST_ACCEPTED_SPEC}. "
+            "Continue editing the draft or copy the last accepted Schedule Spec back to it. "
             "The draft must pass trusted review before finishing or starting optimization."
         )
         return AgentToolOutcome(self.rejection, False), None
 
     async def review_if_changed(self) -> tuple[AgentToolOutcome, str | None] | None:
-        prefix = "Trusted schedule check after this command:"
+        prefix = "Trusted Schedule Spec check after this command:"
         read_problem = None
         try:
-            content = await self._sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self._max_bytes)
+            content = await self._sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=self._max_bytes)
         except SandboxFileSizeError:
             content, read_problem = b"", f"The candidate exceeds the {self._max_bytes}-byte schedule limit."
         except SandboxFileNotFoundError:
-            content, read_problem = b"", f"The working copy {WORKSPACE_SCHEDULE} no longer exists."
+            content, read_problem = b"", f"The working copy {WORKSPACE_SCHEDULE_SPEC} no longer exists."
         checked = (content, read_problem)
         if checked == self._last_checked:
             await self._sync_accepted_copy()
@@ -578,7 +580,7 @@ class _ScheduleCandidateTracker:
             return await self._reject(f"{prefix}\nThe candidate is not valid UTF-8.")
 
         # Validating or compiling a large schedule would otherwise block every session's stream.
-        review = await asyncio.to_thread(review_schedule_candidate, self._base_text, candidate, self._max_bytes)
+        review = await asyncio.to_thread(review_schedule_spec_candidate, self._base_text, candidate, self._max_bytes)
         logger.info(
             "sandbox intermediate candidate validated sandbox_id=%s valid=%s changed=%s",
             self._sandbox.sandbox_id,
@@ -591,7 +593,7 @@ class _ScheduleCandidateTracker:
         restored = review.proposal is not None and review.proposal.text != candidate
         if restored:
             candidate = review.proposal.text
-            await self._sandbox.write_file(WORKSPACE_SCHEDULE, candidate)
+            await self._sandbox.write_file(WORKSPACE_SCHEDULE_SPEC, candidate)
         self._last_accepted = candidate.encode("utf-8")
         self._last_checked = (self._last_accepted, None)
         await self._sync_accepted_copy()
@@ -615,7 +617,7 @@ class _ScheduleCandidateTracker:
             return (
                 AgentToolOutcome(
                     f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule."
-                    f"\nThe server updated {WORKSPACE_LAST_ACCEPTED_SCHEDULE}."
+                    f"\nThe server updated {WORKSPACE_LAST_ACCEPTED_SPEC}."
                     + (f"\n{REQUIRED_RULE_NOTICE}" if restored else ""),
                     True,
                 ),

@@ -35,7 +35,7 @@ from .test_ai_basic import AuthenticatedTestClient, ScriptedToolProvider, create
 
 def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
     # The fake sandbox starts only when a tool runs, so each turn reads one file.
-    read = [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))]
+    read = [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))]
     provider = ScriptedToolProvider(
         read, [TextDelta("Read")], read, [TextDelta("Read again")], read, [TextDelta("Removed")]
     )
@@ -44,16 +44,16 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
     with AuthenticatedTestClient(app) as client:
         session = create_session(client)
         uploaded = client.post(
-            f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"ward handover", "text/plain")}
+            f"/v1/sessions/{session}/uploads", files={"files": ("notes.txt", b"ward handover", "text/plain")}
         )
         assert uploaded.status_code == 201
         other = AuthenticatedTestClient(app)
-        assert other.post(f"/sessions/{session}/uploads", files={"files": ("x.txt", b"x")}).status_code == 404
-        files = client.get(f"/sessions/{session}/uploads").json()
+        assert other.post(f"/v1/sessions/{session}/uploads", files={"files": ("x.txt", b"x")}).status_code == 404
+        files = client.get(f"/v1/sessions/{session}/uploads").json()
         assert files == uploaded.json()
         assert len(files) == 1 and files[0]["filename"] == "notes.txt" and files[0]["bytes"] == 13
-        client.post(f"/sessions/{session}/messages", json={"message": "Read"})
-        client.post(f"/sessions/{session}/messages", json={"message": "Read again"})
+        client.post(f"/v1/sessions/{session}/messages", json={"message": "Read"})
+        client.post(f"/v1/sessions/{session}/messages", json={"message": "Read again"})
         path = f"/workspace/attachments/{files[0]['id']}-notes.txt"
         upload = provider.calls[0][1]
         assert path in upload["content"]
@@ -62,18 +62,18 @@ def test_followup_hydrates_retained_upload_and_removal_stops_hydration():
         assert provider.calls[2][-1]["content"] == "Read again"
         assert factory.created[0].files[path] == factory.created[1].files[path] == b"ward handover"
         assert factory.created[0].closed and factory.created[1].closed
-        assert other.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
+        assert other.delete(f"/v1/sessions/{session}/uploads/{files[0]['id']}").status_code == 404
         other.close()
-        assert client.delete(f"/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
-        assert client.get(f"/sessions/{session}/uploads").json() == []
-        client.post(f"/sessions/{session}/messages", json={"message": "Check removed file"})
+        assert client.delete(f"/v1/sessions/{session}/uploads/{files[0]['id']}").status_code == 204
+        assert client.get(f"/v1/sessions/{session}/uploads").json() == []
+        client.post(f"/v1/sessions/{session}/messages", json={"message": "Check removed file"})
         assert provider.calls[4][-2]["content"].startswith("[App event] The user removed a file")
         assert path in provider.calls[4][-2]["content"]
         assert provider.calls[4][-1]["content"] == "Check removed file"
         assert "Current date and time:" not in str(provider.calls[4])
         assert not any(name.startswith("/workspace/attachments/") for name in factory.created[2].files)
         preflight = client.options(
-            f"/sessions/{session}/uploads/example",
+            f"/v1/sessions/{session}/uploads/example",
             headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "DELETE"},
         )
         assert preflight.status_code == 200

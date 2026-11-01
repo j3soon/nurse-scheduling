@@ -51,14 +51,14 @@ class AiRequestLimitsMiddleware:
             await self._app(scope, receive, send)
             return
         path = get_route_path(scope).rstrip("/")
-        if scope["method"] != "OPTIONS" and (path == "/sessions" or path.startswith("/sessions/")):
+        if scope["method"] != "OPTIONS" and (path == "/v1/sessions" or path.startswith("/v1/sessions/")):
             try:
                 self._require_auth(Request(scope))
             except HTTPException as exc:
                 response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
                 await response(scope, receive, send)
                 return
-        is_upload = scope["method"] == "POST" and path.startswith("/sessions/") and path.endswith("/uploads")
+        is_upload = scope["method"] == "POST" and path.startswith("/v1/sessions/") and path.endswith("/uploads")
         max_bytes = self._upload_max_bytes if is_upload else self._json_max_bytes
         declared_length = Headers(scope=scope).get("content-length")
         try:

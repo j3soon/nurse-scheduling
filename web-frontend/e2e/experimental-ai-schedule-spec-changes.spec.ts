@@ -40,7 +40,7 @@ shiftTypes:
   groups: []
 preferences: []
 `;
-const CHECK = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
+const CHECK = 'Trusted Schedule Spec check after this command:\nThe candidate passed trusted server-side validation.';
 
 async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice = false) {
   const state = { sessionSchedule: '', refreshed: [] as string[], finishAnswer: () => {}, messages: 0, stops: 0 };
@@ -78,8 +78,8 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
       });
       return;
     }
-    if (request.url().endsWith('/sessions')) {
-      state.sessionSchedule = (request.postDataJSON() as { schedule_yaml: string }).schedule_yaml;
+    if (request.url().endsWith('/v1/sessions')) {
+      state.sessionSchedule = (request.postDataJSON() as { schedule_spec_yaml: string }).schedule_spec_yaml;
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
@@ -104,8 +104,8 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
       await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
-    if (request.url().endsWith('/schedule')) {
-      state.sessionSchedule = (request.postDataJSON() as { schedule_yaml: string }).schedule_yaml;
+    if (request.url().endsWith('/schedule_spec')) {
+      state.sessionSchedule = (request.postDataJSON() as { schedule_spec_yaml: string }).schedule_spec_yaml;
       state.refreshed.push(state.sessionSchedule);
       await route.fulfill({ status: 204, headers: corsHeaders });
       return;
@@ -131,15 +131,15 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
     publish('reasoning', { text: 'The ward has one nurse, so I will add another.' });
     publish('tool', {
       name: 'bash', arguments: '{"command":"python3 /tmp/edit.py"}', result: `exit_code: 0\n\n${CHECK}`, ok: true,
-      schedule_check: { ok: true, text: CHECK },
+      schedule_spec_check: { ok: true, text: CHECK },
     });
-    publish('schedule_change', { schedule_yaml: APPLIED_YAML });
+    publish('schedule_spec_change', { schedule_spec_yaml: APPLIED_YAML });
     publish('delta', { text: 'I added one nurse.' });
     // The backend adopts the schedule when the run commits, just before it reports done.
     const finish = () => {
-      publish('schedule_applied', {
-        schedule_yaml: APPLIED_YAML, diff: '- people.items[0]: added {"id": "Proposed Nurse"}',
-        replaced_queued_schedule: false,
+      publish('schedule_spec_applied', {
+        schedule_spec_yaml: APPLIED_YAML, diff: '- people.items[0]: added {"id": "Proposed Nurse"}',
+        replaced_queued_schedule_spec: false,
       });
       state.sessionSchedule = APPLIED_YAML;
       publish('done', {});
@@ -160,7 +160,7 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
 test('keeps an automatic provider retry notice in the same run across reload', async ({ page }) => {
   const state = await mockChangingBackend(page, false, true);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const notice = page.getByText('The AI provider timed out. Retrying in 2 s (attempt 2 of 5).');
   await expect(notice).toBeVisible();
@@ -168,7 +168,7 @@ test('keeps an automatic provider retry notice in the same run across reload', a
   await expect(notice).toBeVisible();
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
   state.finishAnswer();
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
   expect(state.messages).toBe(1);
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
@@ -181,17 +181,17 @@ test('applies the schedule a response finishes with as one undoable step', async
 
   await page.goto('/experimental-ai');
   await expect(page.getByText('Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them.')).toBeVisible();
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
   const answer = page.getByText('I added one nurse.', { exact: true }).locator('xpath=ancestor::article');
-  const notice = page.getByText('Applied to your schedule').locator('xpath=ancestor::article');
+  const notice = page.getByText('Applied to your Schedule Spec').locator('xpath=ancestor::article');
   await expect(answer.locator('time')).toHaveCount(1);
   await expect(notice.locator('time')).toHaveCount(0);
-  await page.getByText('Schedule check passed').click();
+  await page.getByText('Schedule Spec check passed').click();
   await expect(page.getByText('The candidate passed trusted server-side validation.').last()).toBeVisible();
-  await expect(page.getByText('schedule edit')).toBeVisible();
+  await expect(page.getByText('Schedule Spec edit')).toBeVisible();
   await page.getByText('bash', { exact: true }).click();
   await expect(page.getByRole('region', { name: 'Tool arguments' }).getByRole('heading', { name: /^Command · / })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Tool result' }).getByRole('heading', { name: /^Result · / })).toBeVisible();
@@ -208,14 +208,14 @@ test('applies the schedule a response finishes with as one undoable step', async
 test('applies the schedule only when the response finishes', async ({ page }) => {
   const state = await mockChangingBackend(page, true);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByText('schedule edit')).toBeVisible();
-  await expect(page.getByText('Applied to your schedule')).toBeHidden();
+  await expect(page.getByText('Schedule Spec edit')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeHidden();
 
   state.finishAnswer();
 
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeVisible();
 });
@@ -224,11 +224,11 @@ test('sends the applied schedule to the session before the next question', async
   const state = await mockChangingBackend(page);
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
 
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who is on shift?');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Who is on shift?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   // The browser regenerates the applied schedule in its own format before the next question.
@@ -245,11 +245,11 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
   await expect(page.getByText('1. Before response')).toBeVisible();
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(page.getByText('schedule edit')).toBeVisible();
+  await expect(page.getByText('Schedule Spec edit')).toBeVisible();
   // Sending keeps focus in the composer, where Ctrl+Z is text undo.
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).blur();
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).blur();
   await page.keyboard.press('Control+z');
   state.finishAnswer();
   await expect(page.getByText(/replaced changes made during this response/)).toBeVisible();
@@ -258,7 +258,7 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
   await page.keyboard.press('Control+z');
   await expect.poll(() => page.evaluate(() => {
     const saved = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
-    return { receipt: saved.appliedScheduleRuns?.['answer-0'], pending: saved.pendingRequest };
+    return { receipt: saved.appliedScheduleSpecRuns?.['answer-0'], pending: saved.pendingRequest };
   })).toEqual({ receipt: expect.any(String), pending: null });
   // Request older output again to verify that run identity, rather than its cursor or YAML hash,
   // prevents a completed result from replacing the schedule restored by Undo.
@@ -269,7 +269,7 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
     sessionStorage.setItem(key, JSON.stringify(saved));
   });
   await page.reload();
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
   await page.goto('/people');
   await expect(page.getByText('1. Proposed Nurse')).toBeHidden();
   await expect(page.getByText('1. Before response')).toBeHidden();
@@ -282,7 +282,7 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await mockChangingBackend(page);
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Add a nurse.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   const reasoning = page.getByText('The ward has one nurse, so I will add another.');
@@ -299,9 +299,9 @@ test('keeps reasoning and tool detail out of the way until asked for', async ({ 
   await page.getByRole('checkbox', { name: 'Show reasoning' }).uncheck();
   await page.getByRole('checkbox', { name: 'Show tool activity' }).uncheck();
   await expect(page.getByText(/^Reasoning ·/)).toBeHidden();
-  await expect(page.getByText('Schedule check passed')).toBeVisible();
+  await expect(page.getByText('Schedule Spec check passed')).toBeVisible();
   // The applied change stays visible, because it changed the user's schedule.
-  await expect(page.getByText('Applied to your schedule')).toBeVisible();
+  await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
   await page.reload();
   await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).not.toBeChecked();
 });

@@ -57,7 +57,7 @@ EXPECTED = {
 }
 FILLER = ("Nonessential audit text. This paragraph adds no constraints or requested changes.\n" * 130)[:9600]
 FIRST = (
-    "Do not change the current schedule or start optimization. Remember these planning constraints: "
+    "Do not change the current Schedule Spec or start optimization. Remember these planning constraints: "
     "P1 must never work nights. P2 must never work weekends. Preserve the planning dates "
     "2031-04-01 and 2031-04-02 as notes, without applying them to the schedule. "
     f"Use a tool to write the text TEMPORARY_NOTE_731 to {NOTE}. "
@@ -136,7 +136,9 @@ async def run_live_case(name, settings, controls, output):
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            session = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             owner = client.cookies[basic.OWNER_COOKIE]
             controls[session] = control
             report["session_id"] = session
@@ -147,7 +149,7 @@ async def run_live_case(name, settings, controls, output):
             async def select(model, reasoning="none"):
                 options = {option["id"] for option in models[model]["reasoning_options"]}
                 response = await client.put(
-                    f"/sessions/{session}/model-selection",
+                    f"/v1/sessions/{session}/model-selection",
                     json={
                         "model": model,
                         "reasoning": reasoning if reasoning in options else "default",
@@ -157,7 +159,7 @@ async def run_live_case(name, settings, controls, output):
 
             async def submit(question, message_id, *, wait=True):
                 response = await client.post(
-                    f"/sessions/{session}/messages", json={"message": question, "message_id": message_id}
+                    f"/v1/sessions/{session}/messages", json={"message": question, "message_id": message_id}
                 )
                 assert response.status_code == 200, response.text[:500]
                 events = basic.parse_sse(response.text)
@@ -186,7 +188,7 @@ async def run_live_case(name, settings, controls, output):
             )
             if name == "manual":
                 calls_before = len(report["requests"])
-                short = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-short"})
+                short = await client.post(f"/v1/sessions/{session}/compact", json={"message_id": "manual-short"})
                 assert short.status_code == 202, short.text
                 while app.state.runs.busy(session):
                     await asyncio.sleep(0.02)
@@ -200,12 +202,12 @@ async def run_live_case(name, settings, controls, output):
                     "recent-context",
                 )
                 before = len(factory.created)
-                receipt = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-summary"})
+                receipt = await client.post(f"/v1/sessions/{session}/compact", json={"message_id": "manual-summary"})
                 assert receipt.status_code == 202, receipt.text
                 while app.state.runs.busy(session):
                     await asyncio.sleep(0.02)
                 assert len(factory.created) == before, "Manual compaction created a sandbox"
-                duplicate = await client.post(f"/sessions/{session}/compact", json={"message_id": "manual-summary"})
+                duplicate = await client.post(f"/v1/sessions/{session}/compact", json={"message_id": "manual-summary"})
                 assert duplicate.json() == receipt.json()
                 assert any(
                     event["type"] == "compaction_end"
@@ -215,7 +217,7 @@ async def run_live_case(name, settings, controls, output):
                 )
             if name == "model-lock":
                 other = next((model for model in models if model != primary), "different-model")
-                response = await client.put(f"/sessions/{session}/model-selection", json={"model": other})
+                response = await client.put(f"/v1/sessions/{session}/model-selection", json={"model": other})
                 assert response.status_code == 409, response.text
                 await select(primary, efforts[-1])
             if name == "cancellation":
@@ -223,7 +225,7 @@ async def run_live_case(name, settings, controls, output):
                 pending = asyncio.create_task(submit(FOLLOW_UP + FILLER, "cancel", wait=False))
                 try:
                     await asyncio.wait_for(control["summary_started"].wait(), timeout=90)
-                    response = await client.post(f"/sessions/{session}/stop")
+                    response = await client.post(f"/v1/sessions/{session}/stop")
                     assert response.status_code == 202
                     stopped = await pending
                     assert stopped[-1][0] == "stopped", stopped[-1]
@@ -270,7 +272,7 @@ async def run_live_case(name, settings, controls, output):
                 factory.created
             )
             assert all(not sandbox["note_exists_before_hydration"] for sandbox in factory.created)
-            assert app.state.session_store.get(session).schedule_yaml == basic.schedule_yaml()
+            assert app.state.session_store.get(session).schedule_spec_yaml == basic.schedule_spec_yaml()
             frames = await read_events(app, session, owner, until="session_reset", reset=True)
             reset = next(data for _, kind, data in frames if kind == "session_reset")
             assert any(event["type"] == "compaction_end" and event["data"]["success"] for event in reset["events"])

@@ -1,7 +1,7 @@
 {
   "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
   "_comment": "This test is mostly AI generated.",
-  "schema_version": 1,
+  "schema_version": 2,
   "session_id": "10000000-0000-4000-8000-000000000001",
   "snapshot_at": 1789693210200,
   "frontend_version": "v0.4.3",
@@ -99,7 +99,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000001"
       },
       "occurred_at": 1789693200200
@@ -197,7 +197,7 @@
         "ok": true,
         "tool_call_id": "1-edit-9",
         "run_id": "00000000-0000-4000-8000-000000000001",
-        "schedule_check": {
+        "schedule_spec_check": {
           "ok": true,
           "text": "Trusted schedule check after this command:\nThe candidate passed trusted server-side validation and differs from the base schedule."
         }
@@ -205,9 +205,9 @@
       "occurred_at": 1789693202000
     },
     {
-      "type": "schedule_change",
+      "type": "schedule_spec_change",
       "data": {
-        "schedule_yaml": "description: Updated\n",
+        "schedule_spec_yaml": "description: Updated\n",
         "run_id": "00000000-0000-4000-8000-000000000001"
       },
       "occurred_at": 1789693202200
@@ -320,9 +320,9 @@
       "occurred_at": 1789693204200
     },
     {
-      "type": "schedule_applied",
+      "type": "schedule_spec_applied",
       "data": {
-        "schedule_yaml": "description: Updated\n",
+        "schedule_spec_yaml": "description: Updated\n",
         "base_sha256": "fedf0bd8e4ebaafbda06127d4f04eb40046f340af719cdeb8ac0caca3cd51cae",
         "sha256": "8666dcce7962f15ebe555140282ccf4e70b04bb8be53b303c6fced9d853a2a7e",
         "diff": "- description: Original -> Updated",
@@ -384,7 +384,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000002"
       },
       "occurred_at": 1789693205200
@@ -449,7 +449,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000003"
       },
       "occurred_at": 1789693206400
@@ -507,7 +507,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000004"
       },
       "occurred_at": 1789693207400
@@ -560,7 +560,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000005"
       },
       "occurred_at": 1789693208400
@@ -632,7 +632,7 @@
             "content": "[Current status]\nCheck the original names."
           }
         ],
-        "schedule_yaml": "description: Original\n",
+        "schedule_spec_yaml": "description: Original\n",
         "run_id": "00000000-0000-4000-8000-000000000006"
       },
       "occurred_at": 1789693209600

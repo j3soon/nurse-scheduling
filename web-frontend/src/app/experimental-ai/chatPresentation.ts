@@ -107,7 +107,7 @@ export function transcriptConversation(messages: ChatMessage[]): TranscriptMessa
 // Derive bubbles for display. Keep saved messages and execution ownership intact.
 export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
   if (message.role !== 'assistant' || !message.activity?.some(entry => (
-    entry.kind === 'notice' || entry.kind === 'schedule-applied' || entry.kind === 'compaction'
+    entry.kind === 'notice' || entry.kind === 'schedule-spec-applied' || entry.kind === 'compaction'
   ))) return [message];
   const { activity, content, createdAt, responseStartedAt, responseCompletedAt, status, failureReason,
     truncated, modelSelection, providerCalls, costSummary, downloadId, unsentFiles, ...base } = message;
@@ -133,7 +133,7 @@ export function transcriptMessages(message: ChatMessage): TranscriptMessage[] {
     } else if (entry.kind === 'notice' && entry.text.startsWith('Sent in future model context: ')) {
       parts.push({ ...base, role: 'user', source: 'app', title: 'Context notice',
         content: entry.text.slice('Sent in future model context: '.length), presentation: 'context' });
-    } else append(entry, entry.kind === 'notice' || entry.kind === 'schedule-applied' ? 'notice' : undefined);
+    } else append(entry, entry.kind === 'notice' || entry.kind === 'schedule-spec-applied' ? 'notice' : undefined);
   }
   if (status === 'pending' && parts.at(-1)?.presentation && !activity!.some(entry => (
     entry.kind === 'compaction' && (entry.state === 'running' || entry.reason === 'manual')
@@ -178,9 +178,9 @@ export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response'
   }[entry.state]) + (entry.characters === undefined ? ''
     : `${(entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : ''} · ${formatCharacterCount(entry.characters)} characters`);
   if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
-  if (entry.kind === 'schedule-change') return 'schedule edit';
-  if (entry.kind === 'schedule-check') return entry.ok ? 'Schedule check passed' : 'Schedule check failed';
-  if (entry.kind === 'schedule-applied') return entry.browserApplied === false ? 'Saved in this chat' : 'Applied to your schedule';
+  if (entry.kind === 'schedule-spec-change') return 'Schedule Spec edit';
+  if (entry.kind === 'schedule-spec-check') return entry.ok ? 'Schedule Spec check passed' : 'Schedule Spec check failed';
+  if (entry.kind === 'schedule-spec-applied') return entry.browserApplied === false ? 'Saved in this chat' : 'Applied to your Schedule Spec';
   if (entry.argumentsCharacters !== undefined) {
     const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
     return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;
@@ -190,7 +190,7 @@ export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response'
   return entry.ok ? entry.name : `${entry.name} · failed`;
 }
 
-export function scheduleChangeLines(beforeText: string, afterText: string): { removed: string[]; added: string[] } {
+export function scheduleSpecChangeLines(beforeText: string, afterText: string): { removed: string[]; added: string[] } {
   const before = beforeText.split('\n');
   const after = afterText.split('\n');
   let prefix = 0;

@@ -31,7 +31,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_revision
+from .agent_session import AcceptedMessage, AgentSession, RunCompletion, schedule_spec_revision
 from .config import AiSettings
 from .context import history_chars, project_history, projected_history, upload_event
 from .history import EntryRow
@@ -40,7 +40,7 @@ from .session_event_stream import SessionEventStream
 from .transcript import AgentMessage, entry_text
 from .workspace import SandboxAttachment, attachment_path
 
-__all__ = ["SessionStore", "schedule_revision"]
+__all__ = ["SessionStore", "schedule_spec_revision"]
 
 SESSION_RETENTION_LIMIT_MESSAGE = "The AI service has reached its session text and file retention limit."
 ARCHIVE_LIMIT_MESSAGE = "This chat has reached its stored file limit. Start a new chat to save more files."
@@ -65,9 +65,9 @@ def _receipt_bytes(receipt: AcceptedMessage) -> int:
 
 def _session_bytes(session: "AgentSession") -> int:
     """Return the text and file bytes one session retains."""
-    total = _text_bytes(session.schedule_yaml)
-    if session.queued_schedule is not None:
-        total += _text_bytes(session.queued_schedule.schedule_yaml)
+    total = _text_bytes(session.schedule_spec_yaml)
+    if session.queued_schedule_spec is not None:
+        total += _text_bytes(session.queued_schedule_spec.schedule_spec_yaml)
     total += sum(_text_bytes(entry_text(entry)) for entry in session.transcript)
     total += sum(_receipt_bytes(receipt) for receipt in session.accepted_messages.values())
     total += sum(_text_bytes(text) for text in session.queued_steering)
@@ -215,19 +215,19 @@ class SessionStore:
                 "This chat reached its defensive history limit. Compact the context, or export it and start a new chat.",
             )
 
-    def create(self, owner_token: str, schedule_yaml: str) -> AgentSession:
+    def create(self, owner_token: str, schedule_spec_yaml: str) -> AgentSession:
         """Create a session after pruning expired entries."""
         self._prune_expired()
         self._make_room()
         if len(self._sessions) >= self._settings.max_sessions:
             raise HTTPException(status_code=429, detail="The AI service has reached its session limit.")
-        self._require_capacity(_text_bytes(schedule_yaml))
+        self._require_capacity(_text_bytes(schedule_spec_yaml))
         session = AgentSession(
             id=str(uuid4()),
             owner_token=owner_token,
             expires_at=time.monotonic() + self._settings.session_ttl_seconds,
-            schedule_yaml=schedule_yaml,
-            revision=schedule_revision(schedule_yaml),
+            schedule_spec_yaml=schedule_spec_yaml,
+            revision=schedule_spec_revision(schedule_spec_yaml),
             event_stream=self._event_stream,
             entry_log=self._on_entry,
         )
@@ -281,8 +281,8 @@ class SessionStore:
         )
         self._require_capacity(_session_bytes(session))
         self._sessions[session_id] = session
-        # The restart ended the run that held a queued schedule update.
-        session.apply_queued_schedule()
+        # The restart ended the run that held a queued Schedule Spec update.
+        session.apply_queued_schedule_spec()
         self._recount(session)
         return session
 
@@ -340,7 +340,7 @@ class SessionStore:
         self,
         session_id: str,
         entries: Sequence[AgentMessage],
-        schedule_yaml: str | None = None,
+        schedule_spec_yaml: str | None = None,
         *,
         snapshot: RunSnapshot,
     ) -> RunCompletion:
@@ -349,7 +349,7 @@ class SessionStore:
         session = self._sessions.get(session_id)
         if session is None:
             return RunCompletion(False, False)
-        completion = session.finish_run(snapshot, entries, schedule_yaml)
+        completion = session.finish_run(snapshot, entries, schedule_spec_yaml)
         if completion.run_saved:
             projected_bytes = self._retained_bytes - self._session_bytes[session.id] + _session_bytes(session)
             if projected_bytes > self._settings.max_session_bytes:
@@ -394,29 +394,29 @@ class SessionStore:
         self._charge(session, -sum(_text_bytes(text) for _message_id, text in queued))
         return queued
 
-    def update_schedule(
+    def update_schedule_spec(
         self,
         session_id: str,
         owner_token: str | None,
-        schedule_yaml: str,
+        schedule_spec_yaml: str,
         *,
         compared: tuple[str, bool] | None = None,
     ) -> None:
-        """Replace the schedule snapshot, or queue the update until the active run ends."""
+        """Replace the Schedule Spec snapshot, or queue the update until the active run ends."""
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         if session.active:
             # The run keeps its schedule, and the latest update waits beside it.
-            replaced = session.queued_schedule.schedule_yaml if session.queued_schedule else ""
-            added = "" if schedule_yaml == session.schedule_yaml else schedule_yaml
-        elif session.schedule_yaml == schedule_yaml:
+            replaced = session.queued_schedule_spec.schedule_spec_yaml if session.queued_schedule_spec else ""
+            added = "" if schedule_spec_yaml == session.schedule_spec_yaml else schedule_spec_yaml
+        elif session.schedule_spec_yaml == schedule_spec_yaml:
             return
         else:
-            replaced, added = session.schedule_yaml, schedule_yaml
+            replaced, added = session.schedule_spec_yaml, schedule_spec_yaml
         additional_bytes = _text_bytes(added) - _text_bytes(replaced)
         if additional_bytes > 0:
             self._require_capacity(additional_bytes)
-        session.update_schedule(schedule_yaml, compared)
+        session.update_schedule_spec(schedule_spec_yaml, compared)
         self._recount(session)
 
     def retain_uploads(
@@ -591,10 +591,10 @@ class SessionStore:
             self._charge(session, -len(content or b""))
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
 
-    def apply_queued_schedule(self, session_id: str) -> None:
-        """Apply a schedule update that arrived during the session's finished run."""
+    def apply_queued_schedule_spec(self, session_id: str) -> None:
+        """Apply a Schedule Spec update that arrived during the session's finished run."""
         session = self._sessions.get(session_id)
-        if session is not None and session.apply_queued_schedule():
+        if session is not None and session.apply_queued_schedule_spec():
             self._recount(session)
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None:

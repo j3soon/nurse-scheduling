@@ -53,13 +53,13 @@ for (const phone of [false, true]) {
         replayed = true;
         const events = [
           ['run_start', { trigger: 'optimization' }],
-          ['schedule_applied', { schedule_yaml: 'description: Changed while away\n', diff: 'Changes from earlier work', replaced_queued_schedule: false }],
+          ['schedule_spec_applied', { schedule_spec_yaml: 'description: Changed while away\n', diff: 'Changes from earlier work', replaced_queued_schedule_spec: false }],
           ['done', {}],
         ];
         return route.fulfill({ contentType: 'text/event-stream', body: events.map(([type, data], index) =>
           `id: ${index + 6}\nevent: ${type}\ndata: ${JSON.stringify({ ...data as object, run_id: 'away-run' })}\n\n`).join('') });
       }
-      if (/\/sessions\/[^/]+$/.test(path)) return json({ expires_in_seconds: 2592000 });
+      if (/\/v1\/sessions\/[^/]+$/.test(path)) return json({ expires_in_seconds: 2592000 });
       return route.fulfill({ status: 404 });
     });
     const baseURL = testInfo.project.use.baseURL!;
@@ -72,7 +72,7 @@ for (const phone of [false, true]) {
         conversation: {
           sessionId: `session-${index}`, endpoint: '/ai', lastActivityAt: now - index * 60000,
           expiresAt: now + 2592000000, retentionSeconds: 2592000, sessionEventId: 5,
-          syncedSchedule: `description: ${ward}\n`,
+          syncedScheduleSpec: `description: ${ward}\n`,
           messages: [{ id: 'question', role: 'user', content: `Review ${ward}` },
             { id: 'answer', role: 'assistant', content: `Earlier answer for ${ward}.`, activity: [{ kind: 'response', text: `Earlier answer for ${ward}.` }] }],
         },
@@ -86,15 +86,15 @@ for (const phone of [false, true]) {
     await history.getByRole('button', { name: /^Review Ward A/ }).click();
     await expect(page.getByLabel('AI model')).toHaveValue('fast');
     await expect(page.getByLabel('AI model')).toBeDisabled();
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue this chat.');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue this chat.');
     await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).clear();
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).clear();
     await expect(page.getByText('Earlier answer for Ward A.')).toBeVisible();
     await expect.poll(() => page.evaluate(() => (
       JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!).appVersion
     ))).toBe(process.env.APP_VERSION_OVERRIDE);
-    await expect(page.getByLabel('Schedule data status')).toContainText('differs');
-    await expect(page.getByText(/Browser schedule data was kept unchanged/)).toBeVisible();
+    await expect(page.getByLabel('Schedule Spec status')).toContainText('differs');
+    await expect(page.getByText(/Browser Schedule Spec was kept unchanged/)).toBeVisible();
     await expect(page.getByText('Saved in this chat')).toBeVisible();
     await expect(page.getByRole('complementary', { name: 'Session files' })).toBeVisible();
     expect(writes).toEqual([]);

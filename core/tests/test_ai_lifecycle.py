@@ -27,7 +27,7 @@ import pytest
 from fastapi import HTTPException
 
 from nurse_scheduling.ai.app import OWNER_COOKIE, SessionStore
-from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY, SCHEDULE_CHANGED_EVENT
+from nurse_scheduling.ai.context import ABORTED_RESPONSE_HISTORY, SCHEDULE_SPEC_CHANGED_EVENT
 from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.lifecycle import SessionRuns
 from nurse_scheduling.ai.provider import ProviderError, TextDelta
@@ -35,7 +35,7 @@ from nurse_scheduling.ai.session_event_stream import SessionEventStream
 from nurse_scheduling.ai.sessions import _session_bytes
 from nurse_scheduling.ai.transcript import AppEventEntry, AssistantMessage, UserMessage
 
-from .ai_test_helper import base_schedule_payload, schedule_yaml
+from .ai_test_helper import base_schedule_payload, schedule_spec_yaml
 from .test_ai_basic import AI_AUTH_HEADERS, FakeProvider, create_test_app, make_settings
 
 
@@ -52,8 +52,10 @@ def test_setup_failure_releases_session_and_the_next_request_can_run(monkeypatch
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
         ) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            response = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
             assert "event: error" in response.text
             assert not app.state.runs.busy(session_id)
             session = app.state.session_store._sessions[session_id]
@@ -65,7 +67,7 @@ def test_setup_failure_releases_session_and_the_next_request_can_run(monkeypatch
                 AppEventEntry(ABORTED_RESPONSE_HISTORY),
             ]
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original)
-            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+            response = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Retry"})
             assert "event: done" in response.text
             assert provider.calls[0][1:3] == [
                 {"role": "user", "content": "Question"},
@@ -91,7 +93,7 @@ def test_retirement_cancels_the_owner_and_queued_followups_without_recreating_ev
 
         app = create_test_app(settings=make_settings(), provider=Provider())
         store = app.state.session_store
-        session = store.create("owner", schedule_yaml())
+        session = store.create("owner", schedule_spec_yaml())
         callback = app.state.session_optimizer._on_completion
         active = asyncio.create_task(callback(session.id, "Review the optimizer result.", None))
         await started.wait()
@@ -214,7 +216,7 @@ def test_shutdown_joins_cleanup_and_stops_accepting_runs():
 
 def test_stale_turn_cannot_release_or_commit_over_its_successor():
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     old = store.begin(session.id, "owner")
     store.abort(session.id, old)
     new = store.begin(session.id, "owner")
@@ -228,62 +230,62 @@ def test_stale_turn_cannot_release_or_commit_over_its_successor():
 def _edited_schedule(description: str) -> str:
     payload = base_schedule_payload()
     payload["description"] = description
-    return schedule_yaml(payload)
+    return schedule_spec_yaml(payload)
 
 
 @pytest.mark.parametrize("ending", ["answer", "stop"])
 def test_schedule_update_during_a_run_applies_after_the_run(ending):
     store = SessionStore(make_settings())
-    original = schedule_yaml()
+    original = schedule_spec_yaml()
     session = store.create("owner", original)
     turn = store.begin(session.id, "owner")
-    store.update_schedule(session.id, "owner", _edited_schedule("Discarded"))
-    store.update_schedule(session.id, "owner", original)
-    assert session.queued_schedule is None
+    store.update_schedule_spec(session.id, "owner", _edited_schedule("Discarded"))
+    store.update_schedule_spec(session.id, "owner", original)
+    assert session.queued_schedule_spec is None
     edited = _edited_schedule("Edited")
-    store.update_schedule(session.id, "owner", edited)
-    assert session.schedule_yaml == original
+    store.update_schedule_spec(session.id, "owner", edited)
+    assert session.schedule_spec_yaml == original
     if ending == "answer":
         assert store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], snapshot=turn).run_saved
     else:
         store.abort(session.id, turn)
-    store.apply_queued_schedule(session.id)
+    store.apply_queued_schedule_spec(session.id)
 
-    assert session.schedule_yaml == edited and session.queued_schedule is None
+    assert session.schedule_spec_yaml == edited and session.queued_schedule_spec is None
     run_entries = [UserMessage("question"), AssistantMessage("answer")] if ending == "answer" else []
-    assert session.transcript == [*run_entries, AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    assert session.transcript == [*run_entries, AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)]
     assert store.retained_bytes == _session_bytes(session)
 
 
 def test_a_run_schedule_replaces_an_update_queued_during_the_run():
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     turn = store.begin(session.id, "owner")
-    store.update_schedule(session.id, "owner", _edited_schedule("Browser"))
+    store.update_schedule_spec(session.id, "owner", _edited_schedule("Browser"))
     applied = _edited_schedule("Assistant")
 
     completion = store.finish(session.id, [UserMessage("question"), AssistantMessage("answer")], applied, snapshot=turn)
-    assert completion.run_saved and completion.replaced_queued_schedule
-    store.apply_queued_schedule(session.id)
+    assert completion.run_saved and completion.replaced_queued_schedule_spec
+    store.apply_queued_schedule_spec(session.id)
 
-    assert session.schedule_yaml == applied and session.queued_schedule is None
+    assert session.schedule_spec_yaml == applied and session.queued_schedule_spec is None
     assert session.transcript == [UserMessage("question"), AssistantMessage("answer")]
 
 
 def test_restore_applies_a_schedule_update_queued_before_the_restart():
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     store.begin(session.id, "owner")
     edited = _edited_schedule("Edited")
-    store.update_schedule(session.id, "owner", edited)
+    store.update_schedule_spec(session.id, "owner", edited)
     owner, expires_at, state = store.recovery_state(session.id)
 
     restored = SessionStore(make_settings()).restore(
         session.id, owner, json.loads(json.dumps(state)), expires_at, entries=[], next_entry_seq=0
     )
 
-    assert restored.schedule_yaml == edited and restored.queued_schedule is None
-    assert restored.transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    assert restored.schedule_spec_yaml == edited and restored.queued_schedule_spec is None
+    assert restored.transcript == [AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)]
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
@@ -307,16 +309,20 @@ def test_stop_during_history_start_waits_for_history_then_releases_the_session(m
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
         ) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
             if background:
                 running = asyncio.create_task(
                     app.state.session_optimizer._on_completion(session_id, "Review the optimizer result.", None)
                 )
             else:
-                running = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Ask"}))
+                running = asyncio.create_task(
+                    client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Ask"})
+                )
             await entered.wait()
-            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
-            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/stop")).status_code == 202
             assert app.state.runs.busy(session_id)
             release.set()
             await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), timeout=1)
@@ -349,7 +355,7 @@ def test_terminal_background_event_is_published_only_after_history_cleanup(monke
             settings=make_settings(history_postgres_url="test"),
             provider=FakeProvider([[ProviderError("private failure")]]) if failed else FakeProvider(),
         )
-        session = app.state.session_store.create("owner", schedule_yaml())
+        session = app.state.session_store.create("owner", schedule_spec_yaml())
         running = asyncio.create_task(
             app.state.session_optimizer._on_completion(session.id, "Review the optimizer result.", None)
         )
@@ -389,7 +395,7 @@ def test_stop_during_completed_history_write_keeps_completed_outcome(monkeypatch
 
         monkeypatch.setattr(ChatHistory, "write", write)
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
-        session = app.state.session_store.create("owner", schedule_yaml())
+        session = app.state.session_store.create("owner", schedule_spec_yaml())
         running = asyncio.create_task(
             app.state.session_optimizer._on_completion(session.id, "Review the optimizer result.", None)
         )
@@ -440,7 +446,7 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
                 yield TextDelta("answer.")
 
         app = create_test_app(settings=make_settings(), provider=Provider())
-        session = app.state.session_store.create("owner", schedule_yaml())
+        session = app.state.session_store.create("owner", schedule_spec_yaml())
         observed = []
         unsubscribe = session.subscribe(lambda event: observed.append(event))
 
@@ -455,7 +461,7 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
                     if f"event: {event_type}\n".encode() in b"".join(chunks):
                         await received.put({"type": "http.disconnect"})
 
-            path = f"/sessions/{session.id}/events"
+            path = f"/v1/sessions/{session.id}/events"
             scope = {
                 "type": "http",
                 "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -488,11 +494,11 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
                 headers={**AI_AUTH_HEADERS, "Accept": "application/json", "Cookie": f"{OWNER_COOKIE}=owner"},
             ) as client,
         ):
-            response = await client.post(f"/sessions/{session.id}/messages", json={"message": "Explain"})
+            response = await client.post(f"/v1/sessions/{session.id}/messages", json={"message": "Explain"})
             assert response.status_code == 202
             run_id = response.json()["run_id"]
             assert session.active
-            refused = await client.post(f"/sessions/{session.id}/messages", json={"message": "Again"})
+            refused = await client.post(f"/v1/sessions/{session.id}/messages", json={"message": "Again"})
             assert refused.status_code == 409
             first = await read_until("delta")
             cursor = max(int(line[4:]) for line in first.splitlines() if line.startswith("id: "))
@@ -538,7 +544,7 @@ def test_message_ack_and_get_replay_keep_execution_independent_of_readers():
 def test_retired_session_does_not_recreate_its_event_history():
     async def exercise():
         app = create_test_app(settings=make_settings(), provider=FakeProvider())
-        session = app.state.session_store.create("owner", schedule_yaml())
+        session = app.state.session_store.create("owner", schedule_spec_yaml())
         session.publish({"type": "done", "run_id": "old"})
         reader = session.events(1)
         waiting = asyncio.create_task(anext(reader, None))
@@ -655,8 +661,10 @@ def test_optimizer_completion_can_retry_and_review_again_without_a_user_turn():
                 headers={**AI_AUTH_HEADERS, "Accept": "application/json"},
             ) as client,
         ):
-            sid = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            response = await client.post(f"/sessions/{sid}/messages", json={"message": "Prepare and check the roster."})
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()["id"]
+            response = await client.post(
+                f"/v1/sessions/{sid}/messages", json={"message": "Prepare and check the roster."}
+            )
             assert response.status_code == 202
             async with asyncio.timeout(5):
                 while len(audits) < 2 or app.state.runs.busy(sid):
@@ -678,7 +686,7 @@ def test_analysis_commits_with_its_run_and_is_counted_in_retention():
     from nurse_scheduling.ai.workspace import AgentAnalysis
 
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     before = store.retained_bytes
     snapshot = store.begin(session.id, "owner")
     snapshot.analysis = AgentAnalysis("a" * 64, b"confirmed source mapping")
@@ -688,7 +696,7 @@ def test_analysis_commits_with_its_run_and_is_counted_in_retention():
     next_run = store.begin(session.id, "owner")
     assert next_run.analysis is session.analysis
     store.abort(session.id, next_run)
-    store.update_schedule(session.id, "owner", schedule_yaml() + "\n")
+    store.update_schedule_spec(session.id, "owner", schedule_spec_yaml() + "\n")
     assert session.analysis is None
 
 
@@ -696,7 +704,7 @@ def test_aborted_or_stale_runs_do_not_replace_retained_analysis():
     from nurse_scheduling.ai.workspace import AgentAnalysis
 
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     original = store.begin(session.id, "owner")
     original.analysis = AgentAnalysis("a" * 64, b"original")
     store.finish(session.id, [], snapshot=original)
@@ -706,18 +714,18 @@ def test_aborted_or_stale_runs_do_not_replace_retained_analysis():
     successor = store.begin(session.id, "owner")
     assert not store.finish(session.id, [], snapshot=aborted).run_saved
     assert session.analysis.content == b"original"
-    store.update_schedule(session.id, "owner", schedule_yaml() + "\n")
+    store.update_schedule_spec(session.id, "owner", schedule_spec_yaml() + "\n")
     successor.analysis = AgentAnalysis("c" * 64, b"previous schedule")
     assert store.finish(session.id, [], snapshot=successor).run_saved
-    # The schedule update queued during the run invalidates notes about the previous schedule.
-    store.apply_queued_schedule(session.id)
+    # The Schedule Spec update queued during the run invalidates notes about the previous schedule.
+    store.apply_queued_schedule_spec(session.id)
     assert session.analysis is None
 
 
 def test_optional_analysis_is_dropped_when_the_session_budget_is_full():
     from nurse_scheduling.ai.workspace import AgentAnalysis
 
-    source = schedule_yaml()
+    source = schedule_spec_yaml()
     store = SessionStore(make_settings(max_session_bytes=len(source.encode()) + 10))
     session = store.create("owner", source)
     snapshot = store.begin(session.id, "owner")
@@ -730,7 +738,7 @@ def test_optional_analysis_is_dropped_when_the_session_budget_is_full():
 def test_optional_analysis_does_not_block_new_session_input():
     from nurse_scheduling.ai.workspace import AgentAnalysis
 
-    source = schedule_yaml()
+    source = schedule_spec_yaml()
     store = SessionStore(make_settings(max_session_bytes=len(source.encode()) + 150))
     session = store.create("owner", source)
     snapshot = store.begin(session.id, "owner")

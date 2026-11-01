@@ -36,7 +36,7 @@ from nurse_scheduling.ai.result_context import MAX_REQUEST_AUDIT_BYTES, build_re
 from nurse_scheduling.ai.workspace import INSPECTION_HELPERS, REFERENCE_ATTACHMENT_TOOLS, inspection_helper_catalog
 
 from .ai_eval.optimizer_fixtures import FIXTURE, RESULT_SOURCES, completion_result
-from .ai_test_helper import parse_schedule, schedule_yaml
+from .ai_test_helper import parse_schedule, schedule_spec_yaml
 
 
 @pytest.fixture
@@ -86,7 +86,7 @@ def test_summary_reports_when_weight_tiers_exceed_limit(audit):
     request = next(pref for pref in payload["preferences"] if pref["type"] == "shift request")
     required = [pref for pref in payload["preferences"] if pref["type"] != "shift request"]
     payload["preferences"] = required + [{**request, "weight": weight} for weight in range(1, 101)]
-    assert build_request_audit(schedule_yaml(payload), path.read_bytes()) == {
+    assert build_request_audit(schedule_spec_yaml(payload), path.read_bytes()) == {
         "unavailable": "The automatic request audit exceeds the summary size limit."
     }
 
@@ -366,7 +366,7 @@ def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit
     for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None]):
         person["history"] = history
     source = tmp_path / "source.yaml"
-    source.write_bytes(schedule_yaml(payload).encode())
+    source.write_bytes(schedule_spec_yaml(payload).encode())
     context = build_result_context(source.read_text(encoding="utf-8"))
     result = summarize_roster(path, context, context["source_sha256"], include_history=True, source=source)
     alex, mira, kai = result["statistics"]
@@ -467,7 +467,7 @@ def test_history_only_streak_does_not_inflate_scheduled_work_run(audit, tmp_path
     payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
     payload["people"]["items"][0]["history"] = ["N"] * 10
     source = tmp_path / "source.yaml"
-    source.write_bytes(schedule_yaml(payload).encode())
+    source.write_bytes(schedule_spec_yaml(payload).encode())
     context = build_result_context(source.read_text(encoding="utf-8"))
     row = summarize_roster(path, context, context["source_sha256"], source=source, include_history=True)["statistics"][
         0

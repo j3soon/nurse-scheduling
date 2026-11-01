@@ -53,20 +53,20 @@ def test_pi_read_schema_and_defaults_match_the_pinned_source():
 
 
 def test_pi_read_input_accepts_optional_ranges_and_ignores_extra_properties():
-    parsed = parse_read_input('{"path":"schedule.yaml","offset":2,"limit":3,"future":true}')
+    parsed = parse_read_input('{"path":"schedule-spec.yaml","offset":2,"limit":3,"future":true}')
 
-    assert parsed == ReadInput("schedule.yaml", 2, 3)
+    assert parsed == ReadInput("schedule-spec.yaml", 2, 3)
     assert parse_read_input('{"path":""}').path == ""
 
 
 @pytest.mark.parametrize("value", [math.inf, math.nan, True, "2"])
 def test_pi_read_input_rejects_invalid_numbers(value):
     with pytest.raises(ReadArgumentError, match="Invalid offset"):
-        parse_read_input(json.dumps({"path": "schedule.yaml", "offset": value}))
+        parse_read_input(json.dumps({"path": "schedule-spec.yaml", "offset": value}))
 
 
 def test_pi_read_applies_one_indexed_offset_and_user_limit():
-    result = render_read_result(b"one\ntwo\nthree\nfour", ReadInput("schedule.yaml", offset=2, limit=2))
+    result = render_read_result(b"one\ntwo\nthree\nfour", ReadInput("schedule-spec.yaml", offset=2, limit=2))
 
     assert result.text == "two\nthree\n\n[1 more lines in file. Use offset=4 to continue.]"
     assert result.truncation is None

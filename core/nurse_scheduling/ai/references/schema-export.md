@@ -1,4 +1,4 @@
-# Frontend-editable schedule.yaml
+# Frontend-editable Schedule Spec.yaml
 
 ## Export formatting and count rows or columns
 
@@ -80,7 +80,7 @@ export:
       people: [P1]
       backgroundColor: '#e0f2fe'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -104,7 +104,7 @@ export:
       people: [P1]
       backgroundColor: '#e0f2fe'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -128,7 +128,7 @@ export:
       people: [P1]
       backgroundColor: '#e0f2fe'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -155,7 +155,7 @@ export:
       dates: ['01']
       fontColor: '#ff0000'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -179,7 +179,7 @@ export:
       dates: [FIRST]
       backgroundColor: '#e0f2fe'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -204,7 +204,7 @@ export:
     - type: history header
       backgroundColor: '#e0f2fe'
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -241,7 +241,7 @@ export:
           types: [shift request]
           satisfied: true
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export.formatting
@@ -325,7 +325,7 @@ export:
       countShiftTypes: [N]
       countDates: [ALL]
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export
@@ -353,7 +353,7 @@ export:
       countShiftTypes: [N]
       countPeople: [ALL]
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - export

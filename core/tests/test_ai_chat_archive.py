@@ -58,7 +58,7 @@ __all__ = ["postgres_history", "uninitialized_postgres_history"]
 
 def seed_files(history):
     store = SessionStore(basic.make_settings())
-    session = store.create(str(uuid4()), basic.schedule_yaml())
+    session = store.create(str(uuid4()), basic.schedule_spec_yaml())
     payload = b"all original bytes\x00" * (FILE_CHUNK_BYTES // 5)
     uploads = store.retain_uploads(
         session.id, session.owner_token, [SandboxAttachment("../../原始 [data].txt", "text/plain", payload)]
@@ -93,10 +93,12 @@ def test_zip_contains_documents_state_and_every_archived_file(postgres_history):
     with create_chat_archive(postgres_history, session.id, owner=session.owner_token) as output:
         assert not isinstance(output, io.BytesIO)
         with ZipFile(output) as archive:
-            assert {"chat.html", "chat.md", "chat.json", "schedule.yaml", "manifest.json"} <= set(archive.namelist())
+            assert {"chat.html", "chat.md", "chat.json", "schedule-spec.yaml", "manifest.json"} <= set(
+                archive.namelist()
+            )
             manifest = json.loads(archive.read("manifest.json"))
             assert {file["kind"] for file in manifest["files"]} == {"upload", "download", "optimizer-workbook"}
-            assert archive.read("schedule.yaml").decode() == session.schedule_yaml
+            assert archive.read("schedule-spec.yaml").decode() == session.schedule_spec_yaml
             snapshot = json.loads(archive.read("chat.json"))
             assert snapshot["session_state"]["uploads"] == []
             assert snapshot["session_id"] == session.id
@@ -132,7 +134,7 @@ def test_zip_reads_one_repeatable_snapshot_in_bounded_chunks(postgres_history, m
             with postgres_history._connect() as writer:
                 writer.execute("UPDATE chat_files SET data = %s WHERE id = %s", (b"replacement", file_id))
                 writer.execute(
-                    "UPDATE chat_sessions SET state = jsonb_set(state, '{schedule_yaml}', '\"description: changed\"') WHERE id = %s",
+                    "UPDATE chat_sessions SET state = jsonb_set(state, '{schedule_spec_yaml}', '\"description: changed\"') WHERE id = %s",
                     (session_id,),
                 )
         return data
@@ -142,7 +144,7 @@ def test_zip_reads_one_repeatable_snapshot_in_bounded_chunks(postgres_history, m
         manifest = json.loads(archive.read("manifest.json"))
         uploaded = next(file for file in manifest["files"] if file["kind"] == "upload")
         assert archive.read(uploaded["path"]) == payload
-        assert archive.read("schedule.yaml").decode() == session.schedule_yaml
+        assert archive.read("schedule-spec.yaml").decode() == session.schedule_spec_yaml
     assert len(chunks) > len(manifest["files"])
     assert max(chunks) <= FILE_CHUNK_BYTES
 
@@ -179,7 +181,7 @@ def test_zip_rendering_errors_are_not_reported_as_missing_sessions(postgres_hist
     with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
         session = basic.create_session(client)
         # A rendering bug is a server error that monitoring reports, not a missing chat.
-        assert client.get(f"/sessions/{session}/export").status_code == 500
+        assert client.get(f"/v1/sessions/{session}/export").status_code == 500
 
 
 @pytest.mark.parametrize("disconnect", [False, True], ids=["complete", "disconnect"])
@@ -248,11 +250,11 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         owner = client.cookies[basic.OWNER_COOKIE]
-        prepared = client.post(f"/sessions/{session}/export")
+        prepared = client.post(f"/v1/sessions/{session}/export")
         assert prepared.status_code == 200 and prepared.headers["cache-control"] == "no-store"
         token = prepared.json()["download_token"]
         assert token and basic.AI_AUTH_TOKEN not in token and owner not in token
-        url = f"/sessions/{session}/export?download={prepared.json()['download_id']}&token={token}"
+        url = f"/v1/sessions/{session}/export?download={prepared.json()['download_id']}&token={token}"
         downloaded = client.get(url, headers={"Authorization": ""})
         assert downloaded.status_code == 200
         assert downloaded.headers["content-type"] == "application/zip"
@@ -261,7 +263,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
             assert downloaded.content == expected.read()
         other_session = basic.create_session(client)
         assert (
-            client.get(f"/sessions/{other_session}/export?token={token}", headers={"Authorization": ""}).status_code
+            client.get(f"/v1/sessions/{other_session}/export?token={token}", headers={"Authorization": ""}).status_code
             == 401
         )
         other = basic.AuthenticatedTestClient(app)
@@ -269,7 +271,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         other_downloaded = other.get(url, headers={"Authorization": ""})
         assert other_downloaded.status_code == 200 and other_downloaded.content == downloaded.content
         # Minting still requires the browser ownership cookie.
-        assert other.post(f"/sessions/{session}/export").status_code == 404
+        assert other.post(f"/v1/sessions/{session}/export").status_code == 404
         other.close()
         expired = create_stream_token(
             basic.AI_AUTH_TOKEN,
@@ -278,14 +280,14 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
             now=datetime.now(UTC) - timedelta(seconds=600),
         )
         for bad in (expired, "invalid"):
-            rejected = client.get(f"/sessions/{session}/export?token={bad}", headers={"Authorization": ""})
+            rejected = client.get(f"/v1/sessions/{session}/export?token={bad}", headers={"Authorization": ""})
             assert rejected.status_code == 401
             assert rejected.json()["detail"] == "The export download link is invalid or has expired."
-        assert client.get(f"/sessions/{session}/export", headers={"Authorization": ""}).status_code == 401
+        assert client.get(f"/v1/sessions/{session}/export", headers={"Authorization": ""}).status_code == 401
         assert client.post(url, headers={"Authorization": ""}).status_code == 401
         assert (
             client.post(
-                f"/sessions/{session}/messages?token={token}",
+                f"/v1/sessions/{session}/messages?token={token}",
                 headers={"Authorization": ""},
                 json={"message": "This token must not authorize chat messages."},
             ).status_code
@@ -293,7 +295,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         )
         stream_token = create_stream_token(basic.AI_AUTH_TOKEN, session, ttl_seconds=300)
         assert (
-            client.get(f"/sessions/{session}/export?token={stream_token}", headers={"Authorization": ""}).status_code
+            client.get(f"/v1/sessions/{session}/export?token={stream_token}", headers={"Authorization": ""}).status_code
             == 401
         )
 
@@ -305,14 +307,14 @@ def test_native_download_link_works_for_a_session_that_is_not_loaded(postgres_hi
         basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     ) as client:
         session = basic.create_session(client)
-        prepared = client.post(f"/sessions/{session}/export").json()
+        prepared = client.post(f"/v1/sessions/{session}/export").json()
         token = prepared["download_token"]
     # A restarted service has not loaded the session, and this browser sends no owner
     # cookie or another browser's owner cookie.
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
         downloaded = client.get(
-            f"/sessions/{session}/export?download={prepared['download_id']}&token={token}",
+            f"/v1/sessions/{session}/export?download={prepared['download_id']}&token={token}",
             headers={"Authorization": ""},
         )
     assert downloaded.status_code == 200
@@ -327,10 +329,10 @@ def test_upload_events_link_their_own_version_of_a_reused_filename(postgres_hist
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         (first,) = basic.upload_files(client, session, ("roster.csv", b"draft", "text/csv"))
-        assert client.delete(f"/sessions/{session}/uploads/{first}").status_code == 204
+        assert client.delete(f"/v1/sessions/{session}/uploads/{first}").status_code == 204
         (second,) = basic.upload_files(client, session, ("roster.csv", b"corrected", "text/csv"))
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
-        exported = client.get(f"/sessions/{session}/export")
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
+        exported = client.get(f"/v1/sessions/{session}/export")
     with ZipFile(io.BytesIO(exported.content)) as archive:
         html = archive.read("chat.html").decode()
         paths = {file["source_id"]: file["path"] for file in json.loads(archive.read("manifest.json"))["files"]}
@@ -344,8 +346,8 @@ def test_native_export_without_shared_auth_still_requires_owner(postgres_history
     )
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        assert client.post(f"/sessions/{session}/export").json()["download_token"] is None
-        assert client.get(f"/sessions/{session}/export").status_code == 200
+        assert client.post(f"/v1/sessions/{session}/export").json()["download_token"] is None
+        assert client.get(f"/v1/sessions/{session}/export").status_code == 200
 
 
 def test_browser_archive_fixture_uses_the_current_python_documents():
@@ -389,7 +391,7 @@ def test_preparation_builds_the_archive_once_and_reports_build_errors(postgres_h
     )
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        prepared = client.post(f"/sessions/{session}/export")
+        prepared = client.post(f"/v1/sessions/{session}/export")
         assert prepared.status_code == 200
         link = prepared.json()
 
@@ -398,13 +400,13 @@ def test_preparation_builds_the_archive_once_and_reports_build_errors(postgres_h
 
         monkeypatch.setattr("nurse_scheduling.ai.app.create_chat_archive", fail_build)
         downloaded = client.get(
-            f"/sessions/{session}/export?download={link['download_id']}&token={link['download_token']}",
+            f"/v1/sessions/{session}/export?download={link['download_id']}&token={link['download_token']}",
             headers={"Authorization": ""},
         )
         assert downloaded.status_code == 200
         with ZipFile(io.BytesIO(downloaded.content)) as archive:
             assert json.loads(archive.read("manifest.json"))["session_id"] == session
-        failed = client.post(f"/sessions/{session}/export")
+        failed = client.post(f"/v1/sessions/{session}/export")
         assert failed.status_code == 503
         assert failed.json()["detail"] == "The chat archive could not be created. Try again."
 

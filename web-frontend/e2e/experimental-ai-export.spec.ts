@@ -66,7 +66,7 @@ const test = base.extend<{ backend: ExportBackend }>({
           response.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="complete-chat.zip"' }).end(archiveBytes);
           return;
         }
-      } else if (path.endsWith('/sessions')) {
+      } else if (path.endsWith('/v1/sessions')) {
         response.statusCode = 201;
         body = { id: 'export-session' };
       } else if (path.endsWith('/uploads')) body = [];
@@ -107,7 +107,7 @@ async function openChat(page: Page, backend: ExportBackend, options: { saved?: b
   backend.error = options.error ?? null;
   await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Export the saved chat.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Export the saved chat.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
   return backend.requests;
@@ -120,7 +120,7 @@ test('one Export Chat control downloads the server ZIP without changing its byte
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
   const delivered = await download;
-  expect(delivered.url()).toBe(`${backend.endpoint}/sessions/export-session/export?download=${"a".repeat(32)}`);
+  expect(delivered.url()).toBe(`${backend.endpoint}/v1/sessions/export-session/export?download=${"a".repeat(32)}`);
   expect(delivered.suggestedFilename()).toBe('complete-chat.zip');
   expect((await readFile((await delivered.path())!)).equals(archiveBytes)).toBe(true);
   expect(requests).toEqual(['POST', 'GET']);

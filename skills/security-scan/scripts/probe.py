@@ -230,14 +230,14 @@ def check_ai(client: httpx.Client, stack: dict[str, str]) -> None:
     ai_app = create_ai_app(settings=settings, sandbox_factory=FakeSandboxFactory())
     check_route_auth(client, "ai, no key", url, ai_app, PUBLIC_AI_ROUTES, {})
     check("ai: generated docs are hidden", client.get(f"{url}/openapi.json").status_code == 404)
-    check_cors(client, "ai", url, "/sessions", "POST")
+    check_cors(client, "ai", url, "/v1/sessions", "POST")
 
     schedule = (REPO_ROOT / "web-frontend/public/examples/large-ward-with-87-people-2025-11.yaml").read_text()
 
     def browser() -> tuple[httpx.Client, httpx.Response]:
         # The owner cookie is Secure, which httpx withholds over plain HTTP, so carry it by hand.
         client = httpx.Client(timeout=30, headers=bearer)
-        created = client.post(f"{url}/sessions", json={"schedule_yaml": schedule})
+        created = client.post(f"{url}/v1/sessions", json={"schedule_spec_yaml": schedule})
         owner_cookie = created.headers.get("set-cookie", "").split(";", 1)[0]
         client.cookies.clear()
         client.headers["Cookie"] = owner_cookie
@@ -253,28 +253,28 @@ def check_ai(client: httpx.Client, stack: dict[str, str]) -> None:
         cookie = response.headers.get("set-cookie", "")
         flags = {flag.strip().lower().split("=")[0] for flag in cookie.split(";")[1:]}
         check("ai: the owner cookie is HttpOnly and Secure", {"httponly", "secure"} <= flags, cookie.split(";", 1)[-1])
-        owner.post(f"{url}/sessions/{session_id}/messages", json={"message": "hello"})
-        with owner.stream("GET", f"{url}/sessions/{session_id}/events", timeout=15) as events:
+        owner.post(f"{url}/v1/sessions/{session_id}/messages", json={"message": "hello"})
+        with owner.stream("GET", f"{url}/v1/sessions/{session_id}/events", timeout=15) as events:
             answered = received_stub_reply(events.iter_lines())
         check("ai: the stub provider answers a message", answered)
         foreign = [
-            intruder.get(f"{url}/sessions/{session_id}/export"),
-            intruder.get(f"{url}/sessions/{session_id}/uploads"),
-            intruder.post(f"{url}/sessions/{session_id}/messages", json={"message": "x"}),
-            intruder.put(f"{url}/sessions/{session_id}/schedule", json={"schedule_yaml": schedule}),
+            intruder.get(f"{url}/v1/sessions/{session_id}/export"),
+            intruder.get(f"{url}/v1/sessions/{session_id}/uploads"),
+            intruder.post(f"{url}/v1/sessions/{session_id}/messages", json={"message": "x"}),
+            intruder.put(f"{url}/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": schedule}),
         ]
         statuses = [response.status_code for response in foreign]
         check("ai: another browser cannot use the session", all(code == 404 for code in statuses), str(statuses))
 
         files = [("files", (f"{index}.txt", b"x", "text/plain")) for index in range(40)]
-        response = owner.post(f"{url}/sessions/{session_id}/uploads", files=files)
+        response = owner.post(f"{url}/v1/sessions/{session_id}/uploads", files=files)
         check("ai: too many attachments are refused", response.status_code == 413, str(response.status_code))
         traversal = ("files", ("../../../../etc/passwd", b"x", "text/plain"))
-        response = owner.post(f"{url}/sessions/{session_id}/uploads", files=[traversal])
+        response = owner.post(f"{url}/v1/sessions/{session_id}/uploads", files=[traversal])
         check("ai: an attachment with a path in its name is accepted only as data", response.status_code < 500)
         response = owner.post(
-            f"{url}/sessions",
-            content=b'{"schedule_yaml": "\\ud800 SECRET-MARKER"',
+            f"{url}/v1/sessions",
+            content=b'{"schedule_spec_yaml": "\\ud800 SECRET-MARKER"',
             headers={"Content-Type": "application/json"},
         )
         check(

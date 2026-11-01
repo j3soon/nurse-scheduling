@@ -29,7 +29,7 @@ from nurse_scheduling.loader import load_schedule_spec
 from nurse_scheduling.preference_audit import audit_staffing_and_successions
 
 from .ai_eval.optimizer_fixtures import RESULT_SOURCES, completion_result
-from .ai_test_helper import parse_schedule, schedule_yaml
+from .ai_test_helper import parse_schedule, schedule_spec_yaml
 
 
 def _forced(data, assignments):
@@ -47,7 +47,7 @@ def _source(preference, history):
     for person in raw["people"]["items"]:
         person["history"] = history
     raw["preferences"] = [{"type": "at most one shift per day"}, preference]
-    return schedule_yaml(raw)
+    return schedule_spec_yaml(raw)
 
 
 @pytest.mark.parametrize(
@@ -209,7 +209,7 @@ def test_short_horizon_still_checks_history_crossing_patterns(pattern, history, 
             "weight": weight,
         },
     ]
-    source = schedule_yaml(raw)
+    source = schedule_spec_yaml(raw)
     data = load_schedule_spec(source.encode())
     ids = {s.id: i for i, s in enumerate(data.shiftTypes.items)}
     ids["OFF"] = -1
@@ -242,7 +242,7 @@ def test_short_horizon_optimizer_avoids_a_history_rest_penalty():
             "weight": -10,
         },
     ]
-    result = schedule(schedule_yaml(raw).encode(), solver="ortools/cp-sat", timeout=5)
+    result = schedule(schedule_spec_yaml(raw).encode(), solver="ortools/cp-sat", timeout=5)
     assert result.solver_status == "OPTIMAL"
     assert result.score == 0
     assert result.solution[0, 0, 0] == 0
@@ -265,7 +265,7 @@ def test_short_history_windows_require_future_evidence_and_selected_dates(histor
         {"type": "at most one shift per day"},
         {"type": "shift type successions", "person": ["ALL"], "date": dates, "pattern": pattern, "weight": -10},
     ]
-    data = load_schedule_spec(schedule_yaml(raw).encode())
+    data = load_schedule_spec(schedule_spec_yaml(raw).encode())
     audit = audit_staffing_and_successions(data, {(d, 0): -1 for d in range(days)})["successions"][0]
     assert audit["windows"] == 0
 
@@ -284,7 +284,7 @@ def test_short_horizon_hard_history_rest_rule_rejects_a_forced_day():
             "weight": float("-inf"),
         },
     ]
-    source = schedule_yaml(raw)
+    source = schedule_spec_yaml(raw)
     data = load_schedule_spec(source.encode())
     result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, {(0, 0): 0}))
     assert result.solver_status == "INFEASIBLE"
@@ -322,7 +322,7 @@ def test_history_window_checks_only_its_future_dates(weight):
             "weight": weight,
         },
     ]
-    source = schedule_yaml(raw)
+    source = schedule_spec_yaml(raw)
     data = load_schedule_spec(source.encode())
     assignments = {(d, 0): 0 if d < 2 else -1 for d in range(6)}
     row = audit_staffing_and_successions(data, assignments)["successions"][0]

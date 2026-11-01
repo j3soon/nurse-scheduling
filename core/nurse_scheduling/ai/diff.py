@@ -1,4 +1,4 @@
-"""Structural differences between two schedules, for reviewing a schedule change."""
+"""Structural differences between two schedules, for reviewing a Schedule Spec change."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .validation import format_schedule_location
+from .validation import format_schedule_spec_location
 
 MAX_DIFF_ENTRIES = 50
 MAX_DIFF_VALUE_CHARS = 200
@@ -49,7 +49,7 @@ class DiffEntry:
 
 
 @dataclass(frozen=True)
-class ScheduleDiff:
+class ScheduleSpecDiff:
     """A bounded list of the changes between two schedules."""
 
     entries: tuple[DiffEntry, ...] = ()
@@ -65,7 +65,7 @@ class ScheduleDiff:
         return "\n".join(lines)
 
 
-def diff_schedules(before: Any, after: Any) -> ScheduleDiff:
+def diff_schedule_specs(before: Any, after: Any) -> ScheduleSpecDiff:
     """Compare two parsed schedules and report what changed.
 
     Comparing the parsed documents rather than their text keeps the review
@@ -74,7 +74,7 @@ def diff_schedules(before: Any, after: Any) -> ScheduleDiff:
     """
     changes = _collect(before, after, ())
     kept = changes[:MAX_DIFF_ENTRIES]
-    return ScheduleDiff(tuple(_render(change) for change in kept), len(changes) - len(kept))
+    return ScheduleSpecDiff(tuple(_render(change) for change in kept), len(changes) - len(kept))
 
 
 def _collect(before: Any, after: Any, location: tuple[object, ...]) -> list[tuple[DiffKind, tuple, Any, Any]]:
@@ -128,7 +128,7 @@ def _render(change: tuple[DiffKind, tuple, Any, Any]) -> DiffEntry:
     kind, location, before, after = change
     return DiffEntry(
         kind=kind,
-        location=format_schedule_location(location),
+        location=format_schedule_spec_location(location),
         before="" if kind == "added" else _render_value(before),
         after="" if kind == "removed" else _render_value(after),
     )

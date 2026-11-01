@@ -92,7 +92,7 @@ class CompactionProvider:
             if self.fail_summary == "error":
                 raise ProviderError("summary failed")
             yield ProviderCall("summary-" + str(len(self.summaries)), "model", "reported", "0.01")
-            yield TextDelta("Goal: keep nights. Files: /workspace/schedule.yaml. Pending: inspect P1.")
+            yield TextDelta("Goal: keep nights. Files: /workspace/schedule-spec.yaml. Pending: inspect P1.")
             if self.fail_summary == "tool":
                 yield ToolCallRequest((ToolCall("bad", "read", "{}"),))
             if self.fail_summary != "eof":
@@ -142,16 +142,16 @@ def test_summary_progress_counts_only_the_current_draft_and_identifies_each_pass
 
 
 def test_app_event_indices_survive_compaction_and_restore():
-    from nurse_scheduling.ai.context import SCHEDULE_CHANGED_EVENT
+    from nurse_scheduling.ai.context import SCHEDULE_SPEC_CHANGED_EVENT
     from nurse_scheduling.ai.session_event_projection import RunEvents
     from nurse_scheduling.ai.sessions import SessionStore
 
-    from .test_ai_basic import make_settings, schedule_yaml
+    from .test_ai_basic import make_settings, schedule_spec_yaml
 
     async def exercise():
         settings = make_settings(compaction_reserve_tokens=1500, compaction_keep_recent_tokens=1000)
         store = SessionStore(settings)
-        session = store.create("owner", schedule_yaml())
+        session = store.create("owner", schedule_spec_yaml())
 
         def add(*entries):
             for entry in entries:
@@ -166,17 +166,17 @@ def test_app_event_indices_survive_compaction_and_restore():
             store.finish(session.id, [], snapshot=snapshot)
             model_input = next(event for event in published if event["type"] == "model_input")
             assert not any("_source_index" in message for message in messages)
-            return [entry for entry in model_input["messages"] if entry["content"] == SCHEDULE_CHANGED_EVENT]
+            return [entry for entry in model_input["messages"] if entry["content"] == SCHEDULE_SPEC_CHANGED_EVENT]
 
-        add(AppEventEntry(SCHEDULE_CHANGED_EVENT), AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        add(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT), AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
         assert [entry["index"] for entry in prepare()] == [0, 1]
         add(UserMessage("First"), AssistantMessage("First answer"), CompactionEntry("Earlier constraints", 0, 1000))
-        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        add(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
         assert [entry["index"] for entry in prepare()] == [5]
         # The same pending event must retain its ID when preparation is repeated.
         assert [entry["index"] for entry in prepare()] == [5]
         add(UserMessage("Second"), AssistantMessage("Second answer"), CompactionEntry("Updated constraints", 0, 1000))
-        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        add(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
         assert [entry["index"] for entry in prepare()] == [9]
         owner, expires, state = store.recovery_state(session.id)
         recovered = SessionStore(settings)
@@ -185,7 +185,7 @@ def test_app_event_indices_survive_compaction_and_restore():
         )
         store = recovered
         assert [entry["index"] for entry in prepare()] == [9]
-        add(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+        add(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
         assert [entry["index"] for entry in prepare()] == [9, 10]
 
     asyncio.run(exercise())
@@ -211,7 +211,9 @@ def test_manual_compaction_skips_context_that_cannot_be_reduced(reply):
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
             session = app.state.session_store._sessions[sid]
             original = [UserMessage("Hi"), AssistantMessage(reply)] if reply is not None else []
             for entry in original:
@@ -219,12 +221,12 @@ def test_manual_compaction_skips_context_that_cannot_be_reduced(reply):
             publications = []
             session.subscribe(publications.append)
             request = {"message_id": "compact-short-context"}
-            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            response = await client.post(f"/v1/sessions/{sid}/compact", json=request)
             assert response.status_code == 202
             async with asyncio.timeout(3):
                 while app.state.runs.busy(sid):
                     await asyncio.sleep(0)
-            assert (await client.post(f"/sessions/{sid}/compact", json=request)).json() == response.json()
+            assert (await client.post(f"/v1/sessions/{sid}/compact", json=request)).json() == response.json()
             end = next(event for event in publications if event["type"] == "compaction_end")
             assert end["skipped"] and not end["success"] and not end["aborted"]
             assert not provider.summaries
@@ -403,7 +405,7 @@ def test_compaction_keeps_a_long_current_question_with_its_trailing_status():
 
 def test_context_compaction_tool_continuation_keeps_native_tool_pairs_and_status():
     provider = CompactionProvider()
-    call = ToolCall("read-1", "read", '{"path":"/workspace/schedule.yaml"}')
+    call = ToolCall("read-1", "read", '{"path":"/workspace/schedule-spec.yaml"}')
     native = {"thinking_blocks": [{"type": "redacted_thinking", "data": "opaque"}]}
     entries = [
         AssistantMessage("Checking", "tool_use", "", (call,), native, provider.identity),
@@ -518,7 +520,9 @@ def test_session_stop_ends_compaction_before_the_terminal_event():
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             store = app.state.session_store
             session = store._sessions[session_id]
             snapshot = store.begin(session_id, session.owner_token)
@@ -527,9 +531,9 @@ def test_session_stop_ends_compaction_before_the_terminal_event():
                 [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
                 snapshot=snapshot,
             )
-            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}))
+            turn = asyncio.create_task(client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Continue"}))
             await asyncio.wait_for(provider.summary_started.wait(), timeout=2)
-            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/stop")).status_code == 202
             response = await asyncio.wait_for(turn, timeout=2)
             events = basic.parse_sse(response.text)
             end_index = next(i for i, (kind, _) in enumerate(events) if kind == "compaction_end")
@@ -653,7 +657,9 @@ def test_manual_compaction_can_reduce_history_past_its_defensive_limit(bound):
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
             session = app.state.session_store._sessions[sid]
             for entry in (
                 UserMessage("Opening history " + "x" * 12000),
@@ -662,16 +668,16 @@ def test_manual_compaction_can_reduce_history_past_its_defensive_limit(bound):
                 AssistantMessage("Recent reply " * 50),
             ):
                 session._add_entry(entry)
-            rejected = await client.post(f"/sessions/{sid}/messages", json={"message": "Continue"})
+            rejected = await client.post(f"/v1/sessions/{sid}/messages", json={"message": "Continue"})
             assert rejected.status_code == 429
-            response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "compact-full-history"})
+            response = await client.post(f"/v1/sessions/{sid}/compact", json={"message_id": "compact-full-history"})
             assert response.status_code == 202
             async with asyncio.timeout(3):
                 while app.state.runs.busy(sid):
                     await asyncio.sleep(0)
             assert isinstance(session.transcript[-1], CompactionEntry)
             assert "Opening history " + "x" * 12000 in str(provider.summaries)
-            assert (await client.post(f"/sessions/{sid}/messages", json={"message": "Continue"})).status_code == 200
+            assert (await client.post(f"/v1/sessions/{sid}/messages", json={"message": "Continue"})).status_code == 200
 
     asyncio.run(exercise())
 
@@ -693,7 +699,9 @@ def test_manual_compaction_skips_when_the_last_transcript_entry_is_a_summary():
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
             session = app.state.session_store._sessions[sid]
             original = [
                 UserMessage("x" * 12000),
@@ -704,7 +712,7 @@ def test_manual_compaction_skips_when_the_last_transcript_entry_is_a_summary():
                 session._add_entry(entry)
             publications = []
             session.subscribe(publications.append)
-            response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "already-compacted"})
+            response = await client.post(f"/v1/sessions/{sid}/compact", json={"message_id": "already-compacted"})
             assert response.status_code == 202
             async with asyncio.timeout(3):
                 while app.state.runs.busy(sid):
@@ -969,7 +977,7 @@ def test_length_recovery_checkpoints_the_reply_before_summary_and_updates_its_fi
         provider=provider,
     )
     with basic.AuthenticatedTestClient(app) as client:
-        sid = basic.create_session(client, basic.schedule_yaml())
+        sid = basic.create_session(client, basic.schedule_spec_yaml())
         store = app.state.session_store
         session = store._sessions[sid]
         snapshot = store.begin(sid, session.owner_token)
@@ -984,7 +992,7 @@ def test_length_recovery_checkpoints_the_reply_before_summary_and_updates_its_fi
             saved[seq] = entry
 
         session.entry_log = save_entry
-        response = client.post(f"/sessions/{sid}/messages", json={"message": "Inspect P1"})
+        response = client.post(f"/v1/sessions/{sid}/messages", json={"message": "Inspect P1"})
         assert response.status_code == 200
         assert provider.summaries
         (reply,) = [
@@ -1238,7 +1246,7 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
         provider=provider,
     )
     with basic.AuthenticatedTestClient(app) as client:
-        session_id = basic.create_session(client, basic.schedule_yaml())
+        session_id = basic.create_session(client, basic.schedule_spec_yaml())
         store = app.state.session_store
         session = store._sessions[session_id]
         snapshot = store.begin(session_id, session.owner_token)
@@ -1247,7 +1255,7 @@ def test_session_api_checkpoints_compaction_and_accounts_for_summary_calls():
             [UserMessage("Keep nights " + "x" * 100000), AssistantMessage("Old answer " + "y" * 60000)],
             snapshot=snapshot,
         )
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect P1"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Inspect P1"})
         assert response.status_code == 200
         assert not session.active
         assert any(isinstance(entry, CompactionEntry) for entry in session.transcript)
@@ -1276,7 +1284,7 @@ def test_large_tool_result_triggers_compaction_before_the_next_model_turn():
                 return
             self.requests.append((messages, tools))
             if len(self.requests) == 1:
-                yield ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule.yaml"}'),))
+                yield ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule-spec.yaml"}'),))
                 yield ResponseEnd("tool_calls")
             else:
                 yield TextDelta("Done")
@@ -1525,7 +1533,9 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
                 transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
             session = app.state.session_store._sessions[sid]
             original = [
                 UserMessage("Keep nights " + "x" * 12000),
@@ -1544,7 +1554,7 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
 
             session.subscribe(publish)
             request = {"message_id": "manual-compact"}
-            response = await client.post(f"/sessions/{sid}/compact", json=request)
+            response = await client.post(f"/v1/sessions/{sid}/compact", json=request)
             assert response.status_code == 202, response.text
             await asyncio.wait_for(provider.summary_started.wait(), 2)
             if failure is None:
@@ -1555,17 +1565,17 @@ def test_manual_compaction_uses_session_events_without_a_question_or_workspace(f
                 assert "text" not in progress and "summary" not in progress
                 provider.release_summary.set()
             if failure == "cancel":
-                busy = await client.post(f"/sessions/{sid}/compact", json={"message_id": "another"})
+                busy = await client.post(f"/v1/sessions/{sid}/compact", json={"message_id": "another"})
                 assert busy.status_code == 409
                 queued = await client.post(
-                    f"/sessions/{sid}/messages/queue", json={"message": "hello", "message_id": "steer"}
+                    f"/v1/sessions/{sid}/messages/queue", json={"message": "hello", "message_id": "steer"}
                 )
                 assert queued.status_code == 409
-                assert (await client.post(f"/sessions/{sid}/stop")).status_code == 202
+                assert (await client.post(f"/v1/sessions/{sid}/stop")).status_code == 202
             async with asyncio.timeout(3):
                 while app.state.runs.busy(sid):
                     await asyncio.sleep(0)
-            repeated = await client.post(f"/sessions/{sid}/compact", json=request)
+            repeated = await client.post(f"/v1/sessions/{sid}/compact", json=request)
             assert repeated.json() == response.json()
             assert len(provider.summaries) == 1
             assert not provider.requests

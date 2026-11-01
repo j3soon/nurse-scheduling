@@ -88,7 +88,7 @@ def test_generated_zip_is_downloadable_after_sandbox_cleanup_and_is_owned():
     app = create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Download the CSV."})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Download the CSV."})
         assert "event: download" in response.text
         assert factory.created[0].closed
         download_id = next(
@@ -96,11 +96,11 @@ def test_generated_zip_is_downloadable_after_sandbox_cleanup_and_is_owned():
             for line in response.text.splitlines()
             if line.startswith("data: ") and '"download_id"' in line
         )
-        path = f"/sessions/{session_id}/downloads/{download_id}"
+        path = f"/v1/sessions/{session_id}/downloads/{download_id}"
         download = client.get(path)
         assert download.content == content
         assert download.headers["content-type"] == "application/zip"
-        assert client.get(f"/sessions/{session_id}/downloads/missing").status_code == 404
+        assert client.get(f"/v1/sessions/{session_id}/downloads/missing").status_code == 404
         with AuthenticatedTestClient(app) as other:
             assert other.get(path).status_code == 404
             assert other.delete(path).status_code == 404
@@ -172,7 +172,7 @@ def test_download_memory_failure_keeps_the_completed_turn(background):
     else:
         with AuthenticatedTestClient(app) as client:
             session_id = create_session(client)
-            response = client.post(f"/sessions/{session_id}/messages", json={"message": "Download the CSV."})
+            response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Download the CSV."})
             event_types = [line[7:] for line in response.text.splitlines() if line.startswith("event: ")]
 
     assert "warning" in event_types

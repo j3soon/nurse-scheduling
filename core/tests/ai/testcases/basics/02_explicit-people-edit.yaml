@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 steps:
   - user: >-
-      Add the people IDs Alice and Bob to the schedule data. Apply this
+      Add the people IDs Alice and Bob to the Schedule Spec. Apply this
       directly without asking for confirmation. Do not optimize.
   - schedule:
       added:

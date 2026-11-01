@@ -66,16 +66,16 @@ describe('chat operation ownership', () => {
 
   it('revokes output, applied schedules and cursors together when a stream loses ownership', () => {
     let owns = true;
-    const handlers = { onDelta: vi.fn(), onScheduleApplied: vi.fn(), onEventId: vi.fn(), onDone: vi.fn() };
+    const handlers = { onDelta: vi.fn(), onScheduleSpecApplied: vi.fn(), onEventId: vi.fn(), onDone: vi.fn() };
     const callbacks = scopedCallbacks(handlers, () => owns);
     callbacks.onDelta('accepted');
     owns = false;
     callbacks.onDelta('late');
-    callbacks.onScheduleApplied?.('late schedule');
+    callbacks.onScheduleSpecApplied?.('late schedule');
     callbacks.onEventId?.(8);
     callbacks.onDone?.('old');
     expect(handlers.onDelta).toHaveBeenCalledExactlyOnceWith('accepted');
-    expect(handlers.onScheduleApplied).not.toHaveBeenCalled();
+    expect(handlers.onScheduleSpecApplied).not.toHaveBeenCalled();
     expect(handlers.onEventId).not.toHaveBeenCalled();
     expect(handlers.onDone).not.toHaveBeenCalled();
   });

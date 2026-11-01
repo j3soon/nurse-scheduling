@@ -66,7 +66,7 @@ def base_schedule_payload() -> dict:
     }
 
 
-def schedule_yaml(payload: dict | None = None) -> str:
+def schedule_spec_yaml(payload: dict | None = None) -> str:
     """Render a schedule payload as the block YAML the browser sends."""
     yaml = YAML(typ="safe")
     yaml.default_flow_style = False

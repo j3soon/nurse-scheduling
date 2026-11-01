@@ -39,7 +39,7 @@ from nurse_scheduling.ai.provider import (
 from nurse_scheduling.ai.sandbox import CommandResult, SandboxError
 from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFactory
 from nurse_scheduling.ai.transcript import ToolCall
-from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE
+from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE_SPEC
 from tests.ai.assertions import check_event, check_schedule
 from tests.ai.judge import evaluate
 from tests.ai.runner import DatedFactory, _timezone, main, run_case, run_cases
@@ -174,7 +174,7 @@ def test_production_execution_checks_schedule_equality():
     expected = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [
-            [tool_call("reset", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": expected}))],
+            [tool_call("reset", "write", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": expected}))],
             [TextDelta("Reset complete."), ResponseEnd("stop")],
         ]
     )
@@ -268,7 +268,7 @@ def test_invalid_optimizer_assertions(tmp_path, value):
 
 
 @pytest.mark.parametrize("value", ["false", "0", "'true'", "null"])
-def test_allow_schedule_changes_requires_true(tmp_path, value):
+def test_allow_schedule_spec_changes_requires_true(tmp_path, value):
     with pytest.raises(DefinitionError, match="schedule.allow_changes must be true"):
         definition(tmp_path, f"steps: [{{user: hi}}, {{schedule: {{allow_changes: {value}}}}}]")
 
@@ -276,14 +276,14 @@ def test_allow_schedule_changes_requires_true(tmp_path, value):
 @pytest.mark.parametrize(
     "other", ["{unchanged: true}", "{added: {people.items: [{id: Alice}]}}", "{allow_changes: true}"]
 )
-def test_allow_schedule_changes_cannot_mix_assertions(tmp_path, other):
+def test_allow_schedule_spec_changes_cannot_mix_assertions(tmp_path, other):
     with pytest.raises(DefinitionError, match="cannot be combined"):
         definition(tmp_path, f"steps: [{{user: hi}}, {{schedule: {{allow_changes: true}}}}, {{schedule: {other}}}]")
 
 
 @pytest.mark.parametrize("changed", [False, True])
 @pytest.mark.parametrize("second_changes", [False, True])
-def test_allow_schedule_changes_is_optional_and_resets_each_turn(tmp_path, changed, second_changes):
+def test_allow_schedule_spec_changes_is_optional_and_resets_each_turn(tmp_path, changed, second_changes):
     case = definition(
         tmp_path,
         "steps: [{user: Edit if needed.}, {schedule: {allow_changes: true}}, {user: Do nothing.}]",
@@ -292,7 +292,9 @@ def test_allow_schedule_changes_is_optional_and_resets_each_turn(tmp_path, chang
     edited = initial.replace("people:\n  items: []", "people:\n  items: [{id: Alice}]")
     responses = []
     if changed:
-        responses.append([tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))])
+        responses.append(
+            [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": edited}))]
+        )
     responses.append([TextDelta("Done."), ResponseEnd("stop")])
     if second_changes:
         responses.append(
@@ -300,7 +302,7 @@ def test_allow_schedule_changes_is_optional_and_resets_each_turn(tmp_path, chang
                 tool_call(
                     "write-2",
                     "write",
-                    json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited.replace("Alice", "Bob")}),
+                    json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": edited.replace("Alice", "Bob")}),
                 )
             ]
         )
@@ -308,7 +310,7 @@ def test_allow_schedule_changes_is_optional_and_resets_each_turn(tmp_path, chang
     assert (
         asyncio.run(run_case(case, ScriptedProvider(responses), settings(), FakeSandboxFactory())) is not second_changes
     )
-    with pytest.raises(AssertionError, match="unexpected schedule changes"):
+    with pytest.raises(AssertionError, match="unexpected Schedule Spec changes"):
         check_schedule([], initial, edited)
 
 
@@ -376,7 +378,7 @@ def test_production_execution_keeps_schedule_history_and_attachments(tmp_path):
     read = tool_call("read-1", "read", json.dumps({"path": "/workspace/attachments/01-people.txt"}))
     provider = ScriptedProvider(
         [
-            [tool_call("write-1", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))],
+            [tool_call("write-1", "write", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": edited}))],
             [TextDelta("Added Alice."), ResponseEnd("stop")],
             [read],
             [TextDelta("Alice, Bob, Carol."), ResponseEnd("stop")],
@@ -388,11 +390,11 @@ def test_production_execution_keeps_schedule_history_and_attachments(tmp_path):
     assert asyncio.run(run_case(case, provider, settings(), factory))
     assert len(factory.created) == 3
     assert all(sandbox.closed for sandbox in factory.created)
-    assert load_yaml(factory.created[1].files[WORKSPACE_SCHEDULE].decode())["people"]["items"][0]["id"] == "Alice"
-    assert load_yaml(factory.created[2].files[WORKSPACE_SCHEDULE].decode())["people"]["items"] == []
+    assert load_yaml(factory.created[1].files[WORKSPACE_SCHEDULE_SPEC].decode())["people"]["items"][0]["id"] == "Alice"
+    assert load_yaml(factory.created[2].files[WORKSPACE_SCHEDULE_SPEC].decode())["people"]["items"] == []
     assert all("/workspace/attachments/01-people.txt" in sandbox.files for sandbox in factory.created)
     assert any(message.get("content") == "Added Alice." for message in provider.requests[2])
-    assert any("schedule changed in the app" in str(message.get("content")) for message in provider.requests[4])
+    assert any("Schedule Spec changed in the app" in str(message.get("content")) for message in provider.requests[4])
 
 
 @pytest.mark.parametrize("failure", ["assertion", "unexpected-change", "provider"], ids=str)
@@ -400,7 +402,7 @@ def test_failure_stdout_and_sandbox_cleanup(tmp_path, capsys, failure):
     case = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [expected]}}]")
     edited = (FIXTURES / "empty.yaml").read_text(encoding="utf-8").replace("description: ''", "description: changed", 1)
     responses = [
-        [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))],
+        [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": edited}))],
         [TextDelta("wrong" if failure == "assertion" else "expected"), ResponseEnd("stop")],
     ]
 
@@ -422,7 +424,7 @@ def test_failure_stdout_and_sandbox_cleanup(tmp_path, capsys, failure):
     assert "provider-secret" not in saved and "sandbox-secret" not in saved
     assert saved in log
     if failure == "unexpected-change":
-        assert "unexpected schedule changes" in log
+        assert "unexpected Schedule Spec changes" in log
 
 
 def test_clock_setup_precedes_hydration_and_retains_timezone():
@@ -494,7 +496,7 @@ def test_date_steps_persist_and_change_between_turns(tmp_path):
             event
             for index in range(3)
             for event in (
-                [tool_call(str(index), "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
+                [tool_call(str(index), "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
                 [TextDelta("Read."), ResponseEnd("stop")],
             )
         ]
@@ -509,7 +511,7 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
     edited = (FIXTURES / "empty.yaml").read_text(encoding="utf-8").replace("description: ''", "description: changed", 1)
     provider = ScriptedProvider(
         [
-            [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE, "content": edited}))],
+            [tool_call("write", "write", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC, "content": edited}))],
             [TextDelta("Changed."), ResponseEnd("stop")],
             [TextDelta("Follow-up reply."), ResponseEnd("stop")],
         ]
@@ -639,7 +641,7 @@ def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_pa
             response
             for reply in replies
             for response in (
-                [tool_call("read", "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
+                [tool_call("read", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
                 [TextDelta(reply), ResponseEnd("stop")],
             )
         ]
@@ -756,7 +758,10 @@ def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed
     )
     provider = ScriptedProvider(
         [
-            [ReasoningDelta("Inspect the schedule."), tool_call("r", "read", json.dumps({"path": WORKSPACE_SCHEDULE}))],
+            [
+                ReasoningDelta("Inspect the schedule."),
+                tool_call("r", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),
+            ],
             [TextDelta("No people."), ResponseEnd("stop")],
             [TextDelta("You're welcome."), ResponseEnd("stop")],
         ]
@@ -898,7 +903,7 @@ def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsy
         assert rubric in log
         assert "Semantic verdict." in log and "Judge request:" in log
     assert len(judge.requests) == 1
-    assert all("current-schedule.yaml" not in str(message) for message in judge.requests[0])
+    assert all("current-schedule-spec.yaml" not in str(message) for message in judge.requests[0])
     assert any(reply in message.get("content", "") for message in judge.requests[0])
     if not judge_pass:
         assert "(judge): Semantic verdict." in log
@@ -1050,7 +1055,7 @@ def test_provider_retries_resume_requests_without_replaying_tools(tmp_path, monk
             call = {
                 "index": 0,
                 "id": "read-once",
-                "function": {"name": "read", "arguments": json.dumps({"path": WORKSPACE_SCHEDULE})},
+                "function": {"name": "read", "arguments": json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})},
             }
             return response({"tool_calls": [call]}, "tool_calls")
         attempt = len(requests[role]) - (role == "agent")

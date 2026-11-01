@@ -38,7 +38,7 @@ class RunSnapshot:
     """A capability to commit one conversation version and accept its steering."""
 
     transcript: list[AgentMessage]
-    schedule_yaml: str
+    schedule_spec_yaml: str
     version: int
     previously_dropped: int = 0
     run_id: str | None = None

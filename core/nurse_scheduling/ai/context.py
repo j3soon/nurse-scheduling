@@ -36,7 +36,7 @@ from .provider import (
     tool_result_image_message,
     tool_result_message,
 )
-from .schedule_context import describe_schedule
+from .schedule_context import describe_schedule_spec
 from .transcript import (
     STATUS_PREFIX,
     AgentMessage,
@@ -52,15 +52,15 @@ from .transcript import (
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment, attachment_path
 
 CANDIDATE_VALIDATION_ERROR = (
-    "The candidate schedule failed trusted validation. All schedule changes made during this agent turn were "
-    "discarded. The current schedule was not changed."
+    "The candidate Schedule Spec failed trusted validation. All Schedule Spec changes made during this agent turn were "
+    "discarded. The current Schedule Spec was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
     "An AI shell command timed out. The temporary workspace was discarded. Please try again."
 )
 SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
-STALE_TURN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
+STALE_TURN_ERROR = "The Schedule Spec changed while this response was generated, so the response was discarded."
 
 
 def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
@@ -76,9 +76,7 @@ def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessa
 APP_EVENT_PREFIX = "[App event]"
 TIMEZONE_STATUS = "Workspace timezone: "
 INTERRUPTED_TOOL_RESULT = "No result provided. The tool exchange was interrupted."
-SCHEDULE_CHANGED_EVENT = (
-    f"{APP_EVENT_PREFIX} The schedule changed in the app. /workspace/schedule.yaml contains the current version."
-)
+SCHEDULE_SPEC_CHANGED_EVENT = f"{APP_EVENT_PREFIX} The Schedule Spec changed in the app. /workspace/schedule-spec.yaml contains the current version."
 UPLOAD_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user uploaded files."
 REMOVAL_EVENT_PREFIX = f"{APP_EVENT_PREFIX} The user removed a file from the workspace:"
 OPTIMIZER_RESULT_STATUS = "Optimization result:"
@@ -87,7 +85,7 @@ UNLISTED_UPLOADS_STATUS = "Uploaded files not listed in this conversation:"
 _APP_EVENT_TITLES = (
     (UPLOAD_EVENT_PREFIX, "Files Uploaded"),
     (REMOVAL_EVENT_PREFIX, "File Removed"),
-    (SCHEDULE_CHANGED_EVENT, "Schedule Changed"),
+    (SCHEDULE_SPEC_CHANGED_EVENT, "Schedule Spec Changed"),
 )
 # Preserve titles when displaying historical status entries.
 _STATUS_TITLES = (
@@ -168,7 +166,7 @@ def history_context_chars(history: list[ChatMessage], max_chars: int) -> int:
 
 def build_provider_messages(
     history: HistoryContext | list[ChatMessage],
-    schedule_yaml: str,
+    schedule_spec_yaml: str,
     question: str,
     *,
     system_prompt: str = SANDBOX_SYSTEM_PROMPT,
@@ -180,7 +178,7 @@ def build_provider_messages(
     Providers reuse cached work only for an identical prefix. Workspace changes
     are recorded as ordinary app events.
     """
-    system_content = f"{system_prompt}\n\n{describe_schedule(schedule_yaml)}"
+    system_content = f"{system_prompt}\n\n{describe_schedule_spec(schedule_spec_yaml)}"
     system_content += f"\nDownload size limit: {max_download_bytes} bytes.\n"
     selected = (
         history

@@ -68,17 +68,17 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
             command_timeout_seconds=5,
         )
         async with managed_sandbox(factory, cleanup_timeout_seconds=10) as sandbox:
-            await sandbox.write_file("/workspace/schedule.yaml", b"people:\n  - id: P1\n")
+            await sandbox.write_file("/workspace/schedule-spec.yaml", b"people:\n  - id: P1\n")
             await sandbox.write_file(
                 "/reference/schema-core.md",
                 "# Core schema\n\nPath: people.items\nPeople available for scheduling.\n",
             )
             result = await sandbox.run(
-                "rg -n 'P1' schedule.yaml && "
+                "rg -n 'P1' schedule-spec.yaml && "
                 'python3 -c "import importlib.util; from io import StringIO; from ruamel.yaml import YAML; '
                 "assert importlib.util.find_spec('yaml') is None; "
                 "yaml = YAML(typ='safe'); assert yaml.load('on: off') == {'on': 'off'}; "
-                "data = yaml.load(open('schedule.yaml')); "
+                "data = yaml.load(open('schedule-spec.yaml')); "
                 "output = StringIO(); yaml.dump(data, output); "
                 "assert yaml.load(output.getvalue()) == data; "
                 "print(data['people'][0]['id'])\" && "
@@ -89,7 +89,7 @@ def test_prebuilt_e2b_template_supports_the_raw_backend_lifecycle():
             assert result.stdout == (
                 "2:  - id: P1\nP1\n# Core schema\n\nPath: people.items\nPeople available for scheduling.\n"
             )
-            assert await sandbox.read_file("/workspace/schedule.yaml") == b"people:\n  - id: P1\n"
+            assert await sandbox.read_file("/workspace/schedule-spec.yaml") == b"people:\n  - id: P1\n"
 
     asyncio.run(exercise())
 

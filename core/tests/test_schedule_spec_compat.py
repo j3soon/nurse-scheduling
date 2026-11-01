@@ -33,7 +33,7 @@ def test_tagged_v020_frontend_can_optimize_and_download():
         assert info["api_version"] == "0.2.0"
         response = client.post(
             "/optimize",
-            files={"file": ("schedule.yaml", basic.schedule_yaml().encode(), "application/x-yaml")},
+            files={"file": ("schedule.yaml", basic.schedule_spec_yaml().encode(), "application/x-yaml")},
             data={"prettify": "true", "timeout": "300"},
         )
         assert response.status_code == 202
@@ -46,7 +46,7 @@ def test_tagged_v020_frontend_can_optimize_and_download():
 
 def test_legacy_optimizer_submission():
     with _client() as client:
-        old = client.post("/optimize", data={"yaml_content": basic.schedule_yaml()})
-        new = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": basic.schedule_yaml()})
+        old = client.post("/optimize", data={"yaml_content": basic.schedule_spec_yaml()})
+        new = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": basic.schedule_spec_yaml()})
         assert old.status_code == new.status_code == 202
         assert old.json()["state"] == new.json()["state"]

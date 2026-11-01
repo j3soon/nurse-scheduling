@@ -1,4 +1,4 @@
-# Frontend-editable schedule.yaml
+# Frontend-editable Schedule Spec.yaml
 
 ## Shift requests
 

@@ -42,10 +42,10 @@ POLICY_AUDIT_SCOPE = (
 logger = logging.getLogger(__name__)
 
 
-def build_result_context(schedule_yaml: str, *, workbook: bytes | None = None) -> dict[str, Any]:
+def build_result_context(schedule_spec_yaml: str, *, workbook: bytes | None = None) -> dict[str, Any]:
     """Project compiled selectors into a portable result-reader context."""
-    data = load_schedule_spec(schedule_yaml.encode())
-    context = _project_context(data, schedule_yaml)
+    data = load_schedule_spec(schedule_spec_yaml.encode())
+    context = _project_context(data, schedule_spec_yaml)
     if workbook is not None:
         try:
             with TemporaryDirectory() as directory:
@@ -61,7 +61,7 @@ def build_result_context(schedule_yaml: str, *, workbook: bytes | None = None) -
     return context
 
 
-def _project_context(data, schedule_yaml: str) -> dict[str, Any]:
+def _project_context(data, schedule_spec_yaml: str) -> dict[str, Any]:
     compiled = data.compiled_schedule_spec
     people = [person.id for person in data.people.items]
     shifts = [shift.id for shift in data.shiftTypes.items]
@@ -84,7 +84,7 @@ def _project_context(data, schedule_yaml: str) -> dict[str, Any]:
         )
     return {
         "schema_version": 1,
-        "source_sha256": hashlib.sha256(schedule_yaml.encode()).hexdigest(),
+        "source_sha256": hashlib.sha256(schedule_spec_yaml.encode()).hexdigest(),
         "people": people,
         "dates": dates,
         "shift_types": shifts,
@@ -114,11 +114,11 @@ def _policy_audit(data, context, path):
     return None
 
 
-def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any]:
+def build_request_audit(schedule_spec_yaml: str, workbook: bytes) -> dict[str, Any]:
     """Return bounded counts from the submitted snapshot or explain why they are unavailable."""
     try:
-        data = load_schedule_spec(schedule_yaml.encode())
-        context = _project_context(data, schedule_yaml)
+        data = load_schedule_spec(schedule_spec_yaml.encode())
+        context = _project_context(data, schedule_spec_yaml)
         policy = None
         with TemporaryDirectory() as directory:
             path = Path(directory) / "result.xlsx"

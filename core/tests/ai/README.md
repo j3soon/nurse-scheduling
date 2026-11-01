@@ -71,7 +71,7 @@ notices remain in transcripts but do not count toward assertions or judging.
 
 Missing configuration fails the run. Failures include a case, turn, step, and
 observed evidence. Failed attempts print the full conversation to stdout,
-including reasoning, tool calls and results, and before/after schedule YAML.
+including reasoning, tool calls and results, and before/after Schedule Spec YAML.
 Every attempt saves a readable Markdown transcript under repository-root
 `artifacts/ai-testcases/<run>/`, including successful conversations. Passing
 attempts print one status line with the file path. Each run has its own directory,
@@ -88,7 +88,7 @@ as an example. Each step has exactly one primary key:
 | Key | Meaning |
 | --- | --- |
 | `date` | ISO 8601 datetime with timezone. Persists until changed. |
-| `yaml` | Schedule fixture name relative to `fixtures/`. Replaces current schedule data. |
+| `yaml` | Schedule fixture name relative to `fixtures/`. Replaces current Schedule Spec. |
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
 | `assistant` | Requires `contains_any`, a `judge` rubric, or both. Optional `case_sensitive` applies to matching. |
@@ -151,7 +151,7 @@ the same provider. Other cases have no judge unless their assertion requests one
 
 Schedule assertions compare parsed YAML at the beginning and end of the turn.
 Formatting and mapping-key order do not matter. Without a schedule assertion,
-no schedule change is allowed. `allow_changes: true` permits edits or unchanged
+no Schedule Spec change is allowed. `allow_changes: true` permits edits or unchanged
 data without checking the final contents. Production schedule validation still
 applies. It cannot be combined with other schedule assertions in the same turn.
 Multiple `added` steps combine into one expected
@@ -166,7 +166,7 @@ items fail. New items can appear anywhere in the target list.
 including the mandatory one-shift-per-day rule. It ignores `appVersion` metadata.
 Optional empty groups, date items, description, and export settings can be omitted.
 Mapping-key order and formatting do not matter. Neither `unchanged` nor `equals` can be combined with another
-schedule assertion. See `testcases/basics/01_reset-schedule.yaml` for reuse of
+schedule assertion. See `testcases/basics/01_reset-schedule-spec.yaml` for reuse of
 the existing 87-person solver fixture without duplication.
 
 When a date is configured, the tester sets and verifies the E2B system clock

@@ -40,11 +40,11 @@ def test_repeated_message_id_after_lost_acknowledgement_does_not_repeat_the_ques
     with basic.AuthenticatedTestClient(app, headers=JSON_HEADERS) as client:
         session = basic.create_session(client)
         request = {"message": "Original question", "message_id": "client-message"}
-        first = client.post(f"/sessions/{session}/messages", json=request)
+        first = client.post(f"/v1/sessions/{session}/messages", json=request)
         while app.state.runs.busy(session):
             time.sleep(0.01)
-        repeated = client.post(f"/sessions/{session}/messages", json=request)
-        changed = client.post(f"/sessions/{session}/messages", json={**request, "message": "Another question"})
+        repeated = client.post(f"/v1/sessions/{session}/messages", json=request)
+        changed = client.post(f"/v1/sessions/{session}/messages", json={**request, "message": "Another question"})
     assert first.status_code == repeated.status_code == 202
     assert repeated.json() == first.json()
     assert changed.status_code == 409
@@ -59,8 +59,10 @@ def test_stop_before_message_arrives_prevents_provider_execution():
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         request = {"message": "Original question", "message_id": "stopped-request"}
-        assert client.post(f"/sessions/{session}/stop", json={"message_id": request["message_id"]}).status_code == 202
-        result = client.post(f"/sessions/{session}/messages", json=request)
+        assert (
+            client.post(f"/v1/sessions/{session}/stop", json={"message_id": request["message_id"]}).status_code == 202
+        )
+        result = client.post(f"/v1/sessions/{session}/messages", json=request)
         assert basic.parse_sse(result.text)[-1][0] == "stopped"
         assert provider.calls == []
         assert app.state.session_store._sessions[session].transcript == [
@@ -77,8 +79,10 @@ def test_older_message_id_does_not_execute_again_without_a_database():
         provider = basic.FakeProvider([["A1"], ["A2"]])
         app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
-            path = f"/sessions/{session_id}/messages"
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})).json()[
+                "id"
+            ]
+            path = f"/v1/sessions/{session_id}/messages"
             receipts = []
             for question in ("Q1", "Q2", "Q1"):
                 receipts.append((await client.post(path, json={"message": question, "message_id": question})).json())
@@ -100,8 +104,10 @@ def test_message_receipts_refuse_new_execution_when_the_text_budget_is_full():
         settings = basic.make_settings(max_session_bytes=155, max_history_messages=1000)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": "description: test"})).json()["id"]
-            path = f"/sessions/{session_id}/messages"
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})).json()[
+                "id"
+            ]
+            path = f"/v1/sessions/{session_id}/messages"
             first = None
             for question in ("Q1", "Q2"):
                 response = await client.post(path, json={"message": question, "message_id": question * 4})
@@ -130,7 +136,9 @@ def test_stop_before_an_accepted_run_begins_publishes_its_stopped_outcome():
                 headers=basic.AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             session = app.state.session_store.get(session_id)
             published = []
             session.subscribe(published.append)
@@ -176,12 +184,14 @@ def test_stop_for_an_earlier_message_leaves_the_active_run_running():
                 headers=basic.AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             run = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Current", "message_id": "current"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Current", "message_id": "current"})
             )
             await asyncio.wait_for(started.wait(), timeout=1)
-            stop = await client.post(f"/sessions/{session_id}/stop", json={"message_id": "earlier"})
+            stop = await client.post(f"/v1/sessions/{session_id}/stop", json={"message_id": "earlier"})
             assert stop.status_code == 202
             release.set()
             response = await asyncio.wait_for(run, timeout=2)
@@ -209,13 +219,15 @@ def test_named_stop_cancels_its_own_active_run():
                 headers=basic.AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             run = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Current", "message_id": "current"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Current", "message_id": "current"})
             )
             await asyncio.wait_for(started.wait(), timeout=1)
             assert (
-                await client.post(f"/sessions/{session_id}/stop", json={"message_id": "current"})
+                await client.post(f"/v1/sessions/{session_id}/stop", json={"message_id": "current"})
             ).status_code == 202
             response = await asyncio.wait_for(run, timeout=2)
             return basic.parse_sse(response.text)[-1][0]

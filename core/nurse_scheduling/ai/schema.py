@@ -1,4 +1,4 @@
-"""Load bounded, model-readable frontend schedule YAML references."""
+"""Load bounded, model-readable frontend Schedule Spec YAML references."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -38,7 +38,7 @@ TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src
 
 
 @cache
-def load_schedule_reference(group: str) -> str | None:
+def load_schedule_spec_reference(group: str) -> str | None:
     """Load one task-sized schema reference from its Markdown source."""
     path = SCHEMA_REFERENCE_FILES.get(group)
     if path is None:
@@ -59,8 +59,8 @@ def load_taiwan_holidays_reference() -> str:
 
 
 @lru_cache(maxsize=1)
-def load_schedule_example() -> str:
-    """Load the public anonymized ward example without changing the current schedule."""
+def load_schedule_spec_example() -> str:
+    """Load the public anonymized ward example without changing the current Schedule Spec."""
     return SCHEDULE_EXAMPLE_SOURCE.read_text(encoding="utf-8")
 
 

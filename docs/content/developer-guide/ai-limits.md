@@ -103,7 +103,7 @@ Pi's design guides the whole agent. These implementation differences remain:
 | Default sandbox file read | N/A | 64 MiB. Schedule and ZIP reads use their specific limits. |
 | Captured command output | Bounded tail in memory, full output saved to a file | Same. Capture runs inside the sandbox. The model receives at most 2,000 lines or 50 KiB and the full log path when truncated. |
 | JSON request body | N/A | 64 MiB, counted before JSON parsing. |
-| Schedule YAML | N/A | 16,000,000 bytes (16 MB) |
+| Schedule Spec YAML | N/A | 16,000,000 bytes (16 MB) |
 
 The provider counts decoded HTTP bytes before buffering SSE lines or parsing
 JSON. An oversized or unterminated line cannot bypass the response bound.
@@ -162,7 +162,7 @@ overhead below the proxy request bound when changing upload capacity.
 | `AI_PROVIDER_MAX_RESPONSE_BYTES` | 67,108,864 | Decoded HTTP response bytes per provider attempt. |
 | `AI_MAX_HISTORY_MESSAGES` | 100,000 | Active history messages per chat. |
 | `AI_MAX_HISTORY_CHARS` | 64,000,000 | Active history characters per chat. |
-| `AI_MAX_SCHEDULE_BYTES` | 16,000,000 | UTF-8 schedule YAML bytes. |
+| `AI_MAX_SCHEDULE_BYTES` | 16,000,000 | UTF-8 Schedule Spec YAML bytes. |
 | `AI_MAX_ATTACHMENT_FILES` | 128 | Active attachments per chat. |
 | `AI_MAX_ATTACHMENT_BYTES` | 50,000,000 | Source bytes per attachment. |
 | `AI_MAX_ATTACHMENT_TOTAL_BYTES` | 500,000,000 | Active attachment bytes per chat. |

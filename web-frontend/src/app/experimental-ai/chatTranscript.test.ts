@@ -26,7 +26,7 @@ import type { ModelInput } from './aiClient';
 const input: ModelInput = {
   system: 'System policy',
   messages: [
-    { kind: 'app', index: 5, title: 'Schedule changed', content: 'Changed schedule' },
+    { kind: 'app', index: 5, title: 'Schedule Spec changed', content: 'Changed schedule' },
     { kind: 'question', content: 'Exact question' },
     { kind: 'status', content: 'Current status' },
   ],
@@ -43,7 +43,7 @@ describe('model input transcript placement', () => {
       system: 'Policy',
       messages: [
         { kind: 'app', index: 2, title: 'Proposal Approved', content: 'The user approved the proposal.' },
-        { kind: 'app', index: 3, content: 'The user selected Approve. The proposal is now the current schedule.' },
+        { kind: 'app', index: 3, content: 'The user selected Approve. The proposal is now the current Schedule Spec.' },
         { kind: 'status', content: 'Current status' },
       ],
     };
@@ -51,7 +51,7 @@ describe('model input transcript placement', () => {
     const projected = applyModelInput(messages, followUp, turn);
     expect(projected.map(message => message.content)).toEqual([
       'Make a proposal', 'Proposed', 'Policy', 'The user approved the proposal.',
-      'The user selected Approve. The proposal is now the current schedule.', 'Current status', 'Reviewing the decision',
+      'The user selected Approve. The proposal is now the current Schedule Spec.', 'Current status', 'Reviewing the decision',
     ]);
     expect(applyModelInput(projected, followUp, turn).map(message => message.id)).toEqual(projected.map(message => message.id));
   });

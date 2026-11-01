@@ -55,7 +55,7 @@ def test_pi_edit_input_accepts_multiple_replacements():
     parsed = parse_edit_input(
         json.dumps(
             {
-                "path": "schedule.yaml",
+                "path": "schedule-spec.yaml",
                 "edits": [
                     {"oldText": "one", "newText": "ONE"},
                     {"oldText": "two", "newText": "TWO"},
@@ -65,7 +65,7 @@ def test_pi_edit_input_accepts_multiple_replacements():
     )
 
     assert parsed == EditInput(
-        "schedule.yaml",
+        "schedule-spec.yaml",
         (EditReplacement("one", "ONE"), EditReplacement("two", "TWO")),
     )
 

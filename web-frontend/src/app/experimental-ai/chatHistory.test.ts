@@ -26,7 +26,7 @@ import { type StoredChatConversation } from './chatConversation';
 
 const conversation = (sessionId = 'one', endpoint = '/ai'): StoredChatConversation => ({
   sessionId, endpoint, lastActivityAt: Date.now(), expiresAt: Date.now() + 30 * 86400_000,
-  retentionSeconds: 30 * 86400, syncedSchedule: 'description: Ward A',
+  retentionSeconds: 30 * 86400, syncedScheduleSpec: 'description: Ward A',
   messages: [{ id: 'question', role: 'user', content: 'Review Ward A' }],
 });
 
@@ -42,7 +42,7 @@ describe('recent chat storage', () => {
     expect(readChatHistory().map(entry => chatKey(entry.conversation))).toEqual([
       '/ai\ntwo', 'https://example.com/ai\none', '/ai\none',
     ]);
-    expect(readChatHistory()[2].conversation.syncedSchedule).toBe('description: Ward A');
+    expect(readChatHistory()[2].conversation.syncedScheduleSpec).toBe('description: Ward A');
   });
 
   it('expires seven days after activity without renewing on snapshot saves or reads', () => {

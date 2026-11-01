@@ -60,7 +60,7 @@ from nurse_scheduling.ai.app import create_app as create_ai_app
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
-    SCHEDULE_CHANGED_EVENT,
+    SCHEDULE_SPEC_CHANGED_EVENT,
     build_provider_messages,
     message_title,
     project_history,
@@ -93,7 +93,7 @@ from nurse_scheduling.ai.transcript import (
 )
 from nurse_scheduling.ai.workspace import (
     SANDBOX_SYSTEM_PROMPT,
-    WORKSPACE_SCHEDULE,
+    WORKSPACE_SCHEDULE_SPEC,
     SandboxAttachment,
     SandboxCommandTimeoutError,
     SandboxTurnTimeoutError,
@@ -105,7 +105,7 @@ from .ai_test_helper import (
     base_schedule_payload,
     optimizer_workbook_bytes,
     parse_schedule,
-    schedule_yaml,
+    schedule_spec_yaml,
 )
 
 PNG_BYTES = base64.b64decode(
@@ -215,7 +215,7 @@ def test_application_initializes_sentry_for_ai_service(monkeypatch):
     # fastapi_integration=False keeps the SDK from draining upload request bodies.
     assert calls == [(app.state.app_version, "ai-backend", app.version, False), "logging"]
     assert app.state.app_version == "v0.2.0-572-gbecfc27fb644"
-    assert app.version == "0.2.0"
+    assert app.version == "1.0.0"
 
 
 def test_application_tags_sentry_request_address(monkeypatch):
@@ -242,16 +242,16 @@ def test_frontend_build_version_reports_a_mismatch_once_per_session(
     monkeypatch.setattr("nurse_scheduling.ai.app.get_app_version", lambda: backend_version)
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     with AuthenticatedTestClient(app) as client:
-        body = {"schedule_yaml": schedule_yaml()}
+        body = {"schedule_spec_yaml": schedule_spec_yaml()}
         if frontend_version is not None:
             body["frontend_version"] = frontend_version
-        created = client.post("/sessions", json=body)
+        created = client.post("/v1/sessions", json=body)
         assert created.status_code == 201
         session_id = created.json()["id"]
         session = app.state.session_store.get(session_id)
         assert session.frontend_version == frontend_version
         response = client.post(
-            f"/sessions/{session_id}/messages",
+            f"/v1/sessions/{session_id}/messages",
             json={"message": "Hello", "message_id": "version-message", "frontend_version": frontend_version},
             headers={"Accept": "application/json"},
         )
@@ -271,12 +271,12 @@ def test_chat_requests_report_the_frontend_build_after_session_creation(queued, 
     provider = FakeProvider()
     app = create_test_app(settings=make_settings(), provider=provider)
     with AuthenticatedTestClient(app) as client:
-        session_id = client.post("/sessions", json={"schedule_yaml": schedule_yaml()}).json()["id"]
+        session_id = client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()}).json()["id"]
         session = app.state.session_store.get(session_id)
         if queued:
             session.begin_run()
         response = client.post(
-            f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
+            f"/v1/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "version-message", "frontend_version": "v0.4.2"},
             headers={"Accept": "application/json"},
         )
@@ -292,7 +292,9 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
     provider = FakeProvider()
     app = create_test_app(settings=make_settings(), provider=provider)
     with AuthenticatedTestClient(app) as client:
-        created = client.post("/sessions", json={"schedule_yaml": schedule_yaml(), "frontend_timezone": "Asia/Taipei"})
+        created = client.post(
+            "/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml(), "frontend_timezone": "Asia/Taipei"}
+        )
         assert created.status_code == 201
         session_id = created.json()["id"]
         session = app.state.session_store.get(session_id)
@@ -300,7 +302,7 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
         if queued:
             session.begin_run()
         response = client.post(
-            f"/sessions/{session_id}/messages" + ("/queue" if queued else ""),
+            f"/v1/sessions/{session_id}/messages" + ("/queue" if queued else ""),
             json={"message": "Hello", "message_id": "timezone-message", "frontend_timezone": "America/Los_Angeles"},
         )
         assert response.status_code in {200, 202}
@@ -316,7 +318,9 @@ def test_chat_timezone_comes_from_the_frontend_and_updates_later_requests(queued
 def test_invalid_frontend_timezone_is_rejected_without_creating_a_session(timezone):
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     with AuthenticatedTestClient(app) as client:
-        response = client.post("/sessions", json={"schedule_yaml": schedule_yaml(), "frontend_timezone": timezone})
+        response = client.post(
+            "/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml(), "frontend_timezone": timezone}
+        )
         assert response.status_code == 422
         assert app.state.session_store._sessions == {}
 
@@ -396,13 +400,13 @@ def test_ai_authentication_discovery_and_healthchecks_stay_public() -> None:
 @pytest.mark.parametrize(
     ("method", "path", "json_body"),
     [
-        ("post", "/sessions", {"schedule_yaml": "description: test"}),
-        ("post", "/sessions/missing/messages", {"message": "Hello"}),
-        ("get", "/sessions/missing/events", None),
-        ("post", "/sessions/missing/stop", None),
-        ("get", "/sessions/missing/optimizations/opt-missing/xlsx", None),
-        ("post", "/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
-        ("put", "/sessions/missing/schedule", {"schedule_yaml": "description: changed"}),
+        ("post", "/v1/sessions", {"schedule_spec_yaml": "description: test"}),
+        ("post", "/v1/sessions/missing/messages", {"message": "Hello"}),
+        ("get", "/v1/sessions/missing/events", None),
+        ("post", "/v1/sessions/missing/stop", None),
+        ("get", "/v1/sessions/missing/optimizations/opt-missing/xlsx", None),
+        ("post", "/v1/sessions/missing/messages/queue", {"message_id": "queued-1", "message": "Hello"}),
+        ("put", "/v1/sessions/missing/schedule_spec", {"schedule_spec_yaml": "description: changed"}),
     ],
 )
 def test_ai_session_routes_require_authentication(method: str, path: str, json_body: dict | None) -> None:
@@ -419,14 +423,14 @@ def test_ai_session_routes_reject_invalid_credentials_and_accept_the_configured_
     client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     rejected = client.post(
-        "/sessions",
+        "/v1/sessions",
         headers={"Authorization": "Bearer wrong-ai-token"},
-        json={"schedule_yaml": "description: test"},
+        json={"schedule_spec_yaml": "description: test"},
     )
     accepted = client.post(
-        "/sessions",
+        "/v1/sessions",
         headers=AI_AUTH_HEADERS,
-        json={"schedule_yaml": "description: test"},
+        json={"schedule_spec_yaml": "description: test"},
     )
 
     assert rejected.status_code == 401
@@ -438,7 +442,7 @@ def test_ai_cors_preflight_allows_the_authorization_header() -> None:
     client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
-        "/sessions",
+        "/v1/sessions",
         headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "POST",
@@ -455,7 +459,7 @@ def test_ai_cors_preflight_allows_resuming_background_events() -> None:
     client = TestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     response = client.options(
-        "/sessions/example/events",
+        "/v1/sessions/example/events",
         headers={
             "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "GET",
@@ -476,16 +480,16 @@ def test_ai_generated_api_docs_are_disabled() -> None:
         assert client.get(path, headers=AI_AUTH_HEADERS).status_code == 404
 
 
-def create_session(client: TestClient, schedule_yaml: str = "description: test") -> str:
+def create_session(client: TestClient, schedule_spec_yaml: str = "description: test") -> str:
     """Create a session and return its public UUID."""
-    response = client.post("/sessions", json={"schedule_yaml": schedule_yaml})
+    response = client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml})
     assert response.status_code == 201
     return response.json()["id"]
 
 
 def upload_files(client: TestClient, session_id: str, *files: tuple[str, bytes, str]) -> list[str]:
     """Upload files to a session and return their retained IDs."""
-    response = client.post(f"/sessions/{session_id}/uploads", files=[("files", file) for file in files])
+    response = client.post(f"/v1/sessions/{session_id}/uploads", files=[("files", file) for file in files])
     assert response.status_code == 201
     return [item["id"] for item in response.json()]
 
@@ -498,11 +502,11 @@ def test_active_session_drains_all_queued_steering_messages() -> None:
     snapshot = app.state.session_store.begin(session_id, owner)
 
     first_response = client.post(
-        f"/sessions/{session_id}/messages/queue",
+        f"/v1/sessions/{session_id}/messages/queue",
         json={"message_id": "queued-1", "message": "Focus on P2 instead."},
     )
     second_response = client.post(
-        f"/sessions/{session_id}/messages/queue",
+        f"/v1/sessions/{session_id}/messages/queue",
         json={"message_id": "queued-2", "message": "Also compare P3."},
     )
 
@@ -519,7 +523,7 @@ def test_message_request_logs_question_to_stdout(caplog: pytest.LogCaptureFixtur
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Hello"})
 
     assert response.status_code == 200
     output = caplog.text
@@ -535,7 +539,7 @@ def test_question_previews_can_be_turned_off_without_silencing_the_logger(
     )
     session_id = create_session(client)
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Hello"})
 
     assert response.status_code == 200
     # Chat text must be suppressible, and the logger must stay usable for real problems.
@@ -564,7 +568,7 @@ def test_message_request_log_flattens_and_truncates_long_questions(
     session_id = create_session(client)
     question = f"First line\n{'x' * 250}"
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": question})
 
     assert response.status_code == 200
     output = caplog.text
@@ -581,7 +585,7 @@ def test_secure_ai_owner_cookie_allows_cross_site_frontends() -> None:
         base_url="https://testserver",
     )
 
-    response = client.post("/sessions", json={"schedule_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
+    response = client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
 
     assert response.status_code == 201
     cookie = response.headers["set-cookie"]
@@ -593,7 +597,7 @@ def test_secure_ai_owner_cookie_allows_cross_site_frontends() -> None:
 def test_insecure_local_ai_owner_cookie_stays_same_site() -> None:
     client = TestClient(create_test_app(settings=make_settings(cookie_secure=False), provider=FakeProvider()))
 
-    response = client.post("/sessions", json={"schedule_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
+    response = client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"}, headers=AI_AUTH_HEADERS)
 
     assert response.status_code == 201
     cookie = response.headers["set-cookie"]
@@ -641,7 +645,7 @@ def test_compatibility_reader_recovers_after_a_replay_gap():
     session_id = create_session(client)
     session = app.state.session_store._sessions[session_id]
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Explain"})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Explain"})
 
     assert response.status_code == 200
     resets = [data for kind, data in parse_sse(response.text) if kind == "session_reset"]
@@ -686,7 +690,7 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
             provider=WaitingProvider(),
             sandbox_factory=factory,
         )
-        session = app.state.session_store.create("browser-owner", schedule_yaml())
+        session = app.state.session_store.create("browser-owner", schedule_spec_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
             {
@@ -704,7 +708,7 @@ def test_client_disconnect_leaves_the_run_active_until_explicit_stop(wait_stage:
             if message["type"] == "http.response.start":
                 response_started.set()
 
-        path = f"/sessions/{session.id}/messages"
+        path = f"/v1/sessions/{session.id}/messages"
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -794,12 +798,14 @@ def test_stop_endpoint_cancels_an_active_assistant_turn() -> None:
                 headers=AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
             turn = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Keep working"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Keep working"})
             )
             await asyncio.wait_for(started.wait(), timeout=1)
-            stopped = await client.post(f"/sessions/{session_id}/stop")
+            stopped = await client.post(f"/v1/sessions/{session_id}/stop")
             await asyncio.wait_for(cancelled.wait(), timeout=1)
             response = await turn
             return stopped.status_code, app.state.session_store._sessions[session_id].active, parse_sse(response.text)
@@ -845,13 +851,17 @@ def test_a_stopped_prompt_stays_in_context_for_the_next_run() -> None:
                 headers=AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."}))
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            turn = asyncio.create_task(
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
+            )
             await asyncio.wait_for(started.wait(), timeout=1)
-            await client.post(f"/sessions/{session_id}/stop")
+            await client.post(f"/v1/sessions/{session_id}/stop")
             await turn
             transcript = list(app.state.session_store._sessions[session_id].transcript)
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P2 instead."})
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P2 instead."})
             return transcript, provider.calls[1]
 
     transcript, follow_up_prompt = asyncio.run(exercise())
@@ -879,7 +889,7 @@ def test_an_answer_cut_off_by_the_output_limit_is_saved_with_its_stop_reason() -
     session_id = create_session(client)
 
     events = parse_sse(
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Explain."}).text, include_response_end=True
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Explain."}).text, include_response_end=True
     )
 
     assert [name for name, _ in events] == [
@@ -927,9 +937,11 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
                 headers=AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
             foreground = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Keep working"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Keep working"})
             )
             await asyncio.wait_for(foreground_started.wait(), timeout=1)
             background = asyncio.create_task(
@@ -937,7 +949,7 @@ def test_stop_cancels_background_turn_waiting_behind_foreground_turn() -> None:
             )
             await asyncio.sleep(0)
 
-            stopped = await client.post(f"/sessions/{session_id}/stop")
+            stopped = await client.post(f"/v1/sessions/{session_id}/stop")
             await asyncio.wait_for(foreground_cancelled.wait(), timeout=1)
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(background, timeout=1)
@@ -979,11 +991,13 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
                 headers=AI_AUTH_HEADERS,
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            turn = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "Stop now"}))
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            turn = asyncio.create_task(client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Stop now"}))
             await asyncio.wait_for(waiting_for_artifact.wait(), timeout=1)
             owner = app.state.runs._runs[session_id][0]
-            stopped = await client.post(f"/sessions/{session_id}/stop")
+            stopped = await client.post(f"/v1/sessions/{session_id}/stop")
             release_artifact.set()
             await asyncio.gather(turn, return_exceptions=True)
             with pytest.raises(asyncio.CancelledError):
@@ -998,7 +1012,7 @@ def test_stop_before_stream_registration_cancels_the_reserved_turn(monkeypatch: 
                 AppEventEntry(ABORTED_RESPONSE_HISTORY),
             ]
             monkeypatch.setattr(app.state.session_optimizer, "latest_result_artifact", original_artifact)
-            retried = await client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+            retried = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Retry"})
             assert parse_sse(retried.text)[-1][0] == "done"
             assert provider.calls[0][1:3] == [
                 {"role": "user", "content": "Stop now"},
@@ -1015,7 +1029,7 @@ def test_disconnect_before_stream_iteration_does_not_cancel_execution(monkeypatc
 
     async def exercise() -> bool:
         app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=FakeProvider())
-        session = app.state.session_store.create("browser-owner", schedule_yaml())
+        session = app.state.session_store.create("browser-owner", schedule_spec_yaml())
         request_events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         await request_events.put(
             {
@@ -1033,7 +1047,7 @@ def test_disconnect_before_stream_iteration_does_not_cancel_execution(monkeypatc
             # Let the queued disconnect cancel response startup before iteration.
             await asyncio.sleep(0)
 
-        path = f"/sessions/{session.id}/messages"
+        path = f"/v1/sessions/{session.id}/messages"
         scope = {
             "type": "http",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -1074,7 +1088,7 @@ def test_health_and_streamed_schedule_question() -> None:
 
     session_id = create_session(client, "people:\n  - id: Alice\n")
     response = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "Who works Monday?"},
     )
 
@@ -1097,7 +1111,7 @@ def test_health_and_streamed_schedule_question() -> None:
     # Schedule facts require a tool read.
     system_prompt = " ".join(prompt[0]["content"].split())
     assert "Alice" not in system_prompt
-    assert "schedule.yaml is available at /workspace/schedule.yaml" in system_prompt
+    assert "schedule-spec.yaml is available at /workspace/schedule-spec.yaml" in system_prompt
 
 
 def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
@@ -1105,7 +1119,7 @@ def test_valid_owner_cookie_lifetime_is_refreshed() -> None:
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
     client.cookies.set(OWNER_COOKIE, owner)
 
-    response = client.post("/sessions", json={"schedule_yaml": "description: test"})
+    response = client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
 
     assert response.status_code == 201
     set_cookie = response.headers["set-cookie"]
@@ -1117,7 +1131,7 @@ def test_invalid_owner_cookie_is_not_reflected() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     client.cookies.set(OWNER_COOKIE, "browser-supplied-owner")
 
-    response = client.post("/sessions", json={"schedule_yaml": "description: test"})
+    response = client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
 
     assert response.status_code == 201
     set_cookie = response.headers["set-cookie"]
@@ -1168,10 +1182,10 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     session_id = create_session(client)
 
     now = 105.0
-    first = client.get(f"/sessions/{session_id}")
+    first = client.get(f"/v1/sessions/{session_id}")
     now = 110.0
-    second = client.get(f"/sessions/{session_id}")
-    message = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
+    second = client.get(f"/v1/sessions/{session_id}")
+    message = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
 
     assert first.json() == {"expires_in_seconds": 15}
     assert second.json() == {"expires_in_seconds": 10}
@@ -1179,10 +1193,10 @@ def test_session_status_reports_sliding_lifetime_without_refreshing_it(monkeypat
     assert "Max-Age=20" in message.headers["set-cookie"]
 
     now = 120.0
-    assert client.get(f"/sessions/{session_id}").json() == {"expires_in_seconds": 10}
+    assert client.get(f"/v1/sessions/{session_id}").json() == {"expires_in_seconds": 10}
 
     now = 131.0
-    expired = client.get(f"/sessions/{session_id}")
+    expired = client.get(f"/v1/sessions/{session_id}")
     assert expired.status_code == 404
     assert expired.json()["detail"] == "Chat session not found."
 
@@ -1194,15 +1208,15 @@ def test_idle_and_expired_sessions_retain_no_turn_tasks(monkeypatch: pytest.Monk
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
 
-    active = client.post(f"/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
+    active = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Keep this chat active."})
     assert active.status_code == 200
     assert not app.state.runs.busy(session_id)
 
     now = 131.0
-    assert client.get(f"/sessions/{session_id}").status_code == 404
+    assert client.get(f"/v1/sessions/{session_id}").status_code == 404
     assert app.state.runs._runs == {}
 
-    unknown = client.post(f"/sessions/{uuid4()}/messages", json={"message": "No such chat."})
+    unknown = client.post(f"/v1/sessions/{uuid4()}/messages", json={"message": "No such chat."})
     assert unknown.status_code == 404
     assert app.state.runs._runs == {}
 
@@ -1213,7 +1227,7 @@ def test_finishing_a_turn_keeps_the_deadline_set_when_it_started(monkeypatch: py
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     store = app.state.session_store
     owner = "b6d00cf8-1c7b-49b6-ab06-e162a54de489"
-    session = store.create(owner, schedule_yaml())
+    session = store.create(owner, schedule_spec_yaml())
 
     now = 105.0
     revision = store.begin(session.id, owner)
@@ -1229,11 +1243,11 @@ def test_unchanged_schedule_renews_session_with_owner_cookie(monkeypatch: pytest
     monkeypatch.setattr(sessions_module, "time", SimpleNamespace(monotonic=lambda: now, time=time.time))
     app = create_test_app(settings=make_settings(session_ttl_seconds=20), provider=FakeProvider())
     client = AuthenticatedTestClient(app)
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
 
     now = 110.0
-    response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": schedule})
+    response = client.put(f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": schedule})
 
     assert response.status_code == 204
     assert "Max-Age=20" in response.headers["set-cookie"]
@@ -1245,11 +1259,11 @@ def test_upload_rejects_fields_other_than_files() -> None:
     session_id = create_session(client)
 
     other_file_field = client.post(
-        f"/sessions/{session_id}/uploads",
+        f"/v1/sessions/{session_id}/uploads",
         files={"images": ("ward.png", PNG_BYTES, "image/png")},
     )
     text_field = client.post(
-        f"/sessions/{session_id}/uploads",
+        f"/v1/sessions/{session_id}/uploads",
         data={"message": "Question"},
         files={"files": ("ward.png", PNG_BYTES, "image/png")},
     )
@@ -1258,7 +1272,7 @@ def test_upload_rejects_fields_other_than_files() -> None:
     assert other_file_field.json()["detail"] == "Unexpected multipart field."
     assert text_field.status_code == 422
     assert text_field.json()["detail"] == "Unexpected multipart field."
-    assert client.get(f"/sessions/{session_id}/uploads").json() == []
+    assert client.get(f"/v1/sessions/{session_id}/uploads").json() == []
 
 
 def test_schema_errors_do_not_echo_binary_request_input() -> None:
@@ -1266,7 +1280,7 @@ def test_schema_errors_do_not_echo_binary_request_input() -> None:
     session_id = create_session(client)
 
     responses = [
-        client.post(f"/sessions/{session_id}/{route}", files={"files": ("ward.png", PNG_BYTES, "image/png")})
+        client.post(f"/v1/sessions/{session_id}/{route}", files={"files": ("ward.png", PNG_BYTES, "image/png")})
         for route in ("messages", "messages/queue")
     ]
 
@@ -1289,10 +1303,10 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
     upload_id, other_id = upload_files(
         client, session_id, ("notes.txt", b"notes", "text/plain"), ("other.txt", b"other", "text/plain")
     )
-    assert client.delete(f"/sessions/{session_id}/uploads/{other_id}").status_code == 204
+    assert client.delete(f"/v1/sessions/{session_id}/uploads/{other_id}").status_code == 204
 
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "Read"})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "Read again"})
+    first = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Read"})
+    second = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Read again"})
 
     notes = {"filename": "notes.txt", "path": f"/workspace/attachments/{upload_id}-notes.txt"}
     other = {"filename": "other.txt", "path": f"/workspace/attachments/{other_id}-other.txt"}
@@ -1314,7 +1328,7 @@ def test_uploads_and_removals_are_history_messages_before_the_question() -> None
         "model_input",
         {
             "system": provider.calls[0][0]["content"],
-            "schedule_yaml": "description: test",
+            "schedule_spec_yaml": "description: test",
             "messages": [
                 {"kind": "app", "index": 0, "content": uploaded, "title": "Files Uploaded"},
                 {"kind": "app", "index": 1, "content": removed, "title": "File Removed"},
@@ -1333,7 +1347,7 @@ def test_every_app_event_and_status_line_has_a_chat_title() -> None:
     events = {
         upload_event([attachment]): "Files Uploaded",
         removal_event(attachment, 1): "File Removed",
-        SCHEDULE_CHANGED_EVENT: "Schedule Changed",
+        SCHEDULE_SPEC_CHANGED_EVENT: "Schedule Spec Changed",
     }
     status = "[Current status]\nUploaded files not listed in this conversation: ward.csv"
 
@@ -1344,7 +1358,7 @@ def test_every_app_event_and_status_line_has_a_chat_title() -> None:
 
 
 def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
-    read_schedule = [ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE})),))]
+    read_schedule = [ToolCallRequest((ToolCall("call_0", READ_TOOL, json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),))]
     provider = ScriptedToolProvider(read_schedule, [TextDelta("I inspected the custom file.")])
     factory = FakeSandboxFactory()
     client = AuthenticatedTestClient(
@@ -1353,7 +1367,7 @@ def test_arbitrary_file_is_available_in_the_disposable_sandbox() -> None:
     session_id = create_session(client)
     upload_ids = upload_files(client, session_id, ("archive.custom", b"arbitrary bytes", "application/x-custom"))
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect this custom file."})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Inspect this custom file."})
 
     assert response.status_code == 200
     assert "I inspected the custom file." in response.text
@@ -1390,11 +1404,11 @@ def test_arbitrary_file_limits(
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(**settings), provider=FakeProvider()))
     session_id = create_session(client)
 
-    response = client.post(f"/sessions/{session_id}/uploads", files=files)
+    response = client.post(f"/v1/sessions/{session_id}/uploads", files=files)
 
     assert response.status_code == 413
     assert response.json()["detail"] == expected_detail
-    assert client.get(f"/sessions/{session_id}/uploads").json() == []
+    assert client.get(f"/v1/sessions/{session_id}/uploads").json() == []
 
 
 def test_second_turn_keeps_only_system_message_at_beginning() -> None:
@@ -1403,11 +1417,11 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     session_id = create_session(client, "description: current")
 
     first = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "First question"},
     )
     second = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "Follow up"},
     )
 
@@ -1415,7 +1429,7 @@ def test_second_turn_keeps_only_system_message_at_beginning() -> None:
     assert second.status_code == 200
     assert {"role": "user", "content": "First question"} in provider.calls[1]
     assert {"role": "assistant", "content": "First answer"} in provider.calls[1]
-    assert "schedule.yaml is available at /workspace/schedule.yaml" in provider.calls[1][0]["content"]
+    assert "schedule-spec.yaml is available at /workspace/schedule-spec.yaml" in provider.calls[1][0]["content"]
     assert provider.calls[1][0]["role"] == "system"
     assert all(message["role"] != "system" for message in provider.calls[1][1:])
 
@@ -1455,7 +1469,7 @@ def test_session_uuid_alone_does_not_bypass_browser_ownership() -> None:
     create_session(other_client)
 
     response = other_client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "Try another session"},
     )
 
@@ -1470,11 +1484,11 @@ def test_provider_failure_retains_safe_context_for_retry() -> None:
     session_id = create_session(client)
 
     failed = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "Failed question"},
     )
     recovered = client.post(
-        f"/sessions/{session_id}/messages",
+        f"/v1/sessions/{session_id}/messages",
         json={"message": "Retry"},
     )
 
@@ -1507,34 +1521,34 @@ def test_schedule_update_during_streaming_is_recorded_after_the_turn(monkeypatch
     monkeypatch.setattr(ChatHistory, "finish_run", finish_run)
 
     class ScheduleUpdatingProvider(FakeProvider):
-        update_schedule = lambda self: None
+        update_schedule_spec = lambda self: None
 
         async def stream_events(self, messages, tools=None):
             async for event in super().stream_events(messages, tools):
                 yield event
-            self.update_schedule()
+            self.update_schedule_spec()
 
     provider = ScheduleUpdatingProvider([["Current answer."]])
     app = create_test_app(settings=make_settings(history_postgres_url="test"), provider=provider)
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
     owner = client.cookies[OWNER_COOKIE]
-    provider.update_schedule = lambda: app.state.session_store.update_schedule(
+    provider.update_schedule_spec = lambda: app.state.session_store.update_schedule_spec(
         session_id,
         owner,
         "description: updated concurrently",
     )
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Edit it"})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Edit it"})
 
     assert [name for name, _ in parse_sse(response.text)][-1] == "done"
     assert saved[0][1] == "completed" and saved[0][4] is True
-    # The answer joins the conversation, and the schedule change follows it.
+    # The answer joins the conversation, and the Schedule Spec change follows it.
     assert [(run_id is not None, entry) for _seq, run_id, entry in sorted(saved_entries)][-2:] == [
         (True, AssistantMessage("Current answer.")),
-        (False, AppEventEntry(SCHEDULE_CHANGED_EVENT)),
+        (False, AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)),
     ]
-    assert app.state.session_store.get(session_id).schedule_yaml == "description: updated concurrently"
+    assert app.state.session_store.get(session_id).schedule_spec_yaml == "description: updated concurrently"
 
 
 @pytest.mark.parametrize(
@@ -1550,7 +1564,7 @@ def test_sandbox_timeout_does_not_expose_exception_details(exception, message) -
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider))
     session_id = create_session(client)
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Wait"})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Wait"})
 
     assert [entry for entry in parse_sse(response.text) if entry[0] != "context_usage"] == [
         ("run_start", {"trigger": "user", "run_id": ANY}),
@@ -1567,12 +1581,12 @@ def test_request_limits_are_enforced() -> None:
             provider=FakeProvider(),
         )
     )
-    schedule_response = client.post("/sessions", json={"schedule_yaml": "123456"})
+    schedule_response = client.post("/v1/sessions", json={"schedule_spec_yaml": "123456"})
     session_id = create_session(client, "ok")
-    message_response = client.post(f"/sessions/{session_id}/messages", json={"message": "123456"})
+    message_response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "123456"})
 
     assert schedule_response.status_code == 413
-    assert schedule_response.json()["detail"] == "Schedule is too large."
+    assert schedule_response.json()["detail"] == "Schedule Spec is too large."
     assert message_response.status_code == 200
 
 
@@ -1582,7 +1596,7 @@ def test_long_question_reaches_the_provider_without_a_character_limit() -> None:
     session_id = create_session(client)
     question = "x" * 300_000
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": question})
 
     assert response.status_code == 200
     assert any(message.get("content") == question for message in provider.calls[0])
@@ -1606,7 +1620,7 @@ def test_environment_configuration_allows_local_ai_without_auth(monkeypatch: pyt
 
     assert settings.auth_required is False
     assert client.get("/capabilities").json()["auth"] == {"required": False, "scheme": "bearer"}
-    assert client.post("/sessions", json={"schedule_yaml": "description: test"}).status_code == 201
+    assert client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"}).status_code == 201
     assert client.get("/docs").status_code == 200
 
 
@@ -1635,8 +1649,8 @@ def test_ai_routes_accept_each_identified_token_without_a_legacy_token(caplog: p
 
     for credential in AI_AUTH_TOKENS:
         response = client.post(
-            "/sessions",
-            json={"schedule_yaml": "description: test"},
+            "/v1/sessions",
+            json={"schedule_spec_yaml": "description: test"},
             headers={"Authorization": f"Bearer {credential.token}"},
         )
         assert response.status_code == 201
@@ -1644,8 +1658,8 @@ def test_ai_routes_accept_each_identified_token_without_a_legacy_token(caplog: p
 
     assert (
         client.post(
-            "/sessions",
-            json={"schedule_yaml": "description: test"},
+            "/v1/sessions",
+            json={"schedule_spec_yaml": "description: test"},
             headers={"Authorization": "Bearer revoked-ai-token"},
         ).status_code
         == 401
@@ -1672,7 +1686,7 @@ def test_optional_short_ai_auth_token_still_enables_authentication(caplog: pytes
     client = TestClient(create_test_app(settings=make_settings(auth_token="short"), provider=FakeProvider()))
 
     assert client.get("/capabilities").json()["auth"] == {"required": True, "scheme": "bearer"}
-    assert client.post("/sessions", json={"schedule_yaml": "description: test"}).status_code == 401
+    assert client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"}).status_code == 401
     assert "AI_AUTH_TOKEN is shorter than 16 characters" in caplog.text
 
 
@@ -1853,7 +1867,7 @@ def test_defensive_history_limit_rejects_new_work_without_dropping_the_chat():
     app = create_test_app(settings=settings, provider=provider)
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client)
-        path = f"/sessions/{session_id}/messages"
+        path = f"/v1/sessions/{session_id}/messages"
         assert client.post(path, json={"message": "A" * 50}).status_code == 200
         assert client.post(path, json={"message": "B" * 50}).status_code == 200
         before = list(app.state.session_store._sessions[session_id].transcript)
@@ -1871,7 +1885,7 @@ def test_requests_extend_the_previous_prefix_without_history_trimming():
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client)
         for turn in range(10):
-            response = client.post(f"/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40})
+            response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": f"Q{turn} " + "y" * 40})
             assert response.status_code == 200
             assert not any(kind == "history_trimmed" for kind, _ in parse_sse(response.text))
     assert len(provider.calls) == 10
@@ -1884,15 +1898,15 @@ def test_schedule_edit_is_recorded_only_when_its_data_changes() -> None:
     store = create_test_app(settings=make_settings(), provider=FakeProvider()).state.session_store
     session = store.create("owner", "description: old\n")
 
-    store.update_schedule(session.id, "owner", "description:   old\n")
+    store.update_schedule_spec(session.id, "owner", "description:   old\n")
     assert store._sessions[session.id].transcript == []
-    store.update_schedule(session.id, "owner", "description: new\n")
-    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    store.update_schedule_spec(session.id, "owner", "description: new\n")
+    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)]
 
 
 def test_schedule_update_compares_large_schedules_off_the_event_loop(monkeypatch) -> None:
     parsed_on_event_loop = []
-    schedule_data = agent_session_module._schedule_data
+    schedule_data = agent_session_module._schedule_spec
 
     def record(schedule: str) -> object:
         try:
@@ -1903,15 +1917,17 @@ def test_schedule_update_compares_large_schedules_off_the_event_loop(monkeypatch
             parsed_on_event_loop.append(True)
         return schedule_data(schedule)
 
-    monkeypatch.setattr(agent_session_module, "_schedule_data", record)
+    monkeypatch.setattr(agent_session_module, "_schedule_spec", record)
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, "description: old\n")
-        response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "description: new\n"})
+        response = client.put(
+            f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": "description: new\n"}
+        )
 
     assert response.status_code == 204
     assert parsed_on_event_loop == [False, False]
-    assert app.state.session_store._sessions[session_id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    assert app.state.session_store._sessions[session_id].transcript == [AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)]
 
 
 def test_schedule_update_compares_again_when_its_base_changed() -> None:
@@ -1919,8 +1935,8 @@ def test_schedule_update_compares_again_when_its_base_changed() -> None:
     session = store.create("owner", "description: applied\n")
 
     # A run applied this schedule after the route compared the update with an older one.
-    store.update_schedule(session.id, "owner", "description: new\n", compared=("description:   new\n", False))
-    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_CHANGED_EVENT)]
+    store.update_schedule_spec(session.id, "owner", "description: new\n", compared=("description:   new\n", False))
+    assert store._sessions[session.id].transcript == [AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT)]
 
 
 @pytest.mark.parametrize("window_tokens", [None, 1000], ids=["unknown-limit", "provider-limit"])
@@ -1940,7 +1956,7 @@ def test_context_usage_reports_the_latest_request_tokens_and_provider_limit(wind
     published = []
     app.state.session_store._sessions[session_id].subscribe(published.append)
 
-    client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+    client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
 
     usage = [event for event in published if event["type"] == "context_usage"]
     assert usage[0].get("used_tokens") is None
@@ -1958,8 +1974,8 @@ def test_context_usage_reports_selected_history_before_and_after_each_run() -> N
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
 
-    first = client.post(f"/sessions/{session_id}/messages", json={"message": "A" * 50})
-    second = client.post(f"/sessions/{session_id}/messages", json={"message": "B" * 50})
+    first = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "A" * 50})
+    second = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "B" * 50})
     first_usage = [
         {key: value for key, value in payload.items() if key != "run_id"}
         for event, payload in parse_sse(first.text)
@@ -1993,7 +2009,7 @@ def test_session_memory_budget_preserves_completed_exchanges_and_refuses_input()
     app = create_test_app(settings=settings, provider=provider)
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client)
-        path = f"/sessions/{session_id}/messages"
+        path = f"/v1/sessions/{session_id}/messages"
         assert client.post(path, json={"message": "A" * 10}).status_code == 200
         assert client.post(path, json={"message": "B" * 10}).status_code == 200
         rejected = client.post(path, json={"message": "C" * 10})
@@ -2064,14 +2080,14 @@ def test_context_projects_typed_entries_without_replaying_aborted_output() -> No
     history = [
         UserMessage("Rename P1."),
         AssistantMessage("I renamed P1 to", "aborted"),
-        AppEventEntry(SCHEDULE_CHANGED_EVENT),
+        AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT),
     ]
 
     messages = build_provider_messages(project_history(history), "description: schedule\n", "Rename P2 instead.")
 
     assert messages[1:-1] == [
         ChatMessage(role="user", content="Rename P1."),
-        ChatMessage(role="user", content=SCHEDULE_CHANGED_EVENT),
+        ChatMessage(role="user", content=SCHEDULE_SPEC_CHANGED_EVENT),
     ]
 
 
@@ -2079,7 +2095,7 @@ def test_optimizer_tool_is_offered_without_an_availability_capability() -> None:
     provider = FakeProvider()
     with AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=provider)) as client:
         session_id = create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "What can you do?"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "What can you do?"})
 
     assert response.status_code == 200
     assert any(tool["function"]["name"] == OPTIMIZER_TOOL for tool in provider.offered_tools)
@@ -2230,9 +2246,9 @@ class BackgroundTestOptimizer:
         self.deleted: list[str] = []
 
     async def submit(
-        self, schedule_yaml: str, _timeout_seconds: int | None, client_address: str | None = None
+        self, schedule_spec_yaml: str, _timeout_seconds: int | None, client_address: str | None = None
     ) -> OptimizerJobPayload:
-        self.submitted_yaml = schedule_yaml
+        self.submitted_yaml = schedule_spec_yaml
         self.submitted_client_address = client_address
         return OptimizerJobPayload(id="remote-background", state="running")
 
@@ -2307,13 +2323,17 @@ def test_browser_cancels_an_optimizer_job_without_provider_or_sandbox_work() -> 
                 transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            other_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            job = await app.state.session_optimizer.start(session_id, schedule_yaml(), None)
-            route = f"/sessions/{session_id}/optimizations/{job.id}/cancel"
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            other_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            job = await app.state.session_optimizer.start(session_id, schedule_spec_yaml(), None)
+            route = f"/v1/sessions/{session_id}/optimizations/{job.id}/cancel"
             assert (await client.post(route, headers={"Authorization": "Bearer invalid"})).status_code == 401
-            assert (await client.post(f"/sessions/{other_id}/optimizations/{job.id}/cancel")).status_code == 404
-            assert (await client.post(f"/sessions/{session_id}/optimizations/missing/cancel")).status_code == 404
+            assert (await client.post(f"/v1/sessions/{other_id}/optimizations/{job.id}/cancel")).status_code == 404
+            assert (await client.post(f"/v1/sessions/{session_id}/optimizations/missing/cancel")).status_code == 404
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
             ) as stranger:
@@ -2362,13 +2382,17 @@ def test_browser_finishes_an_optimizer_job_without_provider_or_sandbox_work() ->
                 transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
             ) as client,
         ):
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            other_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
-            job = await app.state.session_optimizer.start(session_id, schedule_yaml(), None)
-            route = f"/sessions/{session_id}/optimizations/{job.id}/finish-now"
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            other_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            job = await app.state.session_optimizer.start(session_id, schedule_spec_yaml(), None)
+            route = f"/v1/sessions/{session_id}/optimizations/{job.id}/finish-now"
             assert (await client.post(route, headers={"Authorization": "Bearer invalid"})).status_code == 401
-            assert (await client.post(f"/sessions/{other_id}/optimizations/{job.id}/finish-now")).status_code == 404
-            assert (await client.post(f"/sessions/{session_id}/optimizations/missing/finish-now")).status_code == 404
+            assert (await client.post(f"/v1/sessions/{other_id}/optimizations/{job.id}/finish-now")).status_code == 404
+            assert (await client.post(f"/v1/sessions/{session_id}/optimizations/missing/finish-now")).status_code == 404
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test", headers=AI_AUTH_HEADERS
             ) as stranger:
@@ -2489,15 +2513,15 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
     )
 
     with AuthenticatedTestClient(app) as client:
-        session_id = create_session(client, schedule_yaml())
+        session_id = create_session(client, schedule_spec_yaml())
         assert "optimizer" not in client.get("/capabilities").json()
         source_ids = upload_files(client, session_id, ("source.txt", b"original input", "text/plain"))
         source_path = f"/workspace/attachments/{source_ids[0]}-source.txt"
         started = client.post(
-            f"/sessions/{session_id}/messages",
+            f"/v1/sessions/{session_id}/messages",
             json={"message": "Optimize this schedule."},
         )
-        follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
+        follow_up = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Can we still talk?"})
 
         assert started.status_code == 200
         assert follow_up.status_code == 200
@@ -2559,7 +2583,7 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         assert all("message_id" not in event.data for event in events[3:])
         assert events[4].data == {
             "system": provider.calls[2][0]["content"],
-            "schedule_yaml": schedule_yaml(),
+            "schedule_spec_yaml": schedule_spec_yaml(),
             "messages": [{"kind": "optimizer", "content": provider.calls[2][-1]["content"]}],
             "run_id": run_id,
         }
@@ -2586,14 +2610,14 @@ def test_optimizer_runs_behind_chat_and_wakes_the_agent_on_completion(monkeypatc
         )
 
         job_id = str(events[1].data["job_id"])
-        download = client.get(f"/sessions/{session_id}/optimizations/{job_id}/xlsx")
+        download = client.get(f"/v1/sessions/{session_id}/optimizations/{job_id}/xlsx")
         assert download.status_code == 200
         assert download.content.startswith(b"PK\x03\x04")
         assert download.headers["content-disposition"] == 'attachment; filename="optimized-schedule.xlsx"'
 
         note_ids = upload_files(client, session_id, ("note.txt", b"note", "text/plain"))
         later = client.post(
-            f"/sessions/{session_id}/messages",
+            f"/v1/sessions/{session_id}/messages",
             json={"message": "Can you inspect the workbook again?"},
         )
         assert later.status_code == 200
@@ -2619,9 +2643,9 @@ def test_schedule_updates_can_replace_unusual_drafts(source, replacement):
     app = create_test_app(settings=make_settings(), provider=ScriptedToolProvider())
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, source)
-        response = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": replacement})
+        response = client.put(f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": replacement})
         assert response.status_code == 204
-        assert app.state.session_store._sessions[session_id].schedule_yaml == replacement
+        assert app.state.session_store._sessions[session_id].schedule_spec_yaml == replacement
 
 
 def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
@@ -2642,22 +2666,25 @@ def test_optimizer_inspection_keeps_submitted_context_after_editor_changes():
         sandbox_factory=factory,
         optimizer_backend=optimizer,
     )
-    source = schedule_yaml()
+    source = schedule_spec_yaml()
     changed = source.replace("weight: 1", "weight: 9", 1)
     with AuthenticatedTestClient(app) as client:
         session_id = create_session(client, source)
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
-        assert client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": changed}).status_code == 204
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Optimize."})
+        assert (
+            client.put(f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": changed}).status_code
+            == 204
+        )
         optimizer.release.set()
         assert review_run_events(app, session_id)[-1].type == "done"
         assert (
             "Reviewed again."
-            in client.post(f"/sessions/{session_id}/messages", json={"message": "Inspect the earlier result."}).text
+            in client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Inspect the earlier result."}).text
         )
         result_sandboxes = [sandbox for sandbox in factory.created if context_path in sandbox.files]
         assert len(result_sandboxes) == 2
         for sandbox in result_sandboxes:
-            assert sandbox.files[WORKSPACE_SCHEDULE] == changed.encode()
+            assert sandbox.files[WORKSPACE_SCHEDULE_SPEC] == changed.encode()
             context = json.loads(sandbox.files[context_path])
             assert context["source_sha256"] == hashlib.sha256(source.encode()).hexdigest()
             assert context["requests"][0]["weight"] == 1
@@ -2667,8 +2694,8 @@ def rename_factory() -> FakeSandboxFactory:
     """Return a fake sandbox that applies the scripted description change."""
 
     def rename(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        current = backend.files[WORKSPACE_SCHEDULE].decode()
-        backend.files[WORKSPACE_SCHEDULE] = current.replace(
+        current = backend.files[WORKSPACE_SCHEDULE_SPEC].decode()
+        backend.files[WORKSPACE_SCHEDULE_SPEC] = current.replace(
             "  - id: P1\n    description: ''",
             "  - id: P1\n    description: Head",
             1,
@@ -2685,11 +2712,11 @@ def applied_schedule_context() -> tuple[
     ScriptedToolProvider,
     FakeSandboxFactory,
 ]:
-    """Apply a schedule change and expose the provider and sandboxes for a follow-up turn."""
+    """Apply a Schedule Spec change and expose the provider and sandboxes for a follow-up turn."""
     provider = ScriptedToolProvider(
         rename_call(),
         [TextDelta("Renamed P1.")],
-        [ToolCallRequest((ToolCall("call_1", READ_TOOL, json.dumps({"path": "schedule.yaml"})),))],
+        [ToolCallRequest((ToolCall("call_1", READ_TOOL, json.dumps({"path": "schedule-spec.yaml"})),))],
         [TextDelta("Follow-up answered.")],
     )
     factory = rename_factory()
@@ -2700,14 +2727,14 @@ def applied_schedule_context() -> tuple[
             sandbox_factory=factory,
         )
     )
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
     assert response.status_code == 200
     return client, session_id, hashlib.sha256(schedule.encode("utf-8")).hexdigest(), provider, factory
 
 
-def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> None:
+def test_a_tool_run_streams_its_schedule_spec_check_and_applies_the_schedule() -> None:
     provider = ScriptedToolProvider(rename_call(), [TextDelta("Renamed P1.")])
     client = AuthenticatedTestClient(
         create_test_app(
@@ -2716,9 +2743,9 @@ def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> Non
             sandbox_factory=rename_factory(),
         )
     )
-    session_id = create_session(client, schedule_yaml())
+    session_id = create_session(client, schedule_spec_yaml())
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
     events = parse_sse(response.text)
     tool_start = next(data for name, data in events if name == "tool_start")
@@ -2728,15 +2755,15 @@ def test_a_tool_run_streams_its_schedule_check_and_applies_the_schedule() -> Non
     assert tool["ok"] is True
     assert "Head" in tool["arguments"]
     assert "passed trusted server-side validation" in tool["result"]
-    assert tool["schedule_check"]["ok"] is True
-    assert tool["schedule_check"]["text"] in tool["result"]
-    schedule_change = next(data for name, data in events if name == "schedule_change")
-    assert "description: Head" in schedule_change["schedule_yaml"]
-    applied = next(data for name, data in events if name == "schedule_applied")
-    assert applied["schedule_yaml"] == schedule_change["schedule_yaml"]
+    assert tool["schedule_spec_check"]["ok"] is True
+    assert tool["schedule_spec_check"]["text"] in tool["result"]
+    schedule_spec_change = next(data for name, data in events if name == "schedule_spec_change")
+    assert "description: Head" in schedule_spec_change["schedule_spec_yaml"]
+    applied = next(data for name, data in events if name == "schedule_spec_applied")
+    assert applied["schedule_spec_yaml"] == schedule_spec_change["schedule_spec_yaml"]
     assert "people.items[0].description" in applied["diff"]
-    assert applied["replaced_queued_schedule"] is False
-    assert [name for name, _ in events].index("schedule_applied") < [name for name, _ in events].index("done")
+    assert applied["replaced_queued_schedule_spec"] is False
+    assert [name for name, _ in events].index("schedule_spec_applied") < [name for name, _ in events].index("done")
 
 
 def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() -> None:
@@ -2747,8 +2774,8 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() 
     )
 
     def rename(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        current = backend.files[WORKSPACE_SCHEDULE].decode()
-        backend.files[WORKSPACE_SCHEDULE] = current.replace(
+        current = backend.files[WORKSPACE_SCHEDULE_SPEC].decode()
+        backend.files[WORKSPACE_SCHEDULE_SPEC] = current.replace(
             "  - id: P1\n    description: ''",
             "  - id: P1\n    description: Head",
             1,
@@ -2766,10 +2793,10 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() 
         sandbox_factory=factory,
     )
     client = AuthenticatedTestClient(app)
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
 
-    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Failed edit"})
+    failed = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Failed edit"})
 
     events = parse_sse(failed.text)
     assert [name for name, _ in events if name != "context_usage"] == [
@@ -2777,14 +2804,14 @@ def test_sandbox_cleanup_failure_does_not_commit_provisional_turn_or_schedule() 
         "model_selection",
         "tool_start",
         "tool",
-        "schedule_change",
+        "schedule_spec_change",
         "delta",
         "error",
     ]
     assert events[-1][1]["message"] == "The temporary AI sandbox failed. Please try again."
-    assert app.state.session_store.get(session_id).schedule_yaml == schedule
+    assert app.state.session_store.get(session_id).schedule_spec_yaml == schedule
 
-    recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+    recovered = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Retry"})
 
     assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
@@ -2807,9 +2834,9 @@ def test_sandbox_command_failure_still_streams_the_requested_command() -> None:
             sandbox_factory=factory,
         )
     )
-    session_id = create_session(client, schedule_yaml())
+    session_id = create_session(client, schedule_spec_yaml())
 
-    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Run an edit"})
+    failed = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Run an edit"})
 
     events = parse_sse(failed.text)
     assert next(data for name, data in events if name == "tool")["result"] == (
@@ -2840,11 +2867,11 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
 
     def invalidate(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
         if invalid_kind == "yaml":
-            backend.files[WORKSPACE_SCHEDULE] = b"not: [valid"
+            backend.files[WORKSPACE_SCHEDULE_SPEC] = b"not: [valid"
         else:
             payload = base_schedule_payload()
             payload["people"]["items"][0]["history"] = "D"
-            backend.files[WORKSPACE_SCHEDULE] = schedule_yaml(payload).encode()
+            backend.files[WORKSPACE_SCHEDULE_SPEC] = schedule_spec_yaml(payload).encode()
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
@@ -2855,10 +2882,10 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
             sandbox_factory=factory,
         )
     )
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
 
-    failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Invalid edit"})
+    failed = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Invalid edit"})
 
     events = parse_sse(failed.text)
     assert [name for name, _ in events if name != "context_usage"] == [
@@ -2871,10 +2898,10 @@ def test_final_validation_failure_discards_edits_and_retains_safe_context(invali
     ]
     assert next(data for name, data in events if name == "tool")["ok"] is False
     assert events[-1][1]["message"].startswith(CANDIDATE_VALIDATION_ERROR)
-    assert "schedule.yaml introduces problems" in events[-1][1]["message"]
+    assert "schedule-spec.yaml introduces problems" in events[-1][1]["message"]
     assert ("not readable YAML" if invalid_kind == "yaml" else "people.items[0].history") in events[-1][1]["message"]
 
-    recovered = client.post(f"/sessions/{session_id}/messages", json={"message": "Retry"})
+    recovered = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Retry"})
 
     assert ("delta", {"text": "Recovered.", "run_id": ANY}) in parse_sse(recovered.text)
     recovered_prompt = json.dumps(provider.calls[2])
@@ -2890,7 +2917,7 @@ def test_one_message_routes_through_a_fresh_backend_and_applies_the_trusted_sche
             "command": (
                 "python3 - <<'PY'\n"
                 "from pathlib import Path\n"
-                "path = Path('/workspace/schedule.yaml')\n"
+                "path = Path('/workspace/schedule-spec.yaml')\n"
                 "text = path.read_text()\n"
                 'path.write_text(text.replace("description: \'\'", "description: Head", 1))\n'
                 "PY"
@@ -2903,34 +2930,39 @@ def test_one_message_routes_through_a_fresh_backend_and_applies_the_trusted_sche
     )
 
     def edit(_command: str, _timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
-        current = backend.files[WORKSPACE_SCHEDULE].decode()
-        backend.files[WORKSPACE_SCHEDULE] = current.replace("description: ''", "description: Head", 1).encode()
+        current = backend.files[WORKSPACE_SCHEDULE_SPEC].decode()
+        backend.files[WORKSPACE_SCHEDULE_SPEC] = current.replace("description: ''", "description: Head", 1).encode()
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=edit))
     settings = make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT)
     client = AuthenticatedTestClient(create_test_app(settings=settings, provider=provider, sandbox_factory=factory))
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
 
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Set the description."})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Set the description."})
 
     events = parse_sse(response.text)
     assert next(data for name, data in events if name == "tool")["name"] == BASH_TOOL
-    assert "description: Head" in next(data for name, data in events if name == "schedule_change")["schedule_yaml"]
-    assert next(data for name, data in events if name == "schedule_applied")["diff"] == '- description: "" -> "Head"'
+    assert (
+        "description: Head"
+        in next(data for name, data in events if name == "schedule_spec_change")["schedule_spec_yaml"]
+    )
+    assert (
+        next(data for name, data in events if name == "schedule_spec_applied")["diff"] == '- description: "" -> "Head"'
+    )
     assert factory.created[0].closed
-    assert "`/workspace/schedule.yaml`" in provider.calls[0][0]["content"]
+    assert "`/workspace/schedule-spec.yaml`" in provider.calls[0][0]["content"]
     assert "E2B" not in provider.calls[0][0]["content"]
 
 
 def test_the_applied_schedule_starts_the_next_run() -> None:
     client, session_id, _revision, provider, factory = applied_schedule_context()
 
-    follow_up = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+    follow_up = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Continue"})
 
     assert follow_up.status_code == 200
-    assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE]
+    assert b"description: Head" in factory.created[1].files[WORKSPACE_SCHEDULE_SPEC]
     # The model made the change itself, so the next request needs no app event about it.
     assert not any(str(message["content"]).startswith("[App event]") for message in provider.calls[2])
 
@@ -2939,7 +2971,7 @@ def test_the_applied_schedule_starts_the_next_run() -> None:
 def test_session_store_queues_steering_once_and_retains_it_with_the_turn(background) -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
-    session = store.create("browser-owner", schedule_yaml())
+    session = store.create("browser-owner", schedule_spec_yaml())
     revision = store.begin_background(session.id) if background else store.begin(session.id, "browser-owner")
 
     store.queue_steering(session.id, "browser-owner", "queued-1", "Focus on P2 instead.")
@@ -2960,7 +2992,7 @@ def test_session_store_bounds_steering_across_a_whole_turn_not_the_drained_queue
     settings = make_settings(max_history_messages=3)
     app = create_test_app(settings=settings, provider=FakeProvider())
     store = app.state.session_store
-    session = store.create("browser-owner", schedule_yaml())
+    session = store.create("browser-owner", schedule_spec_yaml())
     store.begin(session.id, "browser-owner")
 
     for index in range(settings.max_history_messages):
@@ -2995,14 +3027,14 @@ def test_session_store_bounds_retained_chat_text_across_sessions() -> None:
     assert exc_info.value.detail == "The AI service has reached its session text and file retention limit."
 
     # Replacing a schedule with a smaller one returns its budget. The edit is recorded as an app event.
-    store.update_schedule(first.id, "browser-owner", "a" * 50)
-    assert store.retained_bytes == 450 + len(SCHEDULE_CHANGED_EVENT)
+    store.update_schedule_spec(first.id, "browser-owner", "a" * 50)
+    assert store.retained_bytes == 450 + len(SCHEDULE_SPEC_CHANGED_EVENT)
     store.create("browser-owner", "c" * 400)
 
     # Expiry releases the budget along with the session.
     store._sessions[second.id].expires_at = time.monotonic() - 1
     store.create("browser-owner", "d" * 100)
-    assert store.retained_bytes == 550 + len(SCHEDULE_CHANGED_EVENT)
+    assert store.retained_bytes == 550 + len(SCHEDULE_SPEC_CHANGED_EVENT)
 
 
 def test_prompt_budget_projection_starts_at_a_prompt() -> None:
@@ -3075,7 +3107,7 @@ def test_completed_turn_is_kept_when_output_exceeds_the_service_budget():
 def test_session_store_rejects_steering_after_the_final_boundary() -> None:
     app = create_test_app(settings=make_settings(), provider=FakeProvider())
     store = app.state.session_store
-    session = store.create("browser-owner", schedule_yaml())
+    session = store.create("browser-owner", schedule_spec_yaml())
     store.begin(session.id, "browser-owner")
 
     assert store.take_steering(session.id, True) == []
@@ -3091,7 +3123,7 @@ def test_sessions_are_private_to_their_browser() -> None:
     )
     other = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
-    assert other.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "a: 1"}).status_code == 404
+    assert other.put(f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": "a: 1"}).status_code == 404
 
 
 def test_a_run_applies_a_change_to_a_schedule_the_user_had_not_finished() -> None:
@@ -3105,12 +3137,12 @@ def test_a_run_applies_a_change_to_a_schedule_the_user_had_not_finished() -> Non
             sandbox_factory=rename_factory(),
         )
     )
-    schedule = schedule_yaml(payload)
+    schedule = schedule_spec_yaml(payload)
     session_id = create_session(client, schedule)
-    response = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+    response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
 
-    applied = next(data for name, data in parse_sse(response.text) if name == "schedule_applied")
-    assert "description: Head" in applied["schedule_yaml"]
+    applied = next(data for name, data in parse_sse(response.text) if name == "schedule_spec_applied")
+    assert "description: Head" in applied["schedule_spec_yaml"]
 
 
 def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> None:
@@ -3118,15 +3150,15 @@ def test_the_prompt_points_to_the_schedule_without_disclosing_its_facts() -> Non
     client = AuthenticatedTestClient(
         create_test_app(settings=make_settings(max_schedule_bytes=SCHEDULE_BYTE_LIMIT), provider=provider)
     )
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
     session_id = create_session(client, schedule)
 
-    client.post(f"/sessions/{session_id}/messages", json={"message": "How many people?"})
+    client.post(f"/v1/sessions/{session_id}/messages", json={"message": "How many people?"})
 
     system_prompt = provider.calls[0][0]["content"]
     assert system_prompt.startswith(SANDBOX_SYSTEM_PROMPT)
     normalized_prompt = " ".join(system_prompt.split())
-    assert "schedule.yaml is available at /workspace/schedule.yaml" in normalized_prompt
+    assert "schedule-spec.yaml is available at /workspace/schedule-spec.yaml" in normalized_prompt
     assert "2 people" not in normalized_prompt
     assert "PEOPLE" not in normalized_prompt
     assert "2026-01-01" not in normalized_prompt
@@ -3138,7 +3170,7 @@ def test_a_browser_may_send_the_newer_schedule_across_origins() -> None:
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
 
     preflight = client.options(
-        "/sessions/any/schedule",
+        "/v1/sessions/any/schedule_spec",
         headers={
             "Origin": "http://localhost:3005",
             "Access-Control-Request-Method": "PUT",
@@ -3174,8 +3206,8 @@ def test_background_review_delivers_steering_after_tool_before_next_model_reques
         optimizer_backend=optimizer,
     )
     with AuthenticatedTestClient(app) as client:
-        session_id = create_session(client, schedule_yaml())
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        session_id = create_session(client, schedule_spec_yaml())
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Optimize."})
         optimizer.release.set()
         events = review_run_events(app, session_id)
         assert events[-1].type == "done"
@@ -3206,8 +3238,8 @@ def test_provider_failure_ends_the_run_and_a_new_message_continues():
         sandbox_factory=factory,
     )
     with AuthenticatedTestClient(app) as client:
-        session_id = create_session(client, schedule_yaml())
-        failed = client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1"})
+        session_id = create_session(client, schedule_spec_yaml())
+        failed = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1"})
         events = parse_sse(failed.text)
         # The run fails without waiting for the user, so it holds no run slot or sandbox.
         assert not app.state.runs.busy(session_id)
@@ -3216,9 +3248,9 @@ def test_provider_failure_ends_the_run_and_a_new_message_continues():
         assert events[-1][0] == "error"
         assert events[-1][1]["message"] == "The AI provider timed out."
         session = app.state.session_store._sessions[session_id]
-        assert session.schedule_yaml == schedule_yaml()
+        assert session.schedule_spec_yaml == schedule_spec_yaml()
 
-        continued = client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"})
+        continued = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Continue"})
         assert parse_sse(continued.text)[-1][0] == "done"
         request = [message.get("content") for message in provider.calls[-1]]
         assert request.index("Rename P1") < request.index(ABORTED_RESPONSE_HISTORY) < request.index("Continue")
@@ -3244,8 +3276,8 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         optimizer_backend=optimizer,
     )
     with AuthenticatedTestClient(app) as client:
-        session_id = create_session(client, schedule_yaml())
-        started = client.post(f"/sessions/{session_id}/messages", json={"message": "Optimize."})
+        session_id = create_session(client, schedule_spec_yaml())
+        started = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Optimize."})
         assert "running in the background" in started.text
         optimizer.release.set()
         events = review_run_events(app, session_id)
@@ -3254,7 +3286,7 @@ def test_background_command_timeout_preserves_tool_result_and_reports_the_actual
         tool = next(event for event in events if event.type == "tool")
         assert not tool.data["ok"]
         assert "Command timed out" in tool.data["result"]
-        assert not any(event.type in {"schedule_applied", "done"} for event in events)
+        assert not any(event.type in {"schedule_spec_applied", "done"} for event in events)
         assert len(provider.calls) == 2
 
 
@@ -3273,13 +3305,13 @@ def test_provider_http_failure_shows_status_and_reference_without_response_body(
     provider._context_tokens_loaded = True
     with AuthenticatedTestClient(create_test_app(settings=settings, provider=provider)) as client:
         session = create_session(client)
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Review the schedule"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Review the schedule"})
         message = parse_sse(response.text)[-1][1]["message"]
         assert "HTTP 400" in message
         assert re.search(r"Error ID: [0-9a-f-]{36}", message)
         assert "private provider body" not in response.text
         assert "secret-token" not in response.text
-        assert not any(name in {"schedule_applied", "done"} for name, _ in parse_sse(response.text))
+        assert not any(name in {"schedule_spec_applied", "done"} for name, _ in parse_sse(response.text))
 
 
 @pytest.mark.parametrize("failure", ["provider-public", "provider-private", "validation"])
@@ -3297,7 +3329,7 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
     optimizer = BackgroundTestOptimizer()
 
     def invalidate(_command, _timeout, backend):
-        backend.files[WORKSPACE_SCHEDULE] = b"people: [unclosed"
+        backend.files[WORKSPACE_SCHEDULE_SPEC] = b"people: [unclosed"
         return CommandResult("updated\n", "", 0)
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
@@ -3308,8 +3340,8 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
         optimizer_backend=optimizer,
     )
     with AuthenticatedTestClient(app) as client:
-        session = create_session(client, schedule_yaml())
-        client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
+        session = create_session(client, schedule_spec_yaml())
+        client.post(f"/v1/sessions/{session}/messages", json={"message": "Optimize."})
         optimizer.release.set()
         events = review_run_events(app, session)
         assert events[-1].type == "error"
@@ -3322,7 +3354,7 @@ def test_background_review_reports_safe_reasons_and_keeps_private_errors_hidden(
         else:
             assert message == PROVIDER_ERROR
         assert "secret-token" not in message
-        assert not any(event.type in {"schedule_applied", "done"} for event in events)
+        assert not any(event.type in {"schedule_spec_applied", "done"} for event in events)
 
 
 def test_background_review_at_the_history_limit_reports_a_failed_review():
@@ -3338,8 +3370,8 @@ def test_background_review_at_the_history_limit_reports_a_failed_review():
         optimizer_backend=optimizer,
     )
     with AuthenticatedTestClient(app) as client:
-        session = create_session(client, schedule_yaml())
-        client.post(f"/sessions/{session}/messages", json={"message": "Optimize."})
+        session = create_session(client, schedule_spec_yaml())
+        client.post(f"/v1/sessions/{session}/messages", json={"message": "Optimize."})
         optimizer.release.set()
         events = review_run_events(app, session)
         assert [event.type for event in events] == ["run_start", "response_end", "error"]
@@ -3353,14 +3385,14 @@ def test_session_attachment_total_counts_existing_files_and_releases_removed_byt
     )
     session_id = create_session(client)
     first = client.post(
-        f"/sessions/{session_id}/uploads", files=[("files", ("one.txt", b"1234", "text/plain"))]
+        f"/v1/sessions/{session_id}/uploads", files=[("files", ("one.txt", b"1234", "text/plain"))]
     ).json()[0]
-    rejected = client.post(f"/sessions/{session_id}/uploads", files=[("files", ("two.txt", b"567", "text/plain"))])
+    rejected = client.post(f"/v1/sessions/{session_id}/uploads", files=[("files", ("two.txt", b"567", "text/plain"))])
     assert rejected.status_code == 413
-    assert client.get(f"/sessions/{session_id}/uploads").json() == [first]
-    assert client.delete(f"/sessions/{session_id}/uploads/{first['id']}").is_success
+    assert client.get(f"/v1/sessions/{session_id}/uploads").json() == [first]
+    assert client.delete(f"/v1/sessions/{session_id}/uploads/{first['id']}").is_success
     assert client.post(
-        f"/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"123456", "text/plain"))]
+        f"/v1/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"123456", "text/plain"))]
     ).is_success
 
 
@@ -3370,7 +3402,7 @@ def test_upload_request_id_retries_preserve_the_original_file_at_the_session_lim
     )
     client = AuthenticatedTestClient(app)
     session_id = create_session(client)
-    route = f"/sessions/{session_id}/uploads"
+    route = f"/v1/sessions/{session_id}/uploads"
     payload = {"files": ("ward.txt", b"abc", "text/plain")}
     assert client.post(route, files=payload).status_code == 201
     upload_id = str(uuid4())
@@ -3403,9 +3435,11 @@ def test_concurrent_upload_retries_retain_one_file():
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
         ) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
             upload_id = str(uuid4())
-            route = f"/sessions/{session_id}/uploads?upload_id={upload_id}"
+            route = f"/v1/sessions/{session_id}/uploads?upload_id={upload_id}"
             responses = await asyncio.gather(
                 *[client.post(route, files={"files": ("ward.txt", b"abc", "text/plain")}) for _ in range(2)]
             )
@@ -3420,7 +3454,7 @@ def test_concurrent_upload_retries_retain_one_file():
 def test_upload_id_requires_one_file_and_a_valid_uuid():
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
-    route = f"/sessions/{session_id}/uploads"
+    route = f"/v1/sessions/{session_id}/uploads"
     files = [("files", (name, b"abc", "text/plain")) for name in ("one.txt", "two.txt")]
     assert client.post(route, params={"upload_id": str(uuid4())}, files=files).status_code == 422
     assert client.post(route, params={"upload_id": "invalid"}, files=files[:1]).status_code == 422
@@ -3438,12 +3472,12 @@ def test_upload_id_requires_one_file_and_a_valid_uuid():
 def test_upload_request_id_rejects_different_file_identity(filename, content, media_type):
     client = AuthenticatedTestClient(create_test_app(settings=make_settings(), provider=FakeProvider()))
     session_id = create_session(client)
-    route = f"/sessions/{session_id}/uploads?upload_id={uuid4()}"
+    route = f"/v1/sessions/{session_id}/uploads?upload_id={uuid4()}"
     original = client.post(route, files={"files": ("ward.txt", b"abc", "text/plain")})
     assert original.status_code == 201
     conflict = client.post(route, files={"files": (filename, content, media_type)})
     assert conflict.status_code == 409
-    assert client.get(f"/sessions/{session_id}/uploads").json() == original.json()
+    assert client.get(f"/v1/sessions/{session_id}/uploads").json() == original.json()
 
 
 def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled(monkeypatch):
@@ -3475,20 +3509,22 @@ def test_chunked_upload_body_is_bounded_before_the_whole_file_is_spooled(monkeyp
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver", headers=AI_AUTH_HEADERS
         ) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": schedule_yaml()})).json()["id"]
+            session_id = (await client.post("/v1/sessions", json={"schedule_spec_yaml": schedule_spec_yaml()})).json()[
+                "id"
+            ]
             accepted = await client.post(
-                f"/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"1234", "text/plain"))]
+                f"/v1/sessions/{session_id}/uploads", files=[("files", ("exact.txt", b"1234", "text/plain"))]
             )
             assert accepted.status_code == 201
             response = await client.post(
-                f"/sessions/{session_id}/uploads",
+                f"/v1/sessions/{session_id}/uploads",
                 content=body(),
                 headers={"Content-Type": "multipart/form-data; boundary=test-boundary"},
             )
             assert response.status_code == 413
             assert response.json()["detail"] == "AI request body is too large."
             assert len(consumed) < 10
-            assert (await client.get(f"/sessions/{session_id}/uploads")).json() == accepted.json()
+            assert (await client.get(f"/v1/sessions/{session_id}/uploads")).json() == accepted.json()
             assert any(file._rolled for file in spooled_files)
             assert all(file.closed for file in spooled_files)
 
@@ -3506,11 +3542,11 @@ def test_analysis_notes_survive_two_messages_in_separate_workspaces():
     app = create_test_app(settings=make_settings(), provider=provider, sandbox_factory=factory)
     with AuthenticatedTestClient(app) as client:
         sid = create_session(client)
-        first = client.post(f"/sessions/{sid}/messages", json={"message": "Inspect the source."})
+        first = client.post(f"/v1/sessions/{sid}/messages", json={"message": "Inspect the source."})
         assert first.status_code == 200
         session = app.state.session_store._sessions[sid]
         assert session.analysis.content == notes.encode()
-        second = client.post(f"/sessions/{sid}/messages", json={"message": "Confirmed. Continue."})
+        second = client.post(f"/v1/sessions/{sid}/messages", json={"message": "Confirmed. Continue."})
         assert second.status_code == 200
         assert "Used the mapping." in second.text
         assert len(factory.created) == 2

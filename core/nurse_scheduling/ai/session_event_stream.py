@@ -35,7 +35,7 @@ REPLACEABLE_EVENTS = frozenset(
     {
         "optimization_progress",
         "context_usage",
-        "schedule_change",
+        "schedule_spec_change",
         "provider_call",
         "cost_summary",
         "generation_progress",

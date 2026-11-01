@@ -36,11 +36,11 @@ from ..models import (
     SHIFT_TYPE_REQUIREMENT,
     SHIFT_TYPE_SUCCESSIONS,
 )
-from .validation import validate_frontend_schedule_yaml
+from .validation import validate_frontend_schedule_spec_yaml
 
 
 @dataclass(frozen=True)
-class PreparedOptimizerSchedule:
+class PreparedOptimizerSpec:
     """Outbound YAML and the server-only mapping needed to restore its workbook."""
 
     submission_yaml: str
@@ -192,12 +192,12 @@ def _remove_descriptions(value: Any) -> Any:
     return value
 
 
-def prepare_optimizer_schedule(schedule_yaml: str, max_schedule_bytes: int) -> PreparedOptimizerSchedule:
+def prepare_optimizer_spec(schedule_spec_yaml: str, max_schedule_bytes: int) -> PreparedOptimizerSpec:
     """Replace people IDs and descriptions as the Optimize and Export page does."""
-    validation = validate_frontend_schedule_yaml(schedule_yaml, max_schedule_bytes)
+    validation = validate_frontend_schedule_spec_yaml(schedule_spec_yaml, max_schedule_bytes)
     if not validation.valid:
         raise ValueError(validation.render())
-    payload = _load_yaml(schedule_yaml.encode("utf-8"))
+    payload = _load_yaml(schedule_spec_yaml.encode("utf-8"))
     if "export" not in payload:
         payload["export"] = _default_export_config(payload)
     people = payload["people"]
@@ -246,4 +246,4 @@ def prepare_optimizer_schedule(schedule_yaml: str, max_schedule_bytes: int) -> P
     yaml.default_flow_style = False
     yaml.representer.sort_base_mapping_type_on_output = False
     yaml.dump(_remove_descriptions(payload), output)
-    return PreparedOptimizerSchedule(output.getvalue().decode("utf-8"), original_id_by_anonymized_id, len(items))
+    return PreparedOptimizerSpec(output.getvalue().decode("utf-8"), original_id_by_anonymized_id, len(items))

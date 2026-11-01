@@ -19,18 +19,20 @@
 
 # This test is mostly AI generated.
 
-from nurse_scheduling.ai.schedule_context import describe_schedule
+from nurse_scheduling.ai.schedule_context import describe_schedule_spec
 
-from .ai_test_helper import base_schedule_payload, schedule_yaml
+from .ai_test_helper import base_schedule_payload, schedule_spec_yaml
 
 
-def test_describe_schedule_requires_reading_the_working_copy():
+def test_describe_schedule_spec_requires_reading_the_working_copy():
     payload = base_schedule_payload()
     payload["people"]["items"][0]["description"] = "private marker"
 
-    summary = describe_schedule(schedule_yaml(payload))
+    summary = describe_schedule_spec(schedule_spec_yaml(payload))
 
-    assert summary == "schedule.yaml is available at /workspace/schedule.yaml. Read it for schedule facts."
+    assert (
+        summary == "schedule-spec.yaml is available at /workspace/schedule-spec.yaml. Read it for Schedule Spec facts."
+    )
     assert "2026-01-01" not in summary
     assert "PEOPLE" not in summary
     assert "private marker" not in summary

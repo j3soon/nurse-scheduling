@@ -27,10 +27,15 @@ from ruamel.yaml.nodes import MappingNode, SequenceNode
 
 from ..loader import _load_yaml
 from ..models import AT_MOST_ONE_SHIFT_PER_DAY
-from .diff import ScheduleDiff, diff_schedules
-from .validation import ScheduleIssue, ScheduleValidationResult, new_schedule_issues, validate_frontend_schedule_yaml
+from .diff import ScheduleSpecDiff, diff_schedule_specs
+from .validation import (
+    ScheduleSpecIssue,
+    ScheduleSpecValidationResult,
+    new_schedule_spec_issues,
+    validate_frontend_schedule_spec_yaml,
+)
 
-SCHEDULE_FILENAME = "schedule.yaml"
+SCHEDULE_SPEC_FILENAME = "schedule-spec.yaml"
 REQUIRED_RULE_NOTICE = "The server restored the required 'at most one shift per day' rule."
 
 
@@ -43,52 +48,52 @@ class CandidateOutcome:
 
 
 @dataclass(frozen=True)
-class ScheduleProposal:
-    """A validated schedule change, applied when its run finishes, with what it changes."""
+class ScheduleSpecProposal:
+    """A validated Schedule Spec change, applied when its run finishes, with what it changes."""
 
     text: str
-    diff: ScheduleDiff
+    diff: ScheduleSpecDiff
 
 
 @dataclass(frozen=True)
-class ScheduleCandidateReview:
+class ScheduleSpecCandidateReview:
     """Trusted validation and change result for one complete candidate."""
 
     outcome: CandidateOutcome
-    proposal: ScheduleProposal | None
+    proposal: ScheduleSpecProposal | None
 
 
-def validate_schedule_change(
+def validate_schedule_spec_change(
     base_text: str, candidate: str, max_bytes: int
-) -> tuple[ScheduleValidationResult, tuple[ScheduleIssue, ...]]:
+) -> tuple[ScheduleSpecValidationResult, tuple[ScheduleSpecIssue, ...]]:
     """Allow existing incomplete input while refusing problems introduced by an edit."""
-    validation = validate_frontend_schedule_yaml(candidate, max_bytes, allow_empty=True)
+    validation = validate_frontend_schedule_spec_yaml(candidate, max_bytes, allow_empty=True)
     if validation.valid:
         return validation, ()
-    # Keep the original incomplete-state issues when editing an empty schedule.
+    # Keep the original incomplete-state issues when editing an empty Schedule Spec.
     # Accepting an empty reset must not prevent adding people before setting dates.
-    base_validation = validate_frontend_schedule_yaml(base_text, max_bytes)
-    return validation, new_schedule_issues(base_validation, validation)
+    base_validation = validate_frontend_schedule_spec_yaml(base_text, max_bytes)
+    return validation, new_schedule_spec_issues(base_validation, validation)
 
 
-def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) -> ScheduleCandidateReview:
+def review_schedule_spec_candidate(base_text: str, candidate: str, max_bytes: int) -> ScheduleSpecCandidateReview:
     """Validate and compare untrusted candidate text outside the sandbox."""
     if candidate == base_text:
-        return ScheduleCandidateReview(CandidateOutcome(f"{SCHEDULE_FILENAME} is unchanged.", True), None)
+        return ScheduleSpecCandidateReview(CandidateOutcome(f"{SCHEDULE_SPEC_FILENAME} is unchanged.", True), None)
 
-    validation, introduced = validate_schedule_change(base_text, candidate, max_bytes)
+    validation, introduced = validate_schedule_spec_change(base_text, candidate, max_bytes)
     notice = ""
     if not validation.valid:
         completed = _restore_required_rule(candidate, max_bytes)
         if completed != candidate:
             candidate = completed
-            validation, introduced = validate_schedule_change(base_text, candidate, max_bytes)
+            validation, introduced = validate_schedule_spec_change(base_text, candidate, max_bytes)
             notice = REQUIRED_RULE_NOTICE + "\n"
     if introduced:
         problems = "\n".join(f"- {issue.location}: {issue.message}" for issue in introduced)
-        return ScheduleCandidateReview(
+        return ScheduleSpecCandidateReview(
             CandidateOutcome(
-                f"{SCHEDULE_FILENAME} introduces problems and cannot be applied.\n{problems}",
+                f"{SCHEDULE_SPEC_FILENAME} introduces problems and cannot be applied.\n{problems}",
                 False,
             ),
             None,
@@ -98,22 +103,22 @@ def review_schedule_candidate(base_text: str, candidate: str, max_bytes: int) ->
         before = _load_yaml(base_text.encode("utf-8"))
         after = _load_yaml(candidate.encode("utf-8"))
     except (YAMLError, TypeError, ValueError) as error:
-        return ScheduleCandidateReview(
-            CandidateOutcome(f"The schedule could not be compared. {error}", False),
+        return ScheduleSpecCandidateReview(
+            CandidateOutcome(f"The Schedule Spec could not be compared. {error}", False),
             None,
         )
 
-    diff = diff_schedules(before, after)
-    proposal = ScheduleProposal(text=candidate, diff=diff)
+    diff = diff_schedule_specs(before, after)
+    proposal = ScheduleSpecProposal(text=candidate, diff=diff)
     if validation.valid:
-        outcome = CandidateOutcome(f"{notice}{SCHEDULE_FILENAME} is valid. Changes so far:\n{diff.render()}", True)
+        outcome = CandidateOutcome(f"{notice}{SCHEDULE_SPEC_FILENAME} is valid. Changes so far:\n{diff.render()}", True)
     else:
         outcome = CandidateOutcome(
-            f"{SCHEDULE_FILENAME} still has problems that were already there, and this edit added none.\n"
+            f"{SCHEDULE_SPEC_FILENAME} still has problems that were already there, and this edit added none.\n"
             f"{validation.render()}\nChanges so far:\n{diff.render()}",
             True,
         )
-    return ScheduleCandidateReview(outcome, proposal)
+    return ScheduleSpecCandidateReview(outcome, proposal)
 
 
 def _restore_required_rule(candidate: str, max_bytes: int) -> str:
@@ -133,7 +138,11 @@ def _restore_required_rule(candidate: str, max_bytes: int) -> str:
         expected = {**data, "preferences": [{"type": AT_MOST_ONE_SHIFT_PER_DAY}, *preferences]}
         if completed is None or _load_yaml(completed.encode("utf-8"), reject_aliases=True) != expected:
             return candidate
-        return completed if validate_frontend_schedule_yaml(completed, max_bytes, allow_empty=True).valid else candidate
+        return (
+            completed
+            if validate_frontend_schedule_spec_yaml(completed, max_bytes, allow_empty=True).valid
+            else candidate
+        )
     except (YAMLError, TypeError, ValueError):
         return candidate
 

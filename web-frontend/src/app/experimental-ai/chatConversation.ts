@@ -35,16 +35,16 @@ export function clearStoredConversation(): void {
 export interface StoredChatConversation {
   lastActivityAt?: number;
   historyPending?: boolean;
-  preserveBrowserSchedule?: boolean;
+  preserveBrowserScheduleSpec?: boolean;
   sessionId: string;
   endpoint: string;
   expiresAt: number;
   retentionSeconds: number;
   messages: ChatMessage[];
-  syncedSchedule: string;
-  syncedBrowserSchedule?: string;
+  syncedScheduleSpec: string;
+  syncedBrowserScheduleSpec?: string;
   // Run identity survives replacement replay and a later browser Undo.
-  appliedScheduleRuns?: Record<string, string | null>;
+  appliedScheduleSpecRuns?: Record<string, string | null>;
   sessionEventId?: number;
   activeOptimization?: ActiveOptimization | null;
   backendVersion?: string;
@@ -65,17 +65,17 @@ function isOptionalStringArray(value: unknown): boolean {
 
 function isActivityEntry(value: unknown): value is ActivityEntry {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false;
-  if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-applied') {
+  if (value.kind === 'notice' || value.kind === 'response' || value.kind === 'reasoning' || value.kind === 'schedule-spec-applied') {
     return 'text' in value && typeof value.text === 'string'
       && (!('context' in value) || value.context === 'complete' || value.context === 'omitted')
       && (!('notice' in value) || typeof value.notice === 'string')
       && (!('browserApplied' in value) || typeof value.browserApplied === 'boolean')
       && (!('runId' in value) || typeof value.runId === 'string');
   }
-  if (value.kind === 'schedule-check') {
+  if (value.kind === 'schedule-spec-check') {
     return 'text' in value && typeof value.text === 'string' && 'ok' in value && typeof value.ok === 'boolean';
   }
-  if (value.kind === 'schedule-change') {
+  if (value.kind === 'schedule-spec-change') {
     return 'before' in value && typeof value.before === 'string'
       && 'after' in value && typeof value.after === 'string';
   }
@@ -156,7 +156,7 @@ export function parseStoredConversation(input: unknown): StoredChatConversation 
     if (
       (value.lastActivityAt !== undefined && !Number.isFinite(value.lastActivityAt))
       || (value.historyPending !== undefined && typeof value.historyPending !== 'boolean')
-      || (value.preserveBrowserSchedule !== undefined && typeof value.preserveBrowserSchedule !== 'boolean')
+      || (value.preserveBrowserScheduleSpec !== undefined && typeof value.preserveBrowserScheduleSpec !== 'boolean')
       || typeof value.sessionId !== 'string'
       || !value.sessionId
       || typeof value.endpoint !== 'string'
@@ -191,11 +191,11 @@ export function parseStoredConversation(input: unknown): StoredChatConversation 
           ))
         ))
       ))
-      || typeof value.syncedSchedule !== 'string'
-      || (value.syncedBrowserSchedule !== undefined && typeof value.syncedBrowserSchedule !== 'string')
-      || (value.appliedScheduleRuns !== undefined && (value.appliedScheduleRuns === null
-        || typeof value.appliedScheduleRuns !== 'object' || Array.isArray(value.appliedScheduleRuns)
-        || !Object.values(value.appliedScheduleRuns).every(notice => notice === null || typeof notice === 'string')))
+      || typeof value.syncedScheduleSpec !== 'string'
+      || (value.syncedBrowserScheduleSpec !== undefined && typeof value.syncedBrowserScheduleSpec !== 'string')
+      || (value.appliedScheduleSpecRuns !== undefined && (value.appliedScheduleSpecRuns === null
+        || typeof value.appliedScheduleSpecRuns !== 'object' || Array.isArray(value.appliedScheduleSpecRuns)
+        || !Object.values(value.appliedScheduleSpecRuns).every(notice => notice === null || typeof notice === 'string')))
       || (value.backgroundAssistantId !== undefined && value.backgroundAssistantId !== null
         && typeof value.backgroundAssistantId !== 'string')
     ) return null;

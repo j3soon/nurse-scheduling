@@ -65,7 +65,7 @@ def inspect_tiers(context, source, *, max_tiers=100):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context", type=Path, default=Path("/workspace/schedule-context.json"))
-    parser.add_argument("--source", type=Path, default=Path("/workspace/schedule.yaml"))
+    parser.add_argument("--source", type=Path, default=Path("/workspace/schedule-spec.yaml"))
     parser.add_argument("--max-tiers", type=int, default=100, help="Returned weight-tier limit, at most 100.")
     args = parser.parse_args()
     try:

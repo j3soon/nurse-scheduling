@@ -100,7 +100,7 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path, newline):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
     source = fixture_text("ward87").replace("\n", newline)
-    (tmp_path / "schedule.yaml").write_bytes(source.encode("utf-8"))
+    (tmp_path / "schedule-spec.yaml").write_bytes(source.encode("utf-8"))
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
@@ -109,7 +109,7 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path, newline):
             "--context",
             str(tmp_path / "context.json"),
             "--source",
-            str(tmp_path / "schedule.yaml"),
+            str(tmp_path / "schedule-spec.yaml"),
             "--weight=-.inf",
             "--max-requests",
             "0",

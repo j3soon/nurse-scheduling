@@ -44,7 +44,7 @@ from .provider import ProviderCall, ProviderRetry, TokenUsage
 from .session_event_stream import SessionEvent
 from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
 from .transcript import AgentMessage
-from .workspace import AgentAnalysis, AgentDownload, AgentScheduleChange
+from .workspace import AgentAnalysis, AgentDownload, AgentScheduleSpecChange
 
 
 @dataclass
@@ -73,7 +73,7 @@ class RunOutput:
         return interrupted_entries(entries, stop_reason)
 
     def consume(
-        self, event: AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis
+        self, event: AgentEvent | AgentScheduleSpecChange | AgentDownload | AgentAnalysis
     ) -> AgentSessionRunEvent | None:
         if isinstance(event, AgentText):
             self.pending_text.append(event.text)
@@ -152,15 +152,15 @@ class RunOutput:
                 "result": event.result,
                 "ok": event.ok,
             }
-            if event.details and "schedule_check" in event.details:
-                tool_event["schedule_check"] = event.details["schedule_check"]
+            if event.details and "schedule_spec_check" in event.details:
+                tool_event["schedule_spec_check"] = event.details["schedule_spec_check"]
             if event.details and "replay_arguments" in event.details:
                 tool_event["replay_arguments"] = event.details["replay_arguments"]
             return tool_event
         elif isinstance(event, AgentSteering):
             return {"type": "steering", "message_id": event.message_id, "message": event.text}
-        elif isinstance(event, AgentScheduleChange):
-            return {"type": "schedule_change", "schedule_yaml": event.schedule_yaml}
+        elif isinstance(event, AgentScheduleSpecChange):
+            return {"type": "schedule_spec_change", "schedule_spec_yaml": event.schedule_spec_yaml}
         elif isinstance(event, AgentAnalysis):
             self.analysis = event
         elif isinstance(event, AgentDownload):

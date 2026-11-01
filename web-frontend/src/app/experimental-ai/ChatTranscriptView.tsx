@@ -135,7 +135,7 @@ export function ChatTranscriptView({
               {message.activity && (
                 <AssistantActivity
                   entries={message.activity.filter(entry => (
-                    entry.kind === 'notice' || entry.kind === 'response' || entry.kind === 'schedule-applied' || entry.kind === 'schedule-check'
+                    entry.kind === 'notice' || entry.kind === 'response' || entry.kind === 'schedule-spec-applied' || entry.kind === 'schedule-spec-check'
                       || entry.kind === 'compaction'
                       || (entry.kind === 'reasoning' ? showReasoning : showTools)
                   ))}

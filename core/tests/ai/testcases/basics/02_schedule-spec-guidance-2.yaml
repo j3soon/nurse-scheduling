@@ -3,7 +3,7 @@
 steps:
   - date: 2026-10-28T09:00:00+08:00
   - user: >-
-      Build schedule data for next month. People are P1-P10.
+      Build Schedule Spec for next month. People are P1-P10.
       A/D/E/N need 1/2/2/2 people daily. P1 and P2 are head nurses and P3-P6 are
       seniors. No primary shifts, histories, requests or holiday import.
       Forbid N to D and N to E, limit consecutive workdays to five, and

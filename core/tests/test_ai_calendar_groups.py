@@ -30,7 +30,7 @@ from nurse_scheduling.ai.attachment_tools.build_taiwan_holiday_groups import bui
 from nurse_scheduling.ai.schema import TAIWAN_HOLIDAYS_SOURCE
 from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
-from .ai_test_helper import base_schedule_payload, schedule_yaml
+from .ai_test_helper import base_schedule_payload, schedule_spec_yaml
 
 
 def test_calendar_groups_include_holidays_and_makeup_workdays_without_mutating_input():
@@ -88,8 +88,8 @@ def test_calendar_cli_works_in_a_hydrated_directory_without_project_imports(tmp_
     source = REFERENCE_ATTACHMENT_TOOLS["/reference/tools/build_taiwan_holiday_groups.py"]
     tool = tmp_path / source.name
     tool.write_bytes(source.read_bytes())
-    schedule = tmp_path / "schedule.yaml"
-    schedule.write_text(schedule_yaml(), encoding="utf-8")
+    schedule = tmp_path / "schedule-spec.yaml"
+    schedule.write_text(schedule_spec_yaml(), encoding="utf-8")
     before = schedule.read_bytes()
     completed = subprocess.run(
         [

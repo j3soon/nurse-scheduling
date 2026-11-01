@@ -98,7 +98,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate Taiwan calendar groups as JSON. Preserves custom groups and does not edit files."
     )
-    parser.add_argument("schedule", nargs="?", type=Path, default=Path("/workspace/schedule.yaml"))
+    parser.add_argument("schedule", nargs="?", type=Path, default=Path("/workspace/schedule-spec.yaml"))
     parser.add_argument("--calendar", type=Path, default=Path("/reference/taiwanHolidays.ts"))
     parser.add_argument("--start", help="New start date YYYY-MM-DD. Requires --end.")
     parser.add_argument("--end", help="New end date YYYY-MM-DD. Requires --start.")

@@ -245,7 +245,7 @@ and current session recovery working.
 - `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
-  Commit and abort through the owning `RunSnapshot`. Queue a schedule update
+  Commit and abort through the owning `RunSnapshot`. Queue a Schedule Spec update
   received during a run and apply it after the run's entries, so a browser
   update never discards the run.
 - Include delayed model discovery in admission and cancellation tests. Injecting
@@ -387,7 +387,7 @@ and current session recovery working.
   Keep source inspection separate from schedule construction and policy audits.
 - Fix repeated representation failures at the data boundary before adding prompt
   exceptions. Use the app's YAML 1.2 semantics for both reading and writing
-  schedule data. Prefer the installed library over custom scalar converters.
+  Schedule Spec. Prefer the installed library over custom scalar converters.
   Keep schema validation in the trusted server instead of asking the model to
   maintain a second validator.
 - When adding a bundled reference, include it in sandbox hydration, production
@@ -410,10 +410,10 @@ and current session recovery working.
 - Sandbox allocation is lazy. Only file tools and optimizer start need a
   sandbox. Optimizer status and finish-now controls must not allocate or resume
   one. Tests that verify attachment hydration must call a sandbox tool.
-- Keep backend schedule format invariants in `NurseSchedulingData`. Implement
+- Keep backend Schedule Spec format invariants in `ScheduleSpec`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
-- Parse schedules through `loader._load_yaml`, including comparisons of draft
+- Parse Schedule Specs through `loader._load_yaml`, including comparisons of draft
   schedules. It bounds nesting and alias expansion before constructing data.
   Direct `YAML.load` calls bypass those bounds.
 - Parse, validate, and compile schedules in worker threads, not on the event
@@ -421,12 +421,12 @@ and current session recovery working.
   session's stream.
 - The assistant is reachable only from the web frontend, so its schedule tools
   target the frontend subset alone. Validate through
-  `ai/validation.py`, and do not expose the full backend schedule format, which
+  `ai/validation.py`, and do not expose the full backend Schedule Spec format, which
   accepts shapes the editor cannot represent.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert
   or repair additional input shapes.
-- Keep schedule facts out of the prompt summary in `describe_schedule` and put
+- Keep Schedule Spec facts out of the prompt summary in `describe_schedule_spec` and put
   them in a tool result instead. The evaluation asserts that a reading case
   cannot be answered from the summary alone, so listing item IDs or line numbers
   there turns a reading case into a copying case. See
@@ -553,24 +553,24 @@ and current session recovery working.
   successful run commit, and count it in session memory. Invalidate it when
   sources change. Treat it as untrusted working notes, not user approval.
   Do not retain arbitrary workspace files or execute saved notes automatically.
-- Keep unfinished edits in `/workspace/schedule.yaml`, including rejected drafts.
+- Keep unfinished edits in `/workspace/schedule-spec.yaml`, including rejected drafts.
   Keep authoritative last accepted contents outside the writable sandbox and
-  expose them at `/workspace/last-accepted-schedule.yaml`. Refresh that copy
+  expose them at `/workspace/last-accepted-schedule-spec.yaml`. Refresh that copy
   after mutating tool calls, even if only the backup changed. Keep validation
   feedback visible to the model and user. Require the current draft to pass
   trusted review before optimization or successful completion. A nonzero command
-  exit alone must not undo an accepted schedule change. Pair deterministic
+  exit alone must not undo an accepted Schedule Spec change. Pair deterministic
   recovery checks with focused live cases for the model's response to validation
   feedback. Grade the required recovery action as well as the final schedule.
   Keep those cases with the implementation commit.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
-  review, and only when the restored schedule data passes the existing frontend
+  review, and only when the restored Schedule Spec passes the existing frontend
   validator. Insert the rule as text so the rest of the model's text, including
   comments and key order, stays unchanged. Report the restoration to the model
   and user. Keep the workspace, inspection context, preview and optimizer input
   on the same validated text. Do not auto-repair optional staffing, rest,
   eligibility or preference rules. Test edits after a reset when changing
-  validation. Empty editor schedule data must not require optimization dates.
+  validation. Empty editor Schedule Spec must not require optimization dates.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
@@ -603,7 +603,7 @@ and current session recovery working.
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup
-  turns. Keep trusted validation after every possible schedule change and the
+  turns. Keep trusted validation after every possible Schedule Spec change and the
   structural diff at review, since those catch a dropped entry that still
   parses. Emit an intermediate working-copy preview only after that trusted
   validation.
@@ -700,9 +700,9 @@ and current session recovery working.
 - For streamed multipart limits, raise `MultiPartException` so Starlette closes
   temporary files, then translate the rejection to HTTP 413. Check file closure
   as well as the response and consumed bytes.
-- Bound submitted scheduling data by its alias expansion and nesting depth as
+- Bound submitted Schedule Spec by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
-  parse events without building the structure, and both the API and `load_data`
+  parse events without building the structure, and both the API and `load_schedule_spec`
   refuse past either bound. Read untrusted data off the event loop.
 
 ## Testing
@@ -719,9 +719,9 @@ and current session recovery working.
   a reason the assertion does not name. `tests/test_usage_metrics.py` shifts its
   whole timeline onto the current reporting week for this reason.
 - Resolve input selectors and input-derived invariants in
-  `NurseSchedulingData.compiled_schedule`. Scheduler, preference, and export
+  `ScheduleSpec.compiled_schedule_spec`. Scheduler, preference, and export
   phases should consume that representation instead of reparsing YAML fields.
-- Treat a validated schedule and its compiled representation as one snapshot.
+- Treat a validated Schedule Spec and its compiled representation as one snapshot.
   Revalidate changed input instead of mutating a validated model and reusing
   stale compiled data.
 - Keep server-facing solver traits in

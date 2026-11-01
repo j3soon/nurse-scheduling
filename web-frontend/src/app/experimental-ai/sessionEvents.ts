@@ -23,7 +23,7 @@ import type {
   ContextUsage,
   ModelSelection,
   ModelInput,
-  ScheduleApplied,
+  ScheduleSpecApplied,
   OptimizationActivity,
   OptimizationProgressActivity,
   SessionReset,
@@ -50,8 +50,8 @@ export type SessionEvent = (
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
   | { type: 'steering'; messageId: string; message: string }
-  | { type: 'schedule_change'; scheduleYaml: string }
-  | { type: 'schedule_applied'; applied: ScheduleApplied }
+  | { type: 'schedule_spec_change'; scheduleSpecYaml: string }
+  | { type: 'schedule_spec_applied'; applied: ScheduleSpecApplied }
   | { type: 'download'; downloadId: string }
   | { type: 'warning'; message: string }
   | { type: 'provider_retry'; message: string }

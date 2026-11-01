@@ -27,7 +27,7 @@ const conversation = () => ({
   sessionId: 'session', endpoint: '/ai', expiresAt: Date.now() + 60000, retentionSeconds: 3600,
   messages: [{ id: 'question', role: 'user', content: 'Question' },
     { id: 'answer', role: 'assistant', content: 'Partial answer', status: 'pending' }],
-  syncedSchedule: 'schedule', proposalDiff: null, sessionEventId: 9,
+  syncedScheduleSpec: 'schedule', proposalDiff: null, sessionEventId: 9,
 });
 
 describe('stored conversation compatibility', () => {
@@ -39,13 +39,13 @@ describe('stored conversation compatibility', () => {
     expect(sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY)).toBeNull();
   });
 
-  it('restores replayed schedule changes that kept browser schedule data unchanged', () => {
-    const activity = { kind: 'schedule-applied', text: 'Changed a rule', browserApplied: false };
+  it('restores replayed Schedule Spec changes that kept browser Schedule Spec unchanged', () => {
+    const activity = { kind: 'schedule-spec-applied', text: 'Changed a rule', browserApplied: false };
     sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
-      ...conversation(), preserveBrowserSchedule: true,
+      ...conversation(), preserveBrowserScheduleSpec: true,
       messages: [{ id: 'answer', role: 'assistant', content: '', activity: [activity] }],
     }));
-    expect(readStoredConversation()).toMatchObject({ preserveBrowserSchedule: true, messages: [{ activity: [activity] }] });
+    expect(readStoredConversation()).toMatchObject({ preserveBrowserScheduleSpec: true, messages: [{ activity: [activity] }] });
   });
 
   it('restores the legacy pending request and retained trim warning without dropping transcript fields', () => {
@@ -104,9 +104,9 @@ describe('stored conversation compatibility', () => {
         assistantId: 'answer', createdAt: 100, uploading: true, pendingFiles: [1] } },
       { messages: [{ id: 'answer', role: 'assistant', content: '', unsentFiles: 'two.txt' }] },
       { sessionEventId: -1 },
-      { appliedScheduleRuns: { run: 123 } },
-      { appliedScheduleRuns: [] },
-      { syncedBrowserSchedule: 123 },
+      { appliedScheduleSpecRuns: { run: 123 } },
+      { appliedScheduleSpecRuns: [] },
+      { syncedBrowserScheduleSpec: 123 },
     ]) {
       sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), ...change }));
       expect(readStoredConversation()).toBeNull();

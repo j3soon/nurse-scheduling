@@ -5,7 +5,7 @@ steps:
   - yaml: one-day.yaml
   - user: >-
       All scheduling requirements are already agreed. Add Bob to the people
-      list. Keep all other schedule data unchanged.
+      list. Keep all other Schedule Spec unchanged.
   - schedule:
       added:
         people.items:

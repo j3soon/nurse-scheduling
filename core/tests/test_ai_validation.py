@@ -22,31 +22,31 @@
 from nurse_scheduling.ai.validation import (
     MAX_ISSUE_MESSAGE_CHARS,
     MAX_VALIDATION_ISSUES,
-    validate_frontend_schedule_yaml,
+    validate_frontend_schedule_spec_yaml,
 )
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_spec_yaml
 
 
 def test_accepts_frontend_generated_schedule():
-    result = validate_frontend_schedule_yaml(schedule_yaml(base_schedule_payload()), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(base_schedule_payload()), SCHEDULE_BYTE_LIMIT)
 
     assert result.valid
     assert result.issues == ()
-    assert result.render() == "The schedule is valid for the web frontend editor."
+    assert result.render() == "The Schedule Spec is valid for the web frontend editor."
 
 
 def test_empty_editor_state_requires_explicit_allowance():
     from tests.ai.schema import FIXTURES
 
     empty = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
-    assert validate_frontend_schedule_yaml(empty, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    assert validate_frontend_schedule_spec_yaml(empty, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
     omitted_defaults = empty.replace("  groups: []\n", "").replace(
         "dates:\n  range: {}\n  items: []", "dates:\n  range: {}"
     )
-    assert validate_frontend_schedule_yaml(omitted_defaults, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    assert validate_frontend_schedule_spec_yaml(omitted_defaults, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
     # The optimizer still needs complete dates, even for an accepted editor reset.
-    assert not validate_frontend_schedule_yaml(empty, SCHEDULE_BYTE_LIMIT).valid
+    assert not validate_frontend_schedule_spec_yaml(empty, SCHEDULE_BYTE_LIMIT).valid
     for invalid in (
         empty.replace("people:\n  items: []", "people:\n  items: [{id: 123}]"),
         empty.replace("range: {}", "range: {startDate: '2026-01-01'}"),
@@ -55,8 +55,8 @@ def test_empty_editor_state_requires_explicit_allowance():
         empty + "export: {formatting: [{people: [missing]}]}\n",
         empty + "appVersion: 123\n",
     ):
-        assert not validate_frontend_schedule_yaml(invalid, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
-    assert validate_frontend_schedule_yaml(
+        assert not validate_frontend_schedule_spec_yaml(invalid, SCHEDULE_BYTE_LIMIT, allow_empty=True).valid
+    assert validate_frontend_schedule_spec_yaml(
         empty + "appVersion: test\nexport: {formatting: [], extraColumns: [], extraRows: []}\n",
         SCHEDULE_BYTE_LIMIT,
         allow_empty=True,
@@ -75,7 +75,7 @@ def test_rejects_backend_only_shape_the_editor_cannot_represent():
         }
     )
 
-    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any("must not contain nested references" in issue.message for issue in result.issues)
@@ -85,7 +85,7 @@ def test_rejects_optional_backend_field_required_by_the_editor():
     payload = base_schedule_payload()
     del payload["people"]["items"][1]["description"]
 
-    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any("people.items[1].description is required" in issue.message for issue in result.issues)
@@ -95,7 +95,7 @@ def test_reports_field_errors_with_schedule_paths():
     payload = base_schedule_payload()
     payload["people"]["items"][0]["history"] = "not-a-list"
 
-    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert any(issue.location.startswith("people.items[0].history") for issue in result.issues)
@@ -104,7 +104,7 @@ def test_reports_field_errors_with_schedule_paths():
 def test_rejects_yaml_aliases():
     schedule = "anchor: &shared {}\napiVersion: alpha\ncopy: *shared\n"
 
-    result = validate_frontend_schedule_yaml(schedule, SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule, SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert result.issues[0].location == "(document)"
@@ -112,7 +112,7 @@ def test_rejects_yaml_aliases():
 
 
 def test_rejects_unreadable_yaml():
-    result = validate_frontend_schedule_yaml("people: [unclosed\n", SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml("people: [unclosed\n", SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert result.issues[0].location == "(document)"
@@ -120,16 +120,16 @@ def test_rejects_unreadable_yaml():
 
 
 def test_rejects_non_mapping_document():
-    result = validate_frontend_schedule_yaml("- just-a-list\n", SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml("- just-a-list\n", SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert "top-level mapping" in result.issues[0].message
 
 
 def test_rejects_schedule_over_the_byte_limit():
-    schedule = schedule_yaml(base_schedule_payload())
+    schedule = schedule_spec_yaml(base_schedule_payload())
 
-    result = validate_frontend_schedule_yaml(schedule, len(schedule.encode("utf-8")) - 1)
+    result = validate_frontend_schedule_spec_yaml(schedule, len(schedule.encode("utf-8")) - 1)
 
     assert not result.valid
     assert "exceeds the limit" in result.issues[0].message
@@ -139,7 +139,7 @@ def test_bounds_the_reported_issue_count():
     payload = base_schedule_payload()
     payload["people"]["items"] = [{"id": [], "description": ""} for _ in range(MAX_VALIDATION_ISSUES)]
 
-    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not result.valid
     assert len(result.issues) == MAX_VALIDATION_ISSUES
