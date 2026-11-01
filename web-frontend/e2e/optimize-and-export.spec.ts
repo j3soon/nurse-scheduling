@@ -72,7 +72,7 @@ test('optimize and export submits YAML to the backend and renders success metada
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
   await expect(page.getByText('output.xlsx')).toBeVisible();
   expect(submittedBody).toContain('name="schedule_spec_file"');
-  expect(submittedBody).toContain('filename="schedule.yaml"');
+  expect(submittedBody).toContain('filename="schedule-spec.yaml"');
   expect(submittedBody).not.toContain('name="schedule_spec_yaml"');
   expect(submittedBody).toContain('2026-05-01');
   expect(submittedBody).toContain('prettify');

@@ -69,10 +69,10 @@ Pi's design guides the whole agent. These implementation differences remain:
   cap below the known normal allowance. If recovery compaction skips or fails,
   normal output-limit handling retains the response and refuses its partial tool calls.
   Manual compaction uses shared run admission, Stop, replay, and persistence.
-  It requires an idle chat instead of implicitly stopping an active schedule
-  operation. Use Stop before compacting an active chat.
+  It requires an idle chat instead of implicitly stopping an active AI
+  run. Use Stop before compacting an active chat.
   The UI combines Pi's two ineligible cases into one skipped notice.
-- Status messages stay with their user question. They describe the schedule
+- Status messages stay with their user question. They describe the Schedule Spec
   workspace and cannot replace the request that starts a conversation turn.
   Summaries from failed or cancelled runs are invalidated because those runs
   discard their temporary workspace.
@@ -100,7 +100,7 @@ Pi's design guides the whole agent. These implementation differences remain:
 | Parallel tool executions | Parallel by default | `AI_AGENT_MAX_PARALLEL_TOOLS=16` |
 | Command deadline | Optional tool timeout, no default | `AI_SANDBOX_COMMAND_TIMEOUT_SECONDS=60`. A tool can request a shorter deadline. |
 | Agent run deadline | N/A | `AI_SANDBOX_TURN_TIMEOUT_SECONDS=21600` (6 hours) |
-| Default sandbox file read | N/A | 64 MiB. Schedule and ZIP reads use their specific limits. |
+| Default sandbox file read | N/A | 64 MiB. Schedule Spec and ZIP reads use their specific limits. |
 | Captured command output | Bounded tail in memory, full output saved to a file | Same. Capture runs inside the sandbox. The model receives at most 2,000 lines or 50 KiB and the full log path when truncated. |
 | JSON request body | N/A | 64 MiB, counted before JSON parsing. |
 | Schedule Spec YAML | N/A | 16,000,000 bytes (16 MB) |

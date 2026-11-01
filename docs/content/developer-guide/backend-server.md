@@ -64,7 +64,7 @@ flowchart TB
     Worker -->|Commands and outcomes| Controller
     Worker -->|Run job| Executor
     Executor <-->|Events, controls, result| Runner
-    Runner -->|Schedule| Engine
+    Runner -->|Schedule Spec| Engine
     Controller -->|Persist| Store
     Maintenance -->|Cleanup| Controller
     Store -->|Either| Memory
@@ -189,7 +189,7 @@ checkpointing it outside the child process.
 | `GET` | `/optimize/{job_id}/events` | Replay and stream job events over SSE. |
 | `POST` | `/optimize/{job_id}/cancel` | Cancel a queued or running job. |
 | `POST` | `/optimize/{job_id}/finish-now` | Request the current feasible result when supported. |
-| `GET` | `/optimize/{job_id}/xlsx` | Download the optimized schedule XLSX artifact. |
+| `GET` | `/optimize/{job_id}/xlsx` | Download the schedule as XLSX. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
 
 The `POST /schedule_spec/optimize` response includes `backend` with the accepting API

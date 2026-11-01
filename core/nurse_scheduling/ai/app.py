@@ -1080,11 +1080,11 @@ def create_app(
         request: UpdateScheduleSpecRequest,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Point an existing session at the schedule the browser now holds."""
+        """Point an existing session at the Schedule Spec the browser now holds."""
         if len(request.schedule_spec_yaml.encode("utf-8")) > settings.max_schedule_bytes:
             raise HTTPException(status_code=413, detail="The Schedule Spec is too large for the AI service.")
         base = store.require_owned(session_id, owner).schedule_spec_yaml
-        # Parsing a large schedule on the event loop would stall every session's stream.
+        # Parsing a large Schedule Spec on the event loop would stall every session's stream.
         data_changed = await asyncio.to_thread(schedule_spec_changed, base, request.schedule_spec_yaml)
         store.update_schedule_spec(session_id, owner, request.schedule_spec_yaml, compared=(base, data_changed))
         # A retry repeats the same update, so the browser can send it again until it is saved.

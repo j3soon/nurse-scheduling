@@ -212,7 +212,7 @@ test('optimize and export works against a real local HTTP server instead of Play
     await expect(liveResult.getByText('99', { exact: true })).toBeVisible();
     await expect(liveResult.getByText('OPTIMAL')).toBeVisible();
     expect(submittedBody).toContain('name="schedule_spec_file"');
-    expect(submittedBody).toContain('filename="schedule.yaml"');
+    expect(submittedBody).toContain('filename="schedule-spec.yaml"');
     expect(submittedBody).not.toContain('name="schedule_spec_yaml"');
     expect(submittedBody).toContain('2026-05-01');
     expect(submittedBody).toContain('name="solver"');

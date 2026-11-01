@@ -1,4 +1,4 @@
-# Frontend-editable Schedule Spec.yaml
+# Frontend-editable Schedule Spec YAML
 
 ## Core structure: dates, people, and shift types
 
@@ -22,14 +22,14 @@ Selector fidelity:
 - Keep date selectors in the requested form. For example, `01`, `2025-11-01`, and a date-group ID are distinct.
 - Quote a YAML string containing `: `, `#`, or another syntax-significant character.
 - Before renaming an item or group, confirm the new ID does not collide with any item or group ID in that section.
-  If it does, explain the collision and leave the schedule unchanged.
+  If it does, explain the collision and leave the Schedule Spec unchanged.
 - A rename updates the declared ID and every exact reference to it. People IDs may occur in people groups,
   preferences, and export rules. Shift-type IDs may occur in shift-type groups, people history, preferences, and
   export rules. Group IDs may occur in preferences and export rules. Do not replace substrings inside other IDs.
 
 ---
 
-Path: schedule
+Path: schedule_spec
 
 Top-level frontend-editable Schedule Spec document.
 
@@ -85,7 +85,7 @@ Fields for a configured range:
 Rules:
 - `endDate` must be on or after `startDate`.
 - Expanding means moving `startDate` earlier or `endDate` later. Before any expansion, ask whether to renew the Taiwan
-  holiday groups and wait for an explicit answer. Do not edit the schedule in the question turn.
+  holiday groups and wait for an explicit answer. Do not edit the Schedule Spec in the question turn.
 - A date ID is `D` for a single-month range, `MM-DD` for a multi-month range within one year, and `YYYY-MM-DD` for a
   range crossing years. If a range change selects a different format, migrate every concrete date reference in date
   groups, preference `date` and `countDates` fields, and export date selectors to the new format.
@@ -103,7 +103,7 @@ dates:
     startDate: 2026-01-01
     endDate: 2026-01-31
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - dates
@@ -153,7 +153,7 @@ dates:
       description: ''
       members: ['2026-01-01', '2026-01-02']
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - dates
@@ -205,7 +205,7 @@ people:
       description: ''
       history: []
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - people
@@ -235,7 +235,7 @@ people:
       description: ''
       members: [P1, P2]
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - people
@@ -283,7 +283,7 @@ shiftTypes:
     - id: N
       description: Night
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - shiftTypes
@@ -315,7 +315,7 @@ shiftTypes:
       description: ''
       members: [D, N]
 
-This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - shiftTypes

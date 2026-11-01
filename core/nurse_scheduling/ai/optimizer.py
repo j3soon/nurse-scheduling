@@ -53,12 +53,12 @@ def optimizer_completion_message(result_data: dict[str, Any]) -> str:
         }
     result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
     download_status = (
-        "The user can already download this workbook with the chat's Download result button.\n"
+        "The user can already download this workbook with the chat's Download schedule button.\n"
         if result_data["download_available"]
         else ""
     )
     return (
-        f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"Optimizer job finished. Schedule: {result_path}.\n"
         f"{download_status}"
         f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
     )
@@ -367,11 +367,11 @@ class SessionOptimizer:
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer requires a valid frontend schedule. {exc}")
+            raise OptimizerError(f"The optimizer requires a valid frontend Schedule Spec. {exc}")
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer could not accept the schedule. {exc}")
+            raise OptimizerError(f"The optimizer could not accept the Schedule Spec. {exc}")
         except BaseException:
             self._release_reservation(session_id, owner, reservation)
             raise

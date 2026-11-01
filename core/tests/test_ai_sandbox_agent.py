@@ -101,12 +101,12 @@ def test_schedule_reads_apply_the_limit_before_receiving_the_file():
 
     async def exercise():
         backend = BoundedBackend("bounded", initial_files={WORKSPACE_SCHEDULE_SPEC: b"12345"})
-        with pytest.raises(SandboxCandidateError, match="schedule limit"):
+        with pytest.raises(SandboxCandidateError, match="Schedule Spec limit"):
             await _read_candidate(backend, 4)
         tracker = _ScheduleSpecCandidateTracker(backend, "1234", 4)
         outcome, candidate = await tracker.review_if_changed()
         assert not outcome.ok
-        assert "schedule limit" in outcome.text
+        assert "Schedule Spec limit" in outcome.text
         assert candidate is None
 
     asyncio.run(exercise())
@@ -567,7 +567,7 @@ def test_hydration_keeps_bundled_example_separate_from_current_schedule(newline,
     )
     source = tmp_path / bundled_source.name
     source.write_bytes(bundled_source.read_text(encoding="utf-8").replace("\n", newline).encode("utf-8"))
-    monkeypatch.setattr("nurse_scheduling.ai.schema.SCHEDULE_EXAMPLE_SOURCE", source)
+    monkeypatch.setattr("nurse_scheduling.ai.schema.SCHEDULE_SPEC_EXAMPLE_SOURCE", source)
     load_schedule_spec_example.cache_clear()
     factory = FakeSandboxFactory()
     try:
@@ -815,7 +815,7 @@ def test_trusted_validation_rejects_an_invalid_candidate_and_closes():
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=invalidate))
 
-    with pytest.raises(SandboxCandidateError, match="trusted schedule validation"):
+    with pytest.raises(SandboxCandidateError, match="trusted Schedule Spec validation"):
         _collect(ScriptedProvider(_run_call(), [TextDelta("Done.")]), factory)
 
     assert factory.created[0].closed
@@ -901,7 +901,7 @@ def test_a_turn_that_ends_without_the_working_copy_fails_candidate_validation():
 
     factory = FakeSandboxFactory(lambda sandbox_id: FakeSandboxBackend(sandbox_id, command_handler=delete))
 
-    with pytest.raises(SandboxCandidateError, match="trusted schedule validation"):
+    with pytest.raises(SandboxCandidateError, match="trusted Schedule Spec validation"):
         _collect(ScriptedProvider(_run_call("delete"), [TextDelta("Done.")]), factory)
 
     assert factory.created[0].closed

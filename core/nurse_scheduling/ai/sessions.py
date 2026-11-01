@@ -406,7 +406,7 @@ class SessionStore:
         session = self._get_owned(session_id, owner_token)
         session.expires_at = time.monotonic() + self._settings.session_ttl_seconds
         if session.active:
-            # The run keeps its schedule, and the latest update waits beside it.
+            # The run keeps its Schedule Spec, and the latest update waits beside it.
             replaced = session.queued_schedule_spec.schedule_spec_yaml if session.queued_schedule_spec else ""
             added = "" if schedule_spec_yaml == session.schedule_spec_yaml else schedule_spec_yaml
         elif session.schedule_spec_yaml == schedule_spec_yaml:

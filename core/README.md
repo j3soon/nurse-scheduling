@@ -267,10 +267,10 @@ outside the bundled Compose deployment keeps its system persistence policy.
 
 ## Experimental AI Chat
 
-The experimental chat answers questions about the schedule currently open in
+The experimental chat answers questions about the Schedule Spec currently open in
 the frontend. Arbitrary file attachments are copied into a disposable sandbox
 for inspection. The chat runs as a separate backend process and sends the
-schedule and model-visible inputs to an OpenAI-compatible
+Schedule Spec and model-visible inputs to an OpenAI-compatible
 provider.
 
 Create a local configuration file. The real `docker/.env` file is ignored by Git:
@@ -629,7 +629,7 @@ chat reports the selected model's context limit when available.
 The agent automatically summarizes older conversation context before requests
 approach that limit. It retains recent tool exchanges and native reasoning for
 compatible models. Summaries preserve goals, constraints, decisions, pending
-work, and file context. Current schedule and file status stay in each request.
+work, and file context. Current Schedule Spec and file status stay in each request.
 Summary calls use the selected model and appear in provider cost estimates.
 The transcript shows when summarization starts, succeeds, fails, or stops.
 After a successful summary, the context meter uses the smaller estimated context
@@ -816,7 +816,7 @@ runs, repeated compaction, model switching, Stop during a real summary stream
 followed by resume, and manual compaction. Explicit token settings force
 compaction without filling the provider's full context window. Checks cover remembered constraints, complete
 tool exchanges, reconnect replay, attempt costs, stable session IDs, and missing
-temporary files in each fresh sandbox. The schedule must stay unchanged.
+temporary files in each fresh sandbox. The Schedule Spec must stay unchanged.
 The cancellation case pauses after receiving a real summary fragment.
 
 The command reads `docker/.env`, falling back to `docker/.env.staging`, unless
@@ -870,7 +870,7 @@ database access requires the core Python dependencies. Docker exports do not
 require Python or frontend dependencies on the host.
 
 The browser's **Export Chat** control and this command use the same Python ZIP
-writer. Each ZIP contains `chat.html`, `chat.md`, `chat.json`, `schedule.yaml`,
+writer. Each ZIP contains `chat.html`, `chat.md`, `chat.json`, `schedule-spec.yaml`,
 `manifest.json`, and `attachments/`. It includes removed uploads, generated ZIPs,
 and optimizer files. The manifest records file origins, removal times, sizes,
 and hashes. HTML and Markdown link to the bundled files and display times in UTC.

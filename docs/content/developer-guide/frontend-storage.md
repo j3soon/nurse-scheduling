@@ -43,10 +43,10 @@ All records below use `localStorage` except the active conversation.
 
 ### Schedule Spec
 
-[Schedule storage][schedule-storage] saves the Undo/Redo history and current
+[Schedule Spec storage][schedule-storage] saves the Undo/Redo history and current
 history index. Serialization omits generated groups and computed date items,
 uses date strings for ranges, and escapes infinity values. Loading normalizes
-schedule structures without a separate storage version.
+Schedule Spec structures without a separate storage version.
 
 External storage changes produce a warning without automatically importing
 another tab's Schedule Spec. Browser tests can set

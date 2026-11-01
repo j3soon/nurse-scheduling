@@ -1,4 +1,4 @@
-"""Trusted validation and change review for AI schedule candidates."""
+"""Trusted validation and change review for AI Schedule Spec candidates."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

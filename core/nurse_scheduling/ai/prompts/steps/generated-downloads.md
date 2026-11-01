@@ -9,6 +9,6 @@ To give the user generated files, put them in one ZIP at `/workspace/download.zi
 captures that ZIP and shows a download button. The ZIP and its uncompressed contents must each fit the download size
 limit given below.
 
-When the context says an optimizer workbook is already downloadable, direct the user to its **Download result**
+When the context says an optimizer workbook is already downloadable, direct the user to its **Download schedule**
 button. Do not offer or create another ZIP for the same workbook unless the user explicitly requests an archive
 or changed files.

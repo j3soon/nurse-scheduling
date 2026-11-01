@@ -133,7 +133,7 @@ class ScheduleSpecAppliedEvent(RunFields):
     type: Literal["schedule_spec_applied"]
     schedule_spec_yaml: str
     diff: str
-    # The run's schedule replaced a browser update queued during the run.
+    # The run's Schedule Spec replaced a browser update queued during the run.
     replaced_queued_schedule_spec: bool
 
 

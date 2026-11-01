@@ -72,19 +72,19 @@ it as one undoable change.
 
 ## Templates and the Entry Barrier
 
-Several real-world schedules have been created from scratch, but so far
-those initial schedules have been created by the main developer together
+Several real-world Schedule Specs have been created from scratch, but so far
+those initial Schedule Specs have been created by the main developer together
 with domain users. Translating a ward's requirements into the DSL for the
 first time is a high initial or bootstrap barrier.
 
-Once an initial schedule exists, it becomes a reusable ward template, and
+Once an initial Schedule Spec exists, it becomes a reusable ward template, and
 subsequent monthly schedules are much easier to prepare, because most
 constraints and structure remain similar. The recurring maintenance barrier
 is much lower than the bootstrap barrier.
 
 Better documentation, GUI support, templates, and the experimental AI chat
 are intended to reduce the bootstrap barrier, so that users do not need the
-main developer to create the initial schedule.
+main developer to create the initial Schedule Spec.
 
 ## INRC
 

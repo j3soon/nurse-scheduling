@@ -1397,7 +1397,7 @@ describe('ExperimentalAiPage', () => {
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    await user.click(screen.getByRole('button', { name: 'Download result' }));
+    await user.click(screen.getByRole('button', { name: 'Download schedule' }));
     await waitFor(() => expect(mockDownloadOptimization).toHaveBeenCalledWith(
       'session-id',
       'opt-result-1',
@@ -1426,7 +1426,7 @@ describe('ExperimentalAiPage', () => {
     firstRender.unmount();
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
     render(<ExperimentalAiPage />);
-    expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Download schedule' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
     expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
   });

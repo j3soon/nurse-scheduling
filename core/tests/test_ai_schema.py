@@ -88,7 +88,7 @@ SCHEMA_PATHS = tuple(SCHEMA_TOPICS)
 SCHEMA_REFERENCE_GROUPS = {group: tuple(_parse_topics(reference)) for group, reference in SCHEMA_REFERENCES.items()}
 EXAMPLE_PATHS = tuple(path for path, topic in SCHEMA_TOPICS.items() if topic.example is not None)
 MODEL_TOPIC_COVERAGE = {
-    models.ScheduleSpec: ("schedule",),
+    models.ScheduleSpec: ("schedule_spec",),
     models.DateContainer: ("dates",),
     models.DateRange: ("dates.range",),
     models.DateGroup: ("dates.groups",),
@@ -117,7 +117,7 @@ MODEL_TOPIC_COVERAGE = {
     models.ExportExtraRow: ("export.extraRows",),
 }
 BACKEND_FIELD_REQUIREMENTS = {
-    "schedule": {
+    "schedule_spec": {
         "required": ("apiVersion", "dates", "people", "shiftTypes", "preferences"),
         "optional": ("appVersion", "description", "export"),
     },

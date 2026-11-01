@@ -8,7 +8,7 @@ result to Excel.
 
 ## Home
 
-Use **New Schedule Spec** to replace browser data with the starter schedule. Back up
+Use **New Schedule Spec** to replace browser data with an empty Schedule Spec or the bundled example. Back up
 useful work first. Use **Continue** to open Dates without resetting anything.
 The build selector at the lower right switches between available app builds.
 

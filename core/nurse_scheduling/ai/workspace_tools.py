@@ -1,4 +1,4 @@
-"""Bind workspace tools and trusted schedule review to the agent loop."""
+"""Bind workspace tools and trusted Schedule Spec review to the agent loop."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -103,7 +103,7 @@ class WorkspaceTools:
             if self.candidate_tracker.rejection is not None:
                 return AgentToolOutcome(self.candidate_tracker.rejection, False)
             try:
-                current_schedule = (
+                current_schedule_spec = (
                     await self.sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=self.limits.max_schedule_bytes)
                 ).decode("utf-8")
             except (SandboxFileNotFoundError, SandboxFileSizeError, UnicodeDecodeError):
@@ -111,16 +111,16 @@ class WorkspaceTools:
             review = await asyncio.to_thread(
                 review_schedule_spec_candidate,
                 self.schedule_spec_yaml,
-                current_schedule,
+                current_schedule_spec,
                 self.limits.max_schedule_bytes,
             )
             if not review.outcome.ok:
                 check = f"Trusted Schedule Spec check before optimizer:\n{review.outcome.text}"
                 return AgentToolOutcome(check, False, details={"schedule_spec_check": {"ok": False, "text": check}})
-            if review.proposal is not None and review.proposal.text != current_schedule:
-                current_schedule = review.proposal.text
-                await self.sandbox.write_file(WORKSPACE_SCHEDULE_SPEC, current_schedule)
-            outcome = await self.execute_optimizer(current_schedule, arguments)
+            if review.proposal is not None and review.proposal.text != current_schedule_spec:
+                current_schedule_spec = review.proposal.text
+                await self.sandbox.write_file(WORKSPACE_SCHEDULE_SPEC, current_schedule_spec)
+            outcome = await self.execute_optimizer(current_schedule_spec, arguments)
             if outcome.ok:
                 return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)
             return outcome
@@ -213,7 +213,7 @@ async def run_workspace(
                     return
                 if toolset.candidate_tracker.rejection is not None:
                     raise SandboxCandidateError(
-                        "The sandbox candidate failed trusted schedule validation.",
+                        "The sandbox candidate failed trusted Schedule Spec validation.",
                         user_message=toolset.candidate_tracker.rejection,
                     )
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
@@ -228,7 +228,8 @@ async def run_workspace(
                 )
                 if not review.outcome.ok:
                     raise SandboxCandidateError(
-                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
+                        "The sandbox candidate failed trusted Schedule Spec validation.",
+                        user_message=review.outcome.text,
                     )
                 try:
                     download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)

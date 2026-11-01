@@ -47,11 +47,11 @@ rebuilt image with synthetic input. Mark comparisons that relied on its absence
 as historical and recheck the affected guidance before changing it.
 
 For read-only attachment questions, check whether inspecting the current
-schedule helps answer the user's request. Test a focused attachment question
+Schedule Spec helps answer the user's request. Test a focused attachment question
 alongside an explicit comparison request before changing source-selection guidance.
 
 For inline attachment scripts, group repeated operations before proposing helpers.
-Separate source inspection from schedule construction and domain policy audits.
+Separate source inspection from Schedule Spec construction and domain policy audits.
 For workbook value/style frequencies and row/column counts, use
 `/reference/tools/inspect_xlsx.py FILE --summary --range 'Sheet!B2:AC61' --styles --axis row`.
 The same inspector reads uploaded and generated workbooks. Summary mode reports

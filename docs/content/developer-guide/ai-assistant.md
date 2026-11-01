@@ -7,8 +7,8 @@ use its Redis data.
 
 File attachments are enabled by default. The frontend accepts arbitrary file
 types and copies them into the disposable sandbox without executing them. The
-assistant reads and edits the schedule in that sandbox. When a run finishes with
-a valid changed schedule, the backend adopts it and the browser applies it.
+assistant reads and edits the Schedule Spec in that sandbox. When a run finishes with
+a valid changed Schedule Spec, the backend adopts it and the browser applies it.
 Each run owns a workspace. It creates an E2B Cloud sandbox on the first
 workspace tool call. This version excludes retrieval and repository access.
 
@@ -26,10 +26,10 @@ their concurrency policy.
 | Component | Responsibility |
 | --- | --- |
 | `app.py` | HTTP routes, authentication, and application startup and shutdown. |
-| `agent_session.py` | Conversation changes, steering, applied schedules, and the shared run path. |
+| `agent_session.py` | Conversation changes, steering, applied Schedule Specs, and the shared run path. |
 | `sessions.py`, `lifecycle.py` | `SessionStore` access and budgets, plus `SessionRuns` ownership through cleanup and persistence. |
 | `agent.py`, `agent_loop.py`, `agent_types.py` | Observable execution state, the model loop, and executable tool contracts. |
-| `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted schedule review. |
+| `workspace.py`, `workspace_tools.py` | Lazy sandbox allocation and hydration, tool binding, and trusted Schedule Spec review. |
 | `transcript.py`, `context.py` | Typed conversation entries, provider requests, history selection, and application event presentation. |
 | `optimizer.py`, `optimizer_tool.py`, `optimizer_http.py` | Job ownership and operations, model-facing arguments and replies, and HTTP transport. |
 | `session_events.py`, `session_event_projection.py` | Typed public events, tool call identity, text batching, and terminal publication after finalization. |
@@ -41,7 +41,7 @@ their concurrency policy.
 
 ```mermaid
 flowchart TB
-    Browser["<b>Browser</b><br/>Questions and applied schedules"]
+    Browser["<b>Browser</b><br/>Questions and applied Schedule Specs"]
     Routes["<b>app.py</b><br/>Authorize HTTP requests"]
     Runs["<b>SessionRuns</b><br/>Own accepted runs"]
     Store["<b>SessionStore</b><br/>Access, expiry, and budgets"]
@@ -100,7 +100,7 @@ finishes, including when recovery storage reports a failure.
 
 The page owns credentials, composer files, speech, scrolling, and browser
 download URLs. `useAiChat` owns chat state, saved conversation restoration,
-message submission, steering, session expiry, and applied schedules.
+message submission, steering, session expiry, and applied Schedule Specs.
 `ChatTranscriptView` renders that state through explicit props and callbacks.
 
 <figure markdown="1" id="ai-frontend">
@@ -109,7 +109,7 @@ message submission, steering, session expiry, and applied schedules.
 
 ```mermaid
 flowchart TB
-    Page["<b>page.tsx</b><br/>Browser controls<br/>and schedule import"]
+    Page["<b>page.tsx</b><br/>Browser controls<br/>and Schedule Spec import"]
     Controller["<b>useAiChat</b><br/>State and actions<br/>Router and event helpers"]
     Reader["<b>Connection hook</b><br/>useSessionEventStream<br/>Reader, cursor, and retry"]
     Transcript["<b>ChatTranscriptView</b><br/>Messages and controls"]
@@ -140,7 +140,7 @@ flowchart TB
     Transcript["<b>Typed transcript</b><br/>Questions, answers, app events, and decisions"]
     Context["<b>context.py</b><br/>Project history and interruption notes"]
     Current["<b>Current run</b><br/>Model responses and tool results"]
-    Prompt["<b>Prompt inputs</b><br/>Fixed instructions and schedule summary"]
+    Prompt["<b>Prompt inputs</b><br/>Fixed instructions and Schedule Spec summary"]
     Request["<b>Provider request</b><br/>Initial layout and follow-up messages"]
     Provider["<b>Provider</b><br/>Complete one model request"]
     Transcript -->|Retained entries| Context
@@ -159,7 +159,7 @@ replay have separate limits.
 
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
-queueing a message or synchronizing a changed schedule renews that window. The browser can retain the conversation within its current
+queueing a message or synchronizing a changed Schedule Spec renews that window. The browser can retain the conversation within its current
 tab and verify the session without extending its lifetime.
 The session records typed questions, assistant responses, app events, reasoning metadata,
 and tool exchanges. Tool images are released when a run ends. Stop and failed runs retain their questions with an interruption
@@ -183,14 +183,14 @@ requests after refused tool calls. It requires provider completion before tools
 run and rejects conflicting finish reasons or further output after completion.
 
 The backend stores the YAML snapshot and retained conversation turns. Each
-provider request includes a schedule summary, recent history, and the current
+provider request includes a Schedule Spec summary, recent history, and the current
 question. The complete YAML stays in the sandbox until the model reads relevant
 content through a tool. With PostgreSQL, uploaded source files survive restarts
 and idle session eviction until the session expires. Removing a file detaches it
 from future turns but preserves its archive. Without PostgreSQL,
 they remain in process memory only. Conversation context keeps filenames and attachment markers,
 while recovery entries can retain inspected document content and tool output.
-The prompt gives the agent workspace paths for schedules and attachments.
+The prompt gives the agent workspace paths for Schedule Specs and attachments.
 
 Persisted uploads keep only metadata in live sessions and run snapshots.
 Recovery and text-only responses do not read their bytes. Sandbox hydration
@@ -199,7 +199,7 @@ file per active sandbox. This adds a storage read and sandbox write per file.
 Upload requests can still buffer files within the configured request limits.
 Failed saves retain unsaved bytes for retry and count them against the memory
 budget until a later state save succeeds.
-Generated ZIPs and optimizer workbooks, original schedules, backend input YAML,
+Generated ZIPs and optimizer workbooks, original Schedule Specs, backend input YAML,
 inspection context, and result metadata use the same session archive. Saved
 downloads and optimizer workbooks are loaded on demand after recovery.
 
@@ -281,7 +281,7 @@ message ID cancels every active assistant turn in the session. No Stop cancels
 the independent optimizer run.
 
 Sandbox and conversation state are separate. The backend copies the current
-schedule to `/workspace/schedule-spec.yaml` and searchable schema documentation to
+Schedule Spec to `/workspace/schedule-spec.yaml` and searchable schema documentation to
 `/reference`. It writes uploads below `/workspace/attachments` under safe paths
 prefixed with their upload IDs. The backend then runs every command for that
 user message in the same sandbox,
@@ -403,7 +403,7 @@ paths. Tool results are limited to 2,000 characters per result, as in Pi. Opaque
 manifest `ai/prompts/compaction.json` records the initial, update, split-turn,
 and system prompts from Pi v1.0.0 at `a13d35a`. Each upstream string is unchanged.
 The manifest records matching upstream and model-input hashes. Project guidance
-about schedules and temporary sandbox files stays in the main system prompt.
+about Schedule Specs and temporary sandbox files stays in the main system prompt.
 The prompt loader removes provenance comments before model requests.
 
 A later compaction passes the existing summary separately in `previous-summary`
@@ -498,8 +498,8 @@ discards the sandbox. Logs live until the disposable sandbox closes.
 Command output has no separate capture ceiling. Sandbox disk capacity and
 execution deadlines bound resource use. A 1 MiB transport bound protects the
 small JSON report, independently of the log's size.
-File reads stream at most 64 MiB by default. Schedule
-reads use the configured schedule limit, and ZIP reads use the download limit.
+File reads stream at most 64 MiB by default. Schedule Spec
+reads use the configured Schedule Spec limit, and ZIP reads use the download limit.
 
 When one model response requests multiple reads, the reads run concurrently
 and their results are returned in the model's original call order. Batches that
@@ -536,12 +536,12 @@ one hour. Cleanup metadata keeps the full run deadline, and run completion or
 cancellation destroys the VM.
 See [E2B timeout after auto-resume](https://docs.e2b.dev/sandbox/auto-resume#timeout-after-auto-resume).
 
-When a Bash command changes the schedule, the backend reads the working copy
+When a Bash command changes the Schedule Spec, the backend reads the working copy
 and validates it outside the sandbox before emitting `schedule_spec_change`. The
 event contains that validated working copy. The browser compares it with the
 previous working copy and renders the changed lines in red and green. These
-intermediate previews do not change the session schedule. The final validated
-candidate becomes the session schedule when the run commits.
+intermediate previews do not change the session Schedule Spec. The final validated
+candidate becomes the session Schedule Spec when the run commits.
 
 ## Recovery database upgrade
 
@@ -560,7 +560,7 @@ See the [core instructions](reproduce/core.md#evaluation) for this task.
 
 When a request supplies conflicting staffing totals and component counts, the
 assistant asks which counts to keep before reading guides or the current
-schedule. It proceeds directly when the user explicitly replaces the old counts.
+Schedule Spec. It proceeds directly when the user explicitly replaces the old counts.
 
 The `staffing-conflicting-day-total` case checks clarification followed by the
 user's chosen total. Both prompt versions passed 3/3. The added clause reduced
@@ -599,12 +599,12 @@ Declined-rule and explanation-only cases check that intake respects the user's s
 ## Agent capabilities
 
 After an accepted edit to `/workspace/schedule-spec.yaml`, the server refreshes
-`/workspace/schedule-context.json` when the schedule can compile. Request
+`/workspace/schedule-context.json` when the Schedule Spec can compile. Request
 inspectors can then read new candidates and later edits in the same turn. Reverting
 to the original YAML refreshes its context too. Invalid edits leave the previous
 context unchanged, so inspectors still reject a source mismatch. Permitted
 incomplete drafts remain available for direct YAML inspection. Saved optimizer
-contexts keep the data from their submitted schedules.
+contexts keep the data from their submitted Schedule Specs.
 
 With the same full prompt, `request-inspection-after-edit` improved from 0/3
 to 3/3 and `request-inspection-after-creation` from 1/3 to 3/3. The read-only
@@ -628,7 +628,7 @@ This follows the minimalism philosophy of the [Pi coding agent](https://pi.dev/)
 prefer a small set of general file and shell capabilities with discoverable
 documentation over a growing set of domain-specific tools. Nurse Scheduling
 retains stricter service boundaries than a local coding agent. The workspace is
-disposable, tool output is bounded, secrets and the stored schedule stay outside
+disposable, tool output is bounded, secrets and the stored Schedule Spec stay outside
 it, and a trusted application validates every possible Schedule Spec change and the
 final candidate.
 
@@ -692,13 +692,13 @@ optimizing unless the user explicitly asks to optimize or proceed despite the
 unknowns. Requests not to optimize still apply.
 
 Once the necessary questions are answered, the agent validates its Schedule Spec
-changes by optimizing and inspecting the output. It can adjust the schedule or
+changes by optimizing and inspecting the output. It can adjust the Schedule Spec or
 optimizer within the agreed requirements and repeat. New questions that need
 user judgment pause the loop unless the user explicitly asks to proceed without
 answers. The separate optimizer-goal prompt was removed to keep one policy for
 when to act.
 
-Focused behavior checks live in `core/tests/ai/`. The guidance case allows schedule
+Focused behavior checks live in `core/tests/ai/`. The guidance case allows Schedule Spec
 data edits and accepts helpful questions, explanations and options. The explicit-edit case checks that
 a clear action request is applied without another confirmation and that no
 optimizer call is attempted. Cases with `optimizer: {invoked: false}` expose
@@ -712,15 +712,15 @@ queued user messages. The optimizer completion starts a review turn with the
 submitted source and workbook. Draft, explanation and explicit no-optimization
 requests retain their scope.
 
-## Schedule change lifecycle
+## Schedule Spec change lifecycle {#schedule-change-lifecycle}
 
-A finished run that changed the schedule commits its validated Schedule Spec as the
-session schedule. The backend then emits `schedule_spec_applied` with the YAML and
+A finished run that changed the Schedule Spec commits its validated Schedule Spec as the
+session Schedule Spec. The backend then emits `schedule_spec_applied` with the YAML and
 the structural diff. Its `replaced_queued_schedule_spec` flag reports that the run's
-schedule replaced a browser update queued during the run. The browser applies
+Schedule Spec replaced a browser update queued during the run. The browser applies
 each run's result once through the normal YAML import path as one undo step.
 It shows a notice when that flag is set or when the browser Schedule Spec changed
-after its last synchronization. Undo restores the exact schedule held before
+after its last synchronization. Undo restores the exact Schedule Spec held before
 replacement. A saved receipt keyed by `run_id` prevents replay from applying the
 same result again after Undo or a reload. The browser compares its own
 normalized YAML, so import formatting does not cause a notice. The browser
@@ -732,32 +732,32 @@ synchronizes the current browser YAML through `PUT /v1/sessions/{id}/schedule_sp
 before its next user-requested run, and records an app event for the agent.
 An update that arrives during a run does not change that run. The backend keeps
 only the latest such update and applies it after the run's entries, unless the
-run applied its own schedule, which then replaces it.
+run applied its own Schedule Spec, which then replaces it.
 Stop explicitly requests cancellation. Optimizer completion can start a server
 review without a client connection. This separation replaces the earlier
 approval and rejection flow, which tied server progress to browser decisions.
 
 Each tool call that changes the working copy carries the trusted check text that
-the model received in `schedule_spec_check`. The transcript shows it as **Schedule
+the model received in `schedule_spec_check`. The transcript shows it as **Schedule Spec
 check passed** or **Schedule Spec check failed**, so the browser shows every
 validation result that the model saw.
 
 <span id="ai-schedule-changes"></span>
 <figure markdown="1" id="ai-schedule-spec-changes">
 
-**Figure 6. Trusted schedule review and browser application.**
+**Figure 6. Trusted Schedule Spec review and browser application.**
 
 ```mermaid
 flowchart TB
-    Candidate["<b>Sandbox candidate</b><br/>Untrusted schedule file"]
+    Candidate["<b>Sandbox candidate</b><br/>Untrusted Schedule Spec file"]
     Validation["<b>Trusted backend review</b><br/>Validate and compute a structural diff"]
-    Session["<b>Session schedule</b><br/>Adopt only after the owning run commits"]
+    Session["<b>Session Schedule Spec</b><br/>Adopt only after the owning run commits"]
     Replay{"Run already applied<br/>by this browser?"}
     Import["<b>Frontend import</b><br/>Apply as one undo operation"]
     Notice["<b>Conflict notice</b><br/>If browser work changed, explain how to Undo"]
     Keep["<b>Replay receipt</b><br/>Preserve the browser's current Schedule Spec"]
     Candidate -->|Read after model execution| Validation
-    Validation -->|Valid changed schedule and current RunSnapshot| Session
+    Validation -->|Valid changed Schedule Spec and current RunSnapshot| Session
     Session -->|schedule_spec_applied with run ID, YAML,<br/>diff, and replaced_queued_schedule_spec| Replay
     Replay -->|No| Import
     Import --> Notice
@@ -775,7 +775,7 @@ changes. Its provisional activity may remain visible in the browser.
 Later model context omits the interrupted assistant response and retains completed
 exchanges. A separate `ABORTED_RESPONSE_HISTORY` app event describes the discarded
 workspace. A successful run that only answers a question never changes the
-schedule.
+Schedule Spec.
 
 If the final candidate fails trusted validation, the UI reports that every
 Schedule Spec change from the turn was discarded and that the current Schedule Spec
@@ -834,7 +834,7 @@ It saves the following data:
 
 | Table | Stored data |
 | --- | --- |
-| `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the schedule and the number of conversation entries that retention trimmed. |
+| `chat_sessions` | Owner cookie hash, credential ID, creation time, expiry, and a `state` with the Schedule Spec and the number of conversation entries that retention trimmed. |
 | `chat_runs` | Run order, kind, client `message_id`, credential ID, model, status, error code, whether the run's messages joined the conversation (`committed`), the optional `schedule_spec_change` application payload, attachment count, usage, and start and finish times. |
 | `chat_session_entries` | Conversation entries in session order, keyed by `(session_id, seq)`: run messages and app events such as uploads and Schedule Spec changes. Run messages name their run. Compaction entries hold a summary and the number of preceding recent model messages to retain. Each row has a `type` and a JSON `payload` holding the fields of the matching `transcript.py` type. |
 | `chat_session_events` | Replayable session events except optimizer progress. Adjacent text fragments of one run share a row covering `event_id` through `last_event_id`. |
@@ -847,11 +847,11 @@ a crash keeps the finished tool calls and results of an interrupted run. App
 events are saved as entries when they happen. The run's status and resulting
 state commit in one transaction when it ends. Migration `005_run_schedule_spec_change.sql`
 adds the application payload to that transaction. Recovery republishes it before
-the missing terminal event if a crash lost stream publication. Schedule updates save the state
+the missing terminal event if a crash lost stream publication. Schedule Spec updates save the state
 as well. A per-session lock commits these writes in capture order, so an older
 state never replaces a newer one. Each
 state write also saves every entry that is not saved yet, so the trimmed-entry
-count never skips an unsaved entry. Tool results can contain schedule and
+count never skips an unsaved entry. Tool results can contain Schedule Spec and
 attachment text, so entries and events can contain staff information. Original
 uploads are stored with their session state and upload entries in one transaction.
 Removal detaches the file with the updated state and preserves its bytes. An upload save failure
@@ -908,7 +908,7 @@ byte cap. Event replay keeps at most 4 MiB of serialized events per session and
 64 MiB for the process. It drops completed run output first and retains final
 events longest. Without PostgreSQL, an incomplete reset snapshot sets
 `incomplete: true`. These replay limits are separate from `AI_MAX_SESSION_BYTES`, which
-bounds live schedule, transcript, receipt, unsaved or memory-only upload, and
+bounds live Schedule Spec, transcript, receipt, unsaved or memory-only upload, and
 download retention. Persisted upload sizes still count toward the attachment
 limits, independently of retained memory.
 PostgreSQL can supply output no longer retained by the in-memory projection.
@@ -937,7 +937,7 @@ The survey covers both the coding agent and its separate durable package:
 
 | Pi principle | Project choice and reason |
 | --- | --- |
-| Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, applied schedules, and steering keep their existing frontend behavior. |
+| Keep content entries separate from live deltas. | Store combined content blocks and rebuild complete replay snapshots. Retain UI event kinds so tool activity, applied Schedule Specs, and steering keep their existing frontend behavior. |
 | Give entries identity and order. | Use session-local conversation sequence numbers and timestamps. Keep one session event cursor separate from conversation identity. |
 | Store task and submission state explicitly. | Keep unique client message IDs and explicit execution status in runs. Store accepted questions as typed conversation entries. The existing Stop records handle requests that arrive before acceptance. |
 | Save completed messages. | Queue typed session entries when model responses end and save live publications through an asynchronous replay writer. Final outcome writes include the resulting state and pending entries. A failed recovery write produces a warning and remains eligible for retry. |
@@ -1209,7 +1209,7 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   backend does not require changing model logic.
 - The trusted application creates E2B sandboxes with outbound Internet access
   disabled. It does not pass the E2B key, model provider key, database
-  credentials, host paths, or the stored schedule into the sandbox.
+  credentials, host paths, or the stored Schedule Spec into the sandbox.
 - Treat shell commands and every sandbox file as untrusted. A sandbox can only
   return a candidate Schedule Spec. Trusted validation, revision checks, and updates
   to the current Schedule Spec remain outside it.
@@ -1224,13 +1224,13 @@ curl -H "Authorization: Bearer ${AI_AUTH_TOKEN}" \
   through `localhost` or `127.0.0.1`.
 - The owner cookie contains an opaque UUID, not the provider key. It is not a
   replacement for future account authentication.
-- The complete schedule is sent to the AI service. Relevant content is sent to
+- The complete Schedule Spec is sent to the AI service. Relevant content is sent to
   the configured provider through model-facing tool results. Use approved
-  services and anonymize sensitive schedules when required.
+  services and anonymize sensitive Schedule Specs when required.
 - Arbitrary uploads are bounded, assigned safe sandbox paths, and treated as
   untrusted data. Session requests authenticate before reading their bodies.
   The AI service checks declared and streamed body bytes before parsing JSON
-  or multipart data. JSON bounds allow escaped schedules and messages. Only
+  or multipart data. JSON bounds allow escaped Schedule Specs and messages. Only
   upload routes receive the larger attachment body budget.
   Configure a matching request-body limit at the public reverse
   proxy. Never add attachment execution to the sandbox workflow.
@@ -1284,14 +1284,14 @@ Each row lists shared behavior first, then what only one side has.
 | `Agent` / `AgentState`<br/>Pi: [Agent][pi-agent], [AgentState][pi-state] | Streaming flag, pending tool call IDs, in-run messages, the steering queue, and refusal of a second concurrent prompt. | Context arrives per run, and the session commits its retained transcript after cleanup. `AgentRun`, not `Agent`, owns cancellation, so Stop also reaches queued runs and cannot interrupt cleanup. | State also holds the model, thinking level, tools, persistent transcript, and partial streaming message. The agent becomes idle only after awaited `agent_end` subscribers finish. |
 | `agent_loop`<br/>Pi: [agentLoop][pi-loop] | Repeats model responses and tool batches. Steering enters before each follow-up request, or continues the run when it arrives as the answer ends. Tool calls from a response cut off by the output limit fail without running. | A batch runs concurrently only when every call is read-only. Round and call budgets end with an answer-only request, and a refused truncated batch spends a round. Each request passes through one context projection. | Parallel execution by default. The whole batch runs sequentially if configured globally or required by any tool in it. Supports before and after tool-call hooks and context transform hooks. Tool-result early termination requires every finalized tool result in the batch to set `terminate: true`. |
 | `AgentTool` / `AgentToolOutcome`<br/>Pi: [AgentTool / AgentToolResult][pi-tools] | A model-facing definition bound to execution. Results carry model content, UI details, and explicit failure status. Start and end events correlate by tool call ID. | Tools receive raw JSON arguments, return text, an optional image, and an `ok` flag, and declare whether they are read-only. | Schema-validated parameters, the call ID, an abort signal, and partial-update callbacks. Tools throw or return `isError: true` on failure. `structuredContent` follows the tool's `outputSchema` for programmatic callers and is excluded from model input. |
-| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, schedule revisions, and applied schedule entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and Schedule Spec changes. A stopped run retains its prompt and aborted partial answer. Later model context omits only the failed response and appends a separate note describing the discarded workspace. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
+| `AgentSession` / `RunOutput` / `AgentMessage`<br/>Pi: [AgentSession][pi-session], [AgentMessage][pi-messages] | An application layer over `Agent`. Runs produce `UserMessage`, `AssistantMessage`, and `ToolResultMessage` records shaped like Pi's messages, with Pi's stop reasons, persisted in order. Later model input excludes aborted answer content. | Snapshot-versioned commits after sandbox cleanup, Schedule Spec revisions, and applied Schedule Spec entries. The in-memory session keeps prompts, native reasoning metadata, complete tool exchanges, assistant text and stop reasons, and Schedule Spec changes. A stopped run retains its prompt and aborted partial answer. Later model context omits only the failed response and appends a separate note describing the discarded workspace. With PostgreSQL, a session continues after a restart or unload, but it cannot branch. | An append-only, branchable JSONL session with model and label entries, automatic compaction into summary entries, automatic retry of retryable errors, and extensions. Aborted and error assistant messages stay in session history, but [provider message transformation][pi-replay] omits them from later model replay. [Context-edit entries][pi-recovery] can omit recovery attempts and their tool results from subsequent context while retaining the raw history. |
 | `SessionRuns` / `AgentRun` / `RunSnapshot`<br/>Pi: [ActiveRun and run lifecycle][pi-agent] | One active run with a cancellation handle, finishing before the next run starts. | Per-session FIFO execution, queued background runs, Stop that also cancels queued runs, and a versioned commit capability. A Stop can name a client message. It cancels only that message's run and also stops the message if it arrives later. Service shutdown leaves runs unfinished, so the restarted service reports them as interrupted. | The agent's own `AbortController`, passed to tools, with a single-run guard instead of a queue. |
 | Steering queue<br/>Pi: [steer / followUp][pi-agent] | Queued input reaches the model at a boundary without starting a new run. | One queue serves both roles. It drains every message, deduplicates retried POSTs by ID, and closes atomically with the answer. Optimizer wake-ups enter `SessionRuns` as fresh runs. | Separate steering and follow-up queues, each draining one message at a time or all at once. |
 | `WorkspaceTools` / `_LazySandboxTurn`<br/>Pi: [read, bash, edit, write][pi-coding-tools] | Pi's default `read`, `bash`, `edit`, and `write` contracts and output behavior, ported under `ai/pi`. | A lazy, disposable E2B VM per run with hydration, pause and resume, YAML validation after each change, and teardown before commit. A shorter `read` description, fixed image limits with a source-pixel bound, and server command timeouts. | Tools act on the user's local working directory, which persists across runs. Image resize options can follow the active model's limits. Built-in `powershell`, `find`, `grep`, and `ls` tools are available beyond the default active four. Nested calls through [`ctx.executeTool()`][pi-nested-tools] share validation and hooks and carry parent tool call IDs. |
 | `AgentSessionEvent` / `SessionEventStream`<br/>Pi: [AgentEvent][pi-events], [AgentSessionEvent][pi-session-events] | Typed text, reasoning, and tool events with call IDs and exactly one terminal outcome per run. | `AgentSession.subscribe` exposes one typed public event per publication to in-process listeners. `SessionEventStream` retains all run and job events for HTTP replay with `Last-Event-ID`. With PostgreSQL, replay continues after a restart. Disconnect detaches the reader. Explicit Stop cancels runs. | In-process subscribers receive agent, turn, message, and tool lifecycle events, including partial tool updates. Low-level `agent_end` marks the end of one loop run. `AgentSession` emits [`agent_settled`][pi-settled] after retries, compaction recovery, queued continuation work, and session boundary processing finish. |
-| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the schedule and a count of entries that retention trimmed. Ordered compaction entries hold summaries and the number of recent messages to retain. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
+| `SessionRecovery` / `ChatHistory`<br/>Pi: [SessionManager][pi-session-manager], [durable storage][pi-durable] | Typed entries saved in session order, each message when it ends. A later process rebuilds the conversation from the saved entries. Client request IDs make a repeated submission return its existing run. | Optional PostgreSQL storage. Linear entries also hold app events. A run's messages join the conversation only when the run commits, so restore retains safe context from failed or interrupted runs and skips stale runs. The state holds the Schedule Spec and a count of entries that retention trimmed. Ordered compaction entries hold summaries and the number of recent messages to retain. Published events and named Stop requests are saved too, so a restart keeps the output that a browser saw. | Entries form a tree with branches, compaction summaries, model changes, and labels. The separate durable package stores generic tasks with explicit status. |
 | `SessionOptimizer`<br/>Pi: no first-class built-in counterpart | Exposed to the model as one `AgentTool`. | Independent remote jobs, progress, anonymization, late-submission cleanup, and fresh review runs. | Similar behavior could be implemented through extensions. |
-| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, shared SSE framing and recovery for GET readers and POST readers that request SSE, a browser-owned schedule, and automatic application of validated changes. With PostgreSQL, a request restores a saved session for its owner cookie, and a full store unloads the least recently used idle session. | Local single-user sessions stored on disk that can be resumed and branched. |
+| API routes / `SessionStore` / browser lifecycle<br/>Pi: nearest is [AgentSession][pi-session] | A session boundary that owns conversation lifetime. | HTTP authentication, cookie ownership, expiry, session text limits, shared SSE framing and recovery for GET readers and POST readers that request SSE, a browser-owned Schedule Spec, and automatic application of validated changes. With PostgreSQL, a request restores a saved session for its owner cookie, and a full store unloads the least recently used idle session. | Local single-user sessions stored on disk that can be resumed and branched. |
 
 </div>
 

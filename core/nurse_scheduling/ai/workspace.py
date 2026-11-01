@@ -71,7 +71,7 @@ INSPECTION_HELPERS = {
     "inspect_shift_requests.py": "Current YAML nonzero shift-request counts and resolved selectors. Repeat --weight, --person or --date to filter. --max-requests 0 returns counts only.",
     "inspect_xlsx.py": "XLSX sheets, cells, formulas and saved caches. Use --overview for sheet names, visibility and reported sizes. Use --comments --range Sheet!A1:H20 for stored legacy comments, including blank cells, source parts and truncation, without scanning worksheet cells. Use --styles for stored formatting. Use --summary --range A1:B10 for typed value frequencies and optional --axis row|column counts. With --styles, summaries separate values by style. Reports blanks and truncation without recalculating formulas.",
     "inspect_pdf.py": "PDF page text and rendered page images. Use --find TEXT for bounded literal search with matching page numbers and excerpts. Reports search truncation and pages without text. No OCR.",
-    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using compiled schedule context. Use --statistics for shift totals, longest work/OFF run distributions and per-person counts over all scheduled dates. --summary-only omits person rows. --include-history uses only matching source history. Statistics are not a policy audit.",
+    "inspect_optimizer_result.py": "Optimizer assignments, signed request counts and available staffing/succession audits using compiled Schedule Spec context. Use --statistics for shift totals, longest work/OFF run distributions and per-person counts over all scheduled dates. --summary-only omits person rows. --include-history uses only matching source history. Statistics are not a policy audit.",
 }
 REFERENCE_ATTACHMENT_TOOLS = {
     f"/reference/tools/{name}": ATTACHMENT_TOOL_DIRECTORY / name for name in INSPECTION_HELPERS
@@ -124,7 +124,7 @@ class SandboxDownloadValidationError(SandboxDownloadError):
 
 
 class SandboxCandidateError(SandboxError):
-    """The final untrusted schedule failed trusted server-side review."""
+    """The final untrusted Schedule Spec failed trusted server-side review."""
 
     def __init__(self, message: str, *, user_message: str | None = None) -> None:
         super().__init__(message)
@@ -172,7 +172,7 @@ AttachmentLoader = Callable[[SandboxAttachment], Awaitable[bytes]]
 
 
 def analysis_source_sha256(schedule_spec_yaml: str, attachments: Sequence[SandboxAttachment]) -> str:
-    """Identify the exact schedule and upload files for reusable analysis."""
+    """Identify the exact Schedule Spec and upload files for reusable analysis."""
     # A session rejects a retained upload ID with different bytes, so its path identifies
     # the file even when a run snapshot holds only the persisted reference.
     sources = [
@@ -442,17 +442,17 @@ async def hydrate_sandbox(
         files[WORKSPACE_ANALYSIS] = analysis.content
     files[REFERENCE_SCHEDULE_EXAMPLE] = load_schedule_spec_example()
     try:
-        # Compiling a large schedule on the event loop would stall every session's stream.
+        # Compiling a large Schedule Spec on the event loop would stall every session's stream.
         files[WORKSPACE_SOURCE_CONTEXT] = await asyncio.to_thread(_inspection_context_json, schedule_spec_yaml)
     except Exception:
         # A draft may not compile. Its YAML remains available for direct inspection.
-        logger.debug("Current schedule inspection context unavailable", exc_info=True)
+        logger.debug("Current Schedule Spec inspection context unavailable", exc_info=True)
     for group, path in REFERENCE_SCHEMAS.items():
         reference = (
             load_taiwan_holidays_reference() if group == "taiwan-holidays" else load_schedule_spec_reference(group)
         )
         if reference is None:  # pragma: no cover - constants are defined together
-            raise ValueError(f"unknown schedule reference group: {group}")
+            raise ValueError(f"unknown Schedule Spec reference group: {group}")
         files[path] = reference
     for relative_path, reference in load_user_guide_references().items():
         files[f"{REFERENCE_USER_GUIDE}/{relative_path}"] = reference
@@ -506,7 +506,7 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         candidate = await sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=max_schedule_bytes)
     except SandboxFileSizeError as exc:
         raise SandboxCandidateError(
-            f"The sandbox candidate exceeds the {max_schedule_bytes}-byte schedule limit."
+            f"The sandbox candidate exceeds the {max_schedule_bytes}-byte Schedule Spec limit."
         ) from exc
     except SandboxFileNotFoundError as exc:
         # The model owns the working copy and can delete it, which is a failed
@@ -519,7 +519,7 @@ async def _read_candidate(sandbox: SandboxBackend, max_schedule_bytes: int) -> s
         time.perf_counter() - started,
     )
     if len(candidate) > max_schedule_bytes:
-        raise SandboxCandidateError(f"The sandbox candidate exceeds the {max_schedule_bytes}-byte schedule limit.")
+        raise SandboxCandidateError(f"The sandbox candidate exceeds the {max_schedule_bytes}-byte Schedule Spec limit.")
     try:
         return candidate.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -537,7 +537,7 @@ class _ScheduleSpecCandidateTracker:
         self._sandbox = sandbox
         self._base_text = base_text
         self._max_bytes = max_bytes
-        # The application's starting schedule is accepted even when incomplete.
+        # The application's starting Schedule Spec is accepted even when incomplete.
         self._last_accepted = base_text.encode("utf-8")
         self._last_checked = (self._last_accepted, None)
         self.rejection: str | None = None
@@ -562,7 +562,7 @@ class _ScheduleSpecCandidateTracker:
         try:
             content = await self._sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=self._max_bytes)
         except SandboxFileSizeError:
-            content, read_problem = b"", f"The candidate exceeds the {self._max_bytes}-byte schedule limit."
+            content, read_problem = b"", f"The candidate exceeds the {self._max_bytes}-byte Schedule Spec limit."
         except SandboxFileNotFoundError:
             content, read_problem = b"", f"The working copy {WORKSPACE_SCHEDULE_SPEC} no longer exists."
         checked = (content, read_problem)
@@ -573,13 +573,15 @@ class _ScheduleSpecCandidateTracker:
         if read_problem is not None:
             return await self._reject(f"{prefix}\n{read_problem}")
         if len(content) > self._max_bytes:
-            return await self._reject(f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte schedule limit.")
+            return await self._reject(
+                f"{prefix}\nThe candidate exceeds the {self._max_bytes}-byte Schedule Spec limit."
+            )
         try:
             candidate = content.decode("utf-8")
         except UnicodeDecodeError:
             return await self._reject(f"{prefix}\nThe candidate is not valid UTF-8.")
 
-        # Validating or compiling a large schedule would otherwise block every session's stream.
+        # Validating or compiling a large Schedule Spec would otherwise block every session's stream.
         review = await asyncio.to_thread(review_schedule_spec_candidate, self._base_text, candidate, self._max_bytes)
         logger.info(
             "sandbox intermediate candidate validated sandbox_id=%s valid=%s changed=%s",
@@ -602,21 +604,21 @@ class _ScheduleSpecCandidateTracker:
                 context = await asyncio.to_thread(_inspection_context_json, candidate)
             except Exception:
                 # Accepted incomplete drafts can still require direct YAML inspection.
-                logger.debug("Updated schedule inspection context unavailable", exc_info=True)
+                logger.debug("Updated Schedule Spec inspection context unavailable", exc_info=True)
             else:
                 try:
                     await self._sandbox.write_file(WORKSPACE_SOURCE_CONTEXT, context)
                 except SandboxError:
                     # The context is optional, and its helpers reject a copy for other YAML.
                     logger.warning(
-                        "Updated schedule inspection context not written sandbox_id=%s",
+                        "Updated Schedule Spec inspection context not written sandbox_id=%s",
                         self._sandbox.sandbox_id,
                         exc_info=True,
                     )
         if review.proposal is not None:
             return (
                 AgentToolOutcome(
-                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base schedule."
+                    f"{prefix}\nThe candidate passed trusted server-side validation and differs from the base Schedule Spec."
                     f"\nThe server updated {WORKSPACE_LAST_ACCEPTED_SPEC}."
                     + (f"\n{REQUIRED_RULE_NOTICE}" if restored else ""),
                     True,

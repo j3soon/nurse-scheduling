@@ -3,7 +3,7 @@
 [Open Shift Requests](https://nursescheduling.org/shift-requests){ .md-button .md-button--primary }
 
 Requests record preferred or avoided assignments for people and dates. This
-page is optional. Skip it when the schedule has no individual preferences.
+page is optional. Skip it when the Schedule Spec has no individual preferences.
 
 ## Real scenario example
 

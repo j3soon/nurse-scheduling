@@ -53,11 +53,11 @@ def load_calendar(path: Path) -> tuple[date, date, dict[date, bool]]:
     return start, end, special
 
 
-def build_groups(schedule: dict, calendar: Path, *, start: str | None = None, end: str | None = None) -> dict:
+def build_groups(schedule_spec: dict, calendar: Path, *, start: str | None = None, end: str | None = None) -> dict:
     """Return replacement groups while preserving every unrelated group."""
     if (start is None) != (end is None):
         raise ValueError("Provide both --start and --end")
-    current = schedule["dates"]
+    current = schedule_spec["dates"]
     first = date.fromisoformat(str(start or current["range"]["startDate"]))
     last = date.fromisoformat(str(end or current["range"]["endDate"]))
     supported_start, supported_end, special = load_calendar(calendar)
@@ -98,14 +98,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate Taiwan calendar groups as JSON. Preserves custom groups and does not edit files."
     )
-    parser.add_argument("schedule", nargs="?", type=Path, default=Path("/workspace/schedule-spec.yaml"))
+    parser.add_argument("schedule_spec", nargs="?", type=Path, default=Path("/workspace/schedule-spec.yaml"))
     parser.add_argument("--calendar", type=Path, default=Path("/reference/taiwanHolidays.ts"))
     parser.add_argument("--start", help="New start date YYYY-MM-DD. Requires --end.")
     parser.add_argument("--end", help="New end date YYYY-MM-DD. Requires --start.")
     args = parser.parse_args()
     try:
-        schedule = YAML(typ="safe").load(args.schedule.read_text(encoding="utf-8"))
-        result = build_groups(schedule, args.calendar, start=args.start, end=args.end)
+        schedule_spec = YAML(typ="safe").load(args.schedule_spec.read_text(encoding="utf-8"))
+        result = build_groups(schedule_spec, args.calendar, start=args.start, end=args.end)
     except (ValueError, KeyError, TypeError, OSError, YAMLError) as error:
         parser.exit(1, f"{error}\n")
     print(json.dumps(result, ensure_ascii=False, allow_nan=False))

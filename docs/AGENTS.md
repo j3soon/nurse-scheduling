@@ -60,7 +60,7 @@
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the root `PRIVACY.md`.
 - Describe AI runs as server-owned operations that continue without a connected
-  browser. Reconnect, schedule replacement, notices, and Undo do not control a
+  browser. Reconnect, Schedule Spec replacement, notices, and Undo do not control a
   run. Send supplies browser state for a user-requested turn, and Stop requests
   cancellation. Optimizer completion is a server-owned trigger. Approval or
   rejection in the browser must not gate server execution.
@@ -84,8 +84,10 @@
 - Use **Schedule Spec** for input defining people, dates, shift types, constraints,
   preferences, and export settings. Use **Schedule** for actual shift assignments.
   A fixed assignment in a Schedule Spec remains an input constraint. Name formats
-  "Schedule Spec YAML" and "schedule workbook". Call the zero-content input
-  "empty Schedule Spec" and uninterpreted ward documents "source materials".
+  "Schedule Spec YAML" and "schedule as XLSX". Use "schedule" for assignments
+  without redundant output qualifiers. Use "workbook" for spreadsheet operations.
+  Call the zero-content input "empty Schedule Spec" and uninterpreted ward
+  documents "source materials".
 - Keep introductory terminology short, with one bullet per concept in GUI tab
   order explaining its meaning and purpose. Put ward conventions in a separate
   section and detailed examples beside the steps that use them.
@@ -179,7 +181,7 @@
 
 ## Validation
 
-- For walkthroughs that claim a GUI can reproduce a bundled schedule, start
+- For walkthroughs that claim a GUI can reproduce a bundled Schedule Spec, start
   the frontend with `cd web-frontend && bun run dev`, follow the steps in a
   Playwright browser, and download the resulting YAML from Save and Load.
   Compare its scheduling values with the committed fixture using

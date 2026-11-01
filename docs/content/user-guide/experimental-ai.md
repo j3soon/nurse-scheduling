@@ -3,17 +3,17 @@
 [Open Experimental AI](https://nursescheduling.org/experimental-ai){ .md-button .md-button--primary }
 
 !!! warning "Experimental"
-    AI answers may be incorrect. Verify them against the schedule before use.
+    AI answers may be incorrect. Verify them against the Schedule Spec and source materials before use.
 
 The hosted assistant is an API-key-gated beta. See
 [AI Beta Access](https://github.com/j3soon/nurse-scheduling#ai-beta-access)
 to request access.
 
-This page answers questions about the schedule currently open in the browser.
+This page answers questions about the Schedule Spec currently open in the browser.
 A question can include files of any type when **Attach files** is available.
 The assistant can inspect common text, image, PDF, and spreadsheet formats in
-its temporary workspace. The assistant can change the schedule. A valid change
-replaces the schedule in this browser when the response finishes. **Undo** in
+its temporary workspace. The assistant can change the Schedule Spec. A valid change
+replaces the Schedule Spec in this browser when the response finishes. **Undo** in
 the tab bar or <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes it. The assistant can also run the
 optimizer and review its result.
 
@@ -24,7 +24,7 @@ the 87-person example. If file attachment is available and the source contains
 no sensitive data, add the workbook with **Attach files** and ask the assistant
 to inspect it. Have it list the
 people, dates, staffing levels, requests, history, and any unclear
-notation before changing the schedule. A `1`, a color, or a short shift
+notation before changing the Schedule Spec. A `1`, a color, or a short shift
 code can mean different things in different wards. Confirm those meanings and
 group memberships with the person preparing the schedule.
 
@@ -35,7 +35,7 @@ any change you do not want. Run the optimizer, inspect coverage and the distribu
 ask for empirical adjustments. Values such as 11 `OFF` days or a particular
 weight are examples to tune, not defaults for every ward.
 
-The assistant can inspect an attached workbook and change the schedule,
+The assistant can inspect an attached workbook and change the Schedule Spec,
 but it cannot click through the app or run its upload controls for you. Use the
 [People](people.md) and [Shift Requests](shift-requests.md) pages for bulk
 imports. Follow the [data and limitations](#data-and-limitations) guidance
@@ -63,7 +63,7 @@ you can continue chatting while it solves.
   including in later chat turns while the result remains available.
 - The assistant wakes automatically and replies in a new turn.
 - The assistant may change the YAML and run the optimizer again. The changed
-  YAML replaces the schedule in the browser when that response finishes.
+  YAML replaces the Schedule Spec in the browser when that response finishes.
 
 The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
@@ -78,8 +78,8 @@ description fields. It restores person IDs in the downloaded workbook. Dates,
 shifts, groups, and rules can still reveal sensitive information.
 
 Each run uses a server-side Schedule Spec snapshot. Editing or undoing the browser
-schedule does not interrupt the assistant. Send passes the current browser
-schedule to the assistant for your next question.
+Schedule Spec does not interrupt the assistant. Send passes the current browser
+Schedule Spec to the assistant for your next question.
 
 When you build a new roster, the assistant asks about missing rest and fairness
 rules together before creating it. You can decline forbidden transitions, work
@@ -88,13 +88,13 @@ streak limits or balancing. It uses answers you already gave.
 ## Review an applied change
 
 Ask for a change, such as renaming a person or adding a shift request. The
-assistant edits a temporary copy of the schedule, and the app checks each edit.
+assistant edits a temporary copy of the Schedule Spec, and the app checks each edit.
 
 1. Ask for the change in the usual way.
-2. Each step that changes the temporary schedule shows **Schedule Spec check passed**
+2. Each step that changes the temporary Schedule Spec shows **Schedule Spec check passed**
    or **Schedule Spec check failed**. It contains the check result that the assistant
    received. After a failed check, the assistant repairs the problem.
-3. When the response finishes, the last valid schedule replaces the schedule in
+3. When the response finishes, the last valid Schedule Spec replaces the Schedule Spec in
    this browser. **Applied to your Schedule Spec** lists every difference.
    If you changed the browser Schedule Spec during the response, a notice explains
    that the assistant replaced those changes.
@@ -189,10 +189,10 @@ until you select one.
 
 - **Reasoning** shows the model's own thinking for that step.
 - The `bash` tool shows the command the assistant ran and its bounded output.
-  The assistant may read task-sized schedule references from the temporary
+  The assistant may read task-sized Schedule Spec references from the temporary
   sandbox when it needs schema guidance.
 - **Schedule Spec edit** shows the changed lines after a Bash command changes the
-  temporary schedule. Red lines were removed and green lines were added. This
+  temporary Schedule Spec. Red lines were removed and green lines were added. This
   is a preview. The Schedule Spec changes when the response finishes.
 - A row marked `failed` means that step changed nothing. This is the usual
 reason an answer arrives without a Schedule Spec change.
@@ -209,7 +209,7 @@ details regardless of the display settings. The conversation cost appears as
 
 If a turn fails, read the error beside its response. Chat exports retain that
 error with any partial answer. A provider error can include an HTTP status and
-an error ID to share when reporting the problem. A schedule
+an error ID to share when reporting the problem. A Schedule Spec
 validation error explains the invalid value or field. Failed validation discards
 that turn's edits and keeps your current Schedule Spec.
 
@@ -219,13 +219,13 @@ For the anonymized 87-person ward example, load
 `large-ward-with-87-people-2025-11.yaml`, then open **Experimental AI**. Confirm
 that the snapshot shows 87 people and 30 dates before asking a question.
 
-![Experimental AI chat with the 87-person schedule loaded](../assets/images/user-guide/21-real-experimental-ai.png)
+![Experimental AI chat with the 87-person Schedule Spec loaded](../assets/images/user-guide/21-real-experimental-ai.png)
 
 The blue development-version banner appears only in non-release builds.
 
-## Ask about a schedule
+## Ask about a Schedule Spec {#ask-about-a-schedule}
 
-1. Finish editing or load the intended schedule.
+1. Finish editing or load the intended Schedule Spec.
 2. Open **Experimental AI**.
 3. Confirm the displayed people and date counts.
 4. If **Attach files** is available, optionally select files and confirm the
@@ -282,7 +282,7 @@ same chat. The **Uploaded files** panel lists their names and sizes. Use **Remov
 when a file is no longer needed. Uploading a file with a name already in the list
 keeps both files and adds a number to the new name, such as `ward (1).csv`.
 The panel sits on the right on large screens and can be collapsed on smaller screens.
-To replace the schedule currently open in the app directly, use **Upload** on
+To replace the Schedule Spec currently open in the app directly, use **Upload** on
 **Save and Load**.
 
 The browser sends the Schedule Spec when you send a message. The first message
@@ -314,7 +314,7 @@ backend sessions, which normally expire after 30 days of inactivity.
 ## Data and limitations
 
 The complete Schedule Spec YAML is sent to the configured AI service and placed in
-the assistant's temporary workspace. Relevant schedule content reaches the
+the assistant's temporary workspace. Relevant Schedule Spec content reaches the
 model when the assistant inspects it. Uploaded source files stay with the chat
 for active use until removed or the session expires. Removed files stay in the
 archive until expiry. The service loads active files into each new
@@ -336,9 +336,9 @@ execute attachments.
 
 AI chats and related data may be logged, retained, and processed for the
 development, evaluation, and improvement of this product and the AI provider's
-products. The AI model still receives the original schedule when it reads it.
+products. The AI model still receives the original Schedule Spec when it reads it.
 Chats and attachments are not anonymized, and the basic optimizer anonymization
-does not make a sensitive schedule safe to submit. Do not submit personal,
+does not make a sensitive Schedule Spec safe to submit. Do not submit personal,
 confidential, regulated, or otherwise
 sensitive information. See the
 [privacy policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md)
@@ -346,4 +346,4 @@ for details.
 
 Chat sessions use unguessable identifiers but do not have account
 authentication yet. Model answers may be incorrect, so verify them against the
-schedule.
+Schedule Spec and source materials.

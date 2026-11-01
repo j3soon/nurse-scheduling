@@ -1,4 +1,4 @@
-"""Compact schedule context for AI prompts."""
+"""Compact Schedule Spec context for AI prompts."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

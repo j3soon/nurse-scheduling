@@ -213,7 +213,7 @@ class ChatHistory:
         downloads: dict[str, bytes | None] | None = None,
         files: Sequence[dict] = (),
     ) -> None:
-        """Keep session ownership, expiry, schedule, and new conversation entries."""
+        """Keep session ownership, expiry, Schedule Spec, and new conversation entries."""
         with self._connect() as connection:
             self._save_state(connection, session_id, state, entries, credential_id, uploads, downloads, files)
 

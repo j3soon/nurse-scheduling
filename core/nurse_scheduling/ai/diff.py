@@ -1,4 +1,4 @@
-"""Structural differences between two schedules, for reviewing a Schedule Spec change."""
+"""Structural differences between two Schedule Specs, for reviewing a Schedule Spec change."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -33,7 +33,7 @@ DiffKind = Literal["added", "removed", "changed"]
 
 @dataclass(frozen=True)
 class DiffEntry:
-    """One rendered difference between two schedules."""
+    """One rendered difference between two Schedule Specs."""
 
     kind: DiffKind
     location: str
@@ -50,7 +50,7 @@ class DiffEntry:
 
 @dataclass(frozen=True)
 class ScheduleSpecDiff:
-    """A bounded list of the changes between two schedules."""
+    """A bounded list of the changes between two Schedule Specs."""
 
     entries: tuple[DiffEntry, ...] = ()
     omitted: int = 0
@@ -66,11 +66,11 @@ class ScheduleSpecDiff:
 
 
 def diff_schedule_specs(before: Any, after: Any) -> ScheduleSpecDiff:
-    """Compare two parsed schedules and report what changed.
+    """Compare two parsed Schedule Specs and report what changed.
 
     Comparing the parsed documents rather than their text keeps the review
     independent of how the candidate was written, and reveals an entry the
-    assistant dropped even though the result is still a valid schedule.
+    assistant dropped even though the result is still a valid Schedule Spec.
     """
     changes = _collect(before, after, ())
     kept = changes[:MAX_DIFF_ENTRIES]
@@ -78,7 +78,7 @@ def diff_schedule_specs(before: Any, after: Any) -> ScheduleSpecDiff:
 
 
 def _collect(before: Any, after: Any, location: tuple[object, ...]) -> list[tuple[DiffKind, tuple, Any, Any]]:
-    """Compare two schedule nodes and report the differences depth first."""
+    """Compare two Schedule Spec nodes and report the differences depth first."""
     if before == after:
         return []
     if isinstance(before, dict) and isinstance(after, dict):

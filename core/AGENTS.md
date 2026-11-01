@@ -178,7 +178,7 @@ and current session recovery working.
   instead of duplicating it in compaction prompts.
   Verify Pi alignment against the pinned source across the affected execution
   path. Document each necessary difference and its reason in the limits page.
-- `AgentSession` owns conversation changes, steering, applied schedules, and
+- `AgentSession` owns conversation changes, steering, applied Schedule Specs, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
   recovery writes and eviction pins. `SessionEventStream` owns bounded replay.
@@ -278,7 +278,7 @@ and current session recovery working.
   missing speed measurements separate from missing prices.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
-  Keep schedules and attachments separate from model instructions.
+  Keep Schedule Specs and attachments separate from model instructions.
 - Put shared AI test data under `tests/ai_fixtures/`, so affected checks select
   AI suites without running unrelated scheduling tests.
 - Keep browser and command chat exports on the shared Python ZIP writer. Read
@@ -386,7 +386,7 @@ and current session recovery working.
   and let the agent write a focused sandbox parser when a helper is insufficient.
   Check the helper catalog and `--help` before generating read-only parsing or
   counting code. Add recurring missing operations to a maintained inspector.
-  Keep source inspection separate from schedule construction and policy audits.
+  Keep source inspection separate from Schedule Spec construction and policy audits.
 - Fix repeated representation failures at the data boundary before adding prompt
   exceptions. Use the app's YAML 1.2 semantics for both reading and writing
   Schedule Spec. Prefer the installed library over custom scalar converters.
@@ -416,12 +416,12 @@ and current session recovery working.
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
 - Parse Schedule Specs through `loader._load_yaml`, including comparisons of draft
-  schedules. It bounds nesting and alias expansion before constructing data.
+  Schedule Specs. It bounds nesting and alias expansion before constructing data.
   Direct `YAML.load` calls bypass those bounds.
-- Parse, validate, and compile schedules in worker threads, not on the event
-  loop. One large schedule can take most of a second, which stalls every
+- Parse, validate, and compile Schedule Specs in worker threads, not on the event
+  loop. One large Schedule Spec can take most of a second, which stalls every
   session's stream.
-- The assistant is reachable only from the web frontend, so its schedule tools
+- The assistant is reachable only from the web frontend, so its Schedule Spec tools
   target the frontend subset alone. Validate through
   `ai/validation.py`, and do not expose the full backend Schedule Spec format, which
   accepts shapes the editor cannot represent.
@@ -551,7 +551,7 @@ and current session recovery working.
   status entries and ordinary app events. Test that
   separate provider requests preserve their shared prefix until compaction or trimming.
 - Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
-  Bind it to exact schedule and upload inputs, retain it only through the
+  Bind it to exact Schedule Spec and upload inputs, retain it only through the
   successful run commit, and count it in session memory. Invalidate it when
   sources change. Treat it as untrusted working notes, not user approval.
   Do not retain arbitrary workspace files or execute saved notes automatically.
@@ -563,7 +563,7 @@ and current session recovery working.
   trusted review before optimization or successful completion. A nonzero command
   exit alone must not undo an accepted Schedule Spec change. Pair deterministic
   recovery checks with focused live cases for the model's response to validation
-  feedback. Grade the required recovery action as well as the final schedule.
+  feedback. Grade the required recovery action as well as the final Schedule Spec.
   Keep those cases with the implementation commit.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
   review, and only when the restored Schedule Spec passes the existing frontend

@@ -202,7 +202,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   supporting docs. Before finishing, read the text without the conversation
   and check that the problem, action, and result are clear.
 - Name the schedule's role or format directly, such as "current Schedule Spec,"
-  "original schedule," "validated Schedule Spec," or "backend schedule format."
+  "original schedule," "validated Schedule Spec," or "backend Schedule Spec format."
   Name the specific property of other values too, such as "normalized
   selector" or "compiled selector." `scripts/check_terminology.sh` rejects
   vague jargon that hides it, and CI runs the check.
@@ -211,8 +211,10 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   prose. Use `ScheduleSpec`, `schedule_spec`, and `scheduleSpec` in code.
 - Use **Schedule** for output containing actual shift assignments, whether made
   by the optimizer or by hand. Fixed assignments in a Schedule Spec are input
-  constraints. Use "optimized schedule" when the optimizer produced it.
-- Name formats explicitly: "Schedule Spec YAML" and "schedule workbook".
+  constraints. Use "schedule" for the output without redundant terms such as
+  "schedule results" or "optimized schedule", unless its origin matters.
+- Name file formats when relevant: "Schedule Spec YAML" and "schedule as XLSX".
+  Use "workbook" for spreadsheet file operations.
   Use "empty Schedule Spec" for empty input and "source materials" for documents
   that have not yet been interpreted into a Schedule Spec.
 - Follow [Deployment and Compatibility](docs/content/developer-guide/compatibility.md).

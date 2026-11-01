@@ -177,7 +177,7 @@ export function ChatTranscriptView({
                   className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
                 >
                   <FiDownload aria-hidden="true" className="h-4 w-4" />
-                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download result'}
+                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download schedule'}
                 </button>
               )}
               {message.downloadId && (

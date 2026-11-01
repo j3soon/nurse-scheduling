@@ -66,7 +66,7 @@ file and line that shows the control, or the reproduction when it is missing.
 ## Privacy and reporting
 
 - Stored client addresses are salted digests. Telemetry excludes addresses and
-  schedule content as `PRIVACY.md` states.
+  Schedule Spec content as `PRIVACY.md` states.
 - Suspicious requests are reported without changing the response a caller sees.
 
 ## Dependencies

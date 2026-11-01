@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-When the user wants to build a schedule from scratch, read `/reference/user-guide/build-a-real-schedule.md`
+When the user wants to build a Schedule Spec from scratch, read `/reference/user-guide/build-a-real-schedule.md`
 before recommending its structure or editing it. Adapt the guide to the user's staffing and rest rules.
 When staffing distinguishes seniors or other qualifications, explain the guide's separate `D+`, `E+`, and `N+`
 qualified slots early. Represent separate staffing pools with separate shift types and appropriate groups.

@@ -954,7 +954,7 @@ def _compile_export(data, people_map, shift_map, date_map):
 
 
 def _validate_and_compile_schedule_spec(data: ScheduleSpec) -> CompiledScheduleSpec:
-    """Validate backend schedule semantics and compile reusable index-based data."""
+    """Validate backend Schedule Spec semantics and compile reusable index-based data."""
     if data.apiVersion != "alpha":
         raise ValueError(f"Unsupported API version: {data.apiVersion}")
 

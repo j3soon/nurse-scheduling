@@ -247,7 +247,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
-  // The schedule text the backend holds, as last sent or applied by this browser.
+  // The Schedule Spec text the backend holds, as last sent or applied by this browser.
   const syncedScheduleSpecRef = useRef<string | null>(null);
   const syncedBrowserScheduleSpecRef = useRef<string | null>(null);
   const appliedScheduleSpecRunsRef = useRef<Record<string, string | null>>({});
@@ -271,7 +271,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     }
     const changed = applied.replacedQueuedScheduleSpec || scheduleSpecYamlRef.current !== syncedBrowserScheduleSpecRef.current;
     const notice = changed
-      ? 'The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule.'
+      ? 'The assistant’s Schedule Spec replaced changes made during this response. Undo to restore your previous Schedule Spec.'
       : null;
     // One import is one history entry, so undo reverts the whole change.
     const browserYaml = onApplyScheduleRef.current(applied.scheduleSpecYaml);
@@ -846,7 +846,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         setConversationUnavailable(false);
         setSessionNotice(null);
       } else if (!resume?.recover && syncedScheduleSpecRef.current !== scheduleSpecYaml) {
-        // The schedule can change elsewhere in the app between questions, including an undo
+        // The Schedule Spec can change elsewhere in the app between questions, including an undo
         // of an applied change. The backend records the change for the next run.
         await updateSessionSchedule(sessionId, scheduleSpecYaml, authToken, sessionEndpoint);
       }

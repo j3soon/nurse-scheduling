@@ -31,7 +31,7 @@ SCHEMA_REFERENCE_FILES = {
     "export": REFERENCE_DIRECTORY / "schema-export.md",
 }
 USER_GUIDE_DIRECTORY = Path(__file__).resolve().parents[3] / "docs/content/user-guide"
-SCHEDULE_EXAMPLE_SOURCE = (
+SCHEDULE_SPEC_EXAMPLE_SOURCE = (
     Path(__file__).resolve().parents[3] / "web-frontend/public/examples/large-ward-with-87-people-2025-11.yaml"
 )
 TAIWAN_HOLIDAYS_SOURCE = Path(__file__).resolve().parents[3] / "web-frontend/src/utils/taiwanHolidays.ts"
@@ -45,7 +45,7 @@ def load_schedule_spec_reference(group: str) -> str | None:
         return None
     reference = path.read_text(encoding="utf-8")
     if len(reference) > MAX_SCHEMA_REFERENCE_CHARS:
-        raise ValueError(f"{group} schedule reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
+        raise ValueError(f"{group} Schedule Spec reference exceeds {MAX_SCHEMA_REFERENCE_CHARS} characters")
     return reference
 
 
@@ -61,7 +61,7 @@ def load_taiwan_holidays_reference() -> str:
 @lru_cache(maxsize=1)
 def load_schedule_spec_example() -> str:
     """Load the public anonymized ward example without changing the current Schedule Spec."""
-    return SCHEDULE_EXAMPLE_SOURCE.read_text(encoding="utf-8")
+    return SCHEDULE_SPEC_EXAMPLE_SOURCE.read_text(encoding="utf-8")
 
 
 @lru_cache(maxsize=1)

@@ -121,7 +121,7 @@ generated guidance separately from intentional edits. If it is outside the
 task scope, remove only the newly appended block after the dev server stops.
 Preserve existing guidance and user changes.
 
-New schedules contain no user-defined people, shift types, or groups. E2E tests
+New empty Schedule Specs contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
 For responsive UI changes, check populated pages and open editing forms at phone
@@ -280,7 +280,7 @@ For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
 select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the
 ignored `../docker/.env.staging` when available. Never print or persist the
-token in test output or browser storage. Seed a small valid schedule for
+token in test output or browser storage. Seed a small valid Schedule Spec for
 optimizer flows, then follow the visible chat and session events through the
 terminal response. Mocked component tests alone cannot verify this path.
 

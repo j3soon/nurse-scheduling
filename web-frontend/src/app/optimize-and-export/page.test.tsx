@@ -1608,7 +1608,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(optimizeBody).toBeInstanceOf(FormData);
     expect(optimizeBody.get('schedule_spec_yaml')).toBeNull();
     expect(optimizeBody.get('schedule_spec_file')).toBeInstanceOf(File);
-    expect((optimizeBody.get('schedule_spec_file') as File).name).toBe('schedule.yaml');
+    expect((optimizeBody.get('schedule_spec_file') as File).name).toBe('schedule-spec.yaml');
     expect(optimizeBody.get('prettify')).toBe('true');
     expect(optimizeBody.get('timeout')).toBe('300');
     expect(optimizeBody.get('solver')).toBe('ortools/cp-sat');

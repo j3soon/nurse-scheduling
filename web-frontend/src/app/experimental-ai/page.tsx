@@ -839,7 +839,7 @@ export default function ExperimentalAiPage() {
       link.click();
       link.remove();
     } catch (downloadError) {
-      if (ownsConversation()) reportRequestError(downloadError, 'The optimized schedule could not be downloaded.');
+      if (ownsConversation()) reportRequestError(downloadError, 'The schedule could not be downloaded.');
     } finally {
       if (ownsConversation()) setDownloadingOptimizationId(null);
     }
@@ -966,10 +966,10 @@ export default function ExperimentalAiPage() {
           </span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the schedule currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.
+          Ask questions about the Schedule Spec currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.
         </p>
         <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          When a response finishes, the assistant&apos;s valid Schedule Spec changes replace the schedule in this browser.
+          When a response finishes, the assistant&apos;s valid Schedule Spec changes replace the Schedule Spec in this browser.
           Use Undo in the tab bar or Ctrl+Z (Cmd+Z) to undo them. This beta is API-key gated by default.{' '}
           <a
             className="font-medium underline"

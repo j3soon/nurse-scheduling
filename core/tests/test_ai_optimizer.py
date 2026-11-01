@@ -55,7 +55,7 @@ WORKBOOK_BYTES = optimizer_workbook_bytes()
 @pytest.mark.parametrize("available", [False, True])
 def test_completion_reports_existing_download_only_when_available(available) -> None:
     message = optimizer_completion_message({"download_available": available, "result": {}})
-    assert ("Download result button" in message) == available
+    assert ("Download schedule button" in message) == available
 
 
 @pytest.mark.parametrize("score", [0, -20, 20, None])

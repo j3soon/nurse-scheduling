@@ -104,12 +104,12 @@ _Result = TypeVar("_Result")
 
 
 def schedule_spec_revision(schedule_spec_yaml: str) -> str:
-    """Identify one exact Schedule Spec snapshot, so the browser applies a run's schedule only over its base."""
+    """Identify one exact Schedule Spec snapshot, so the browser applies a run's Schedule Spec only over its base."""
     return hashlib.sha256(schedule_spec_yaml.encode("utf-8")).hexdigest()
 
 
 def _schedule_spec(schedule_spec_yaml: str) -> object:
-    """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
+    """Parse a Schedule Spec for comparison, so a formatting-only change is not reported as an edit."""
     try:
         return _load_yaml(schedule_spec_yaml.encode(), reject_aliases=True)
     except (ValueError, YAMLError):
@@ -129,7 +129,7 @@ class RunCompletion:
     schedule_spec_applied: bool
     history_trimmed_count: int = 0
     context_used_chars: int = 0
-    # The run's schedule replaced a browser update queued during the run.
+    # The run's Schedule Spec replaced a browser update queued during the run.
     replaced_queued_schedule_spec: bool = False
 
 
@@ -138,7 +138,7 @@ class QueuedScheduleSpec:
     """The latest browser Schedule Spec received during a run, applied after the run ends."""
 
     schedule_spec_yaml: str
-    # Whether its data differs from the session schedule, when the update request compared them.
+    # Whether its data differs from the session Schedule Spec, when the update request compared them.
     data_changed: bool | None
 
 
@@ -351,7 +351,7 @@ class AgentSession:
         return projected_history(self.transcript)
 
     def recovery_state(self) -> dict[str, Any]:
-        """Return the schedule and retention counts that a restored session continues.
+        """Return the Schedule Spec and retention counts that a restored session continues.
 
         The conversation itself is rebuilt from saved entries.
         """
@@ -687,7 +687,7 @@ class AgentSession:
         self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
         replaced_queued_schedule_spec = False
         if schedule_spec_yaml is not None:
-            # The run's schedule replaces an update queued during the run, as it replaces newer browser work.
+            # The run's Schedule Spec replaces an update queued during the run, as it replaces newer browser work.
             replaced_queued_schedule_spec = self.queued_schedule_spec is not None
             self.queued_schedule_spec = None
             self.analysis = None
@@ -728,10 +728,10 @@ class AgentSession:
         return self.agent.queued_steering if self.active else ()
 
     def update_schedule_spec(self, schedule_spec_yaml: str, compared: tuple[str, bool] | None = None) -> None:
-        """Replace the session schedule, invalidate in-flight results, and record the change.
+        """Replace the session Schedule Spec, invalidate in-flight results, and record the change.
 
-        `compared` holds a base schedule and its `schedule_spec_changed` result. It is reused
-        only while that base is still the session schedule. During a run, keep only the latest
+        `compared` holds a base Schedule Spec and its `schedule_spec_changed` result. It is reused
+        only while that base is still the session Schedule Spec. During a run, keep only the latest
         update until the run ends, so a browser update never discards the run.
         """
         known_change = compared[1] if compared is not None and compared[0] == self.schedule_spec_yaml else None

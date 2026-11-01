@@ -2,7 +2,7 @@
 
 [Open Optimize and Export](https://nursescheduling.org/optimize-and-export){ .md-button .md-button--primary }
 
-This page sends the Schedule Spec to a solver and downloads the optimized
+This page sends the Schedule Spec to a solver and downloads the
 schedule as XLSX. Server selection and submission are required. Workbook
 formatting, anonymization, and timeout changes are optional.
 

@@ -1,7 +1,7 @@
 # Quick Start
 
 This walkthrough creates a small Schedule Spec, saves a YAML backup, and
-downloads an optimized schedule workbook. It was validated with the frontend and backend running
+downloads a schedule as XLSX. It was validated with the frontend and backend running
 locally.
 
 !!! warning "Protect Schedule Spec"

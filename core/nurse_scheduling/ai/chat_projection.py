@@ -53,9 +53,9 @@ def _optimization_text(data: dict) -> str:
     state = data["state"]
     text = (
         (
-            "Optimization finished. Download the optimized schedule to review it."
+            "Optimization finished. Download the schedule to review it."
             if data.get("downloadable")
-            else "Optimization finished, but no result workbook is available to download."
+            else "Optimization finished, but no schedule is available to download."
         )
         if state == "completed"
         else f"Optimization ended with status: {state}."
@@ -425,7 +425,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             entry = {"kind": "schedule-spec-applied", "text": data["diff"], "runId": run_id}
             if data.get("replaced_queued_schedule_spec"):
                 entry["notice"] = (
-                    "The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule."
+                    "The assistant’s Schedule Spec replaced changes made during this response. Undo to restore your previous Schedule Spec."
                 )
             activity.append(entry)
         elif kind in {"done", "stopped", "error", "stale"}:

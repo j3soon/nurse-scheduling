@@ -52,13 +52,13 @@ python skills/improve-agent-from-traces/scripts/extract_html_traces.py \
 ```
 
 It prints one compact inventory per export and saves detailed JSON locally.
-The inventory counts exported tool states, not inferred causes. Schedule previews
+The inventory counts exported tool states, not inferred causes. Schedule Spec previews
 and response entries are not tool calls. Reasoning is omitted by default. Use
 `--include-reasoning` only when needed to explain a decision. Tool `outputs` keep
 their exported order. Arguments and results are optional and have no separate
 labels in this HTML format, so do not infer a missing output from its position.
 The extractor preserves message roles, app sources, timing, system prompts,
-uploaded-file metadata, schedule checks, applied changes and pending proposals.
+uploaded-file metadata, Schedule Spec checks, applied changes and pending proposals.
 When the exporter adds an activity kind, update the extractor and test its exported HTML shape.
 It does not infer token usage.
 Collapsed app, status and optimizer messages remain message content. Their HTML
@@ -135,7 +135,7 @@ provider requests, sandbox commands, optimizer submission, solving, and result
 delivery are real or simulated. A live model and a successful optimizer-tool
 reply do not prove that an optimizer job ran.
 
-Validate schedule inputs with `validate_frontend_schedule_spec_yaml` before live
+Validate Schedule Specs with `validate_frontend_schedule_spec_yaml` before live
 AI comparisons. A format accepted by the backend but unsupported by the frontend
 can produce misleading agent failures. Check structured answer fields
 and counting units before provider calls. For example, request entries and

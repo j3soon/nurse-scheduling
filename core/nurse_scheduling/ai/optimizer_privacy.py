@@ -202,7 +202,7 @@ def prepare_optimizer_spec(schedule_spec_yaml: str, max_schedule_bytes: int) -> 
         payload["export"] = _default_export_config(payload)
     people = payload["people"]
     items = people["items"]
-    # Optional sections are absent from a valid schedule that never declares them.
+    # Optional sections are absent from a valid Schedule Spec that never declares them.
     groups = people.get("groups", [])
     used_ids = {group["id"] for group in groups}
     anonymized_id_by_original_id: dict[str, str] = {}

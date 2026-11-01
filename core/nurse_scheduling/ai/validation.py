@@ -1,4 +1,4 @@
-"""Web frontend schedule validation for the experimental AI service."""
+"""Web frontend Schedule Spec validation for the experimental AI service."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -29,8 +29,8 @@ from ..frontend_validation import load_frontend_data
 from ..loader import _load_yaml
 
 # The assistant is reachable only from the web frontend, so it validates the
-# frontend subset alone. The full backend schedule format accepts shapes the editor
-# cannot represent, which would let the model produce unusable schedules.
+# frontend subset alone. The full backend Schedule Spec format accepts shapes the editor
+# cannot represent, which would let the model produce unusable Schedule Specs.
 MAX_VALIDATION_ISSUES = 20
 MAX_ISSUE_MESSAGE_CHARS = 300
 DOCUMENT_LOCATION = "(document)"
@@ -38,7 +38,7 @@ DOCUMENT_LOCATION = "(document)"
 
 @dataclass(frozen=True)
 class ScheduleSpecIssue:
-    """One validation problem and the schedule path that reported it."""
+    """One validation problem and the Schedule Spec path that reported it."""
 
     location: str
     message: str
@@ -66,15 +66,17 @@ class ScheduleSpecValidationResult:
 def validate_frontend_schedule_spec_yaml(
     schedule_spec_yaml: str, max_bytes: int, *, allow_empty: bool = False
 ) -> ScheduleSpecValidationResult:
-    """Validate one schedule against the shapes the web frontend can edit.
+    """Validate one Schedule Spec against the shapes the web frontend can edit.
 
     Parsing bounds live in the shared loader. The frontend entry point also
     rejects aliases before building a model. Candidate edits can allow the empty
-    editor state. Optimization still requires the complete backend schedule.
+    editor state. Optimization still requires the complete backend Schedule Spec.
     """
     content = schedule_spec_yaml.encode("utf-8")
     if len(content) > max_bytes:
-        return _invalid([ScheduleSpecIssue(DOCUMENT_LOCATION, f"Schedule exceeds the limit of {max_bytes} bytes.")])
+        return _invalid(
+            [ScheduleSpecIssue(DOCUMENT_LOCATION, f"Schedule Spec exceeds the limit of {max_bytes} bytes.")]
+        )
     try:
         load_frontend_data(content)
     except ValidationError as error:
@@ -83,7 +85,7 @@ def validate_frontend_schedule_spec_yaml(
         # ValidationError derives from ValueError, so it must be handled first.
         return _invalid([_issue_from_error(entry) for entry in error.errors()])
     except YAMLError as error:
-        return _invalid([ScheduleSpecIssue(DOCUMENT_LOCATION, f"Schedule is not readable YAML. {error}")])
+        return _invalid([ScheduleSpecIssue(DOCUMENT_LOCATION, f"Schedule Spec is not readable YAML. {error}")])
     except (TypeError, ValueError) as error:
         return _invalid([ScheduleSpecIssue(DOCUMENT_LOCATION, str(error))])
     return ScheduleSpecValidationResult(valid=True)
@@ -120,14 +122,14 @@ def _is_empty_schedule_spec(data: dict) -> bool:
 
 
 def _invalid(issues: list[ScheduleSpecIssue]) -> ScheduleSpecValidationResult:
-    """Bound the reported issues so one bad schedule cannot flood the prompt."""
+    """Bound the reported issues so one bad Schedule Spec cannot flood the prompt."""
     kept = issues[:MAX_VALIDATION_ISSUES]
     bounded = tuple(ScheduleSpecIssue(issue.location, _bounded_message(issue.message)) for issue in kept)
     return ScheduleSpecValidationResult(valid=False, issues=bounded, omitted_issues=len(issues) - len(kept))
 
 
 def _issue_from_error(entry: dict) -> ScheduleSpecIssue:
-    """Convert one Pydantic error entry into a located schedule issue."""
+    """Convert one Pydantic error entry into a located Schedule Spec issue."""
     return ScheduleSpecIssue(
         format_schedule_spec_location(entry.get("loc", ())), str(entry.get("msg", "Invalid value."))
     )
@@ -139,16 +141,15 @@ def new_schedule_spec_issues(
 ) -> tuple[ScheduleSpecIssue, ...]:
     """Report the problems an edit introduced, ignoring those already present.
 
-    Both results are bounded, so a schedule with more problems than the reported
-    limit can hide one. That is acceptable, because the user still reviews the
-    diff before anything is applied.
+    Both results are bounded, so a Schedule Spec with more problems than the reported
+    limit can hide one.
     """
     existing = {(issue.location, issue.message) for issue in before.issues}
     return tuple(issue for issue in after.issues if (issue.location, issue.message) not in existing)
 
 
 def format_schedule_spec_location(location: Sequence[object]) -> str:
-    """Render a schedule path such as `people.items[0].id` from its parts."""
+    """Render a Schedule Spec path such as `people.items[0].id` from its parts."""
     parts: list[str] = []
     for entry in location:
         if isinstance(entry, int):

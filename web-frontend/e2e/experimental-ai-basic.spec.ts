@@ -1084,7 +1084,7 @@ test('downloads a completed background optimization from chat', async ({ page })
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   }
   await page.setViewportSize({ width: 1280, height: 720 });
-  const downloadButton = page.getByRole('button', { name: 'Download result' });
+  const downloadButton = page.getByRole('button', { name: 'Download schedule' });
   await expect(downloadButton).toBeVisible();
   const downloadEvent = page.waitForEvent('download');
   await downloadButton.click();

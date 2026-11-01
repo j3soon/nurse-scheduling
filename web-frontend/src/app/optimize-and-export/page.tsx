@@ -816,7 +816,7 @@ export default function OptimizeAndExportPage() {
   const isCancelling = scheduleStatus === 'cancelling';
   const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || !canUseActiveServer || !activeOptimizationOptions;
   const optimizeDisabledReason = isRequiredDataMissing
-    ? 'Complete the missing Schedule Spec before optimizing.'
+    ? 'Complete the required Schedule Spec fields before optimizing.'
     : activeServerStatus === 'unauthorized'
       ? 'This backend requires credentials. Enter its token to continue.'
     : activeServerStatus === 'degraded'
@@ -1279,7 +1279,7 @@ export default function OptimizeAndExportPage() {
       formData.append(
         'schedule_spec_file',
         new Blob([yamlContent], { type: 'application/x-yaml' }),
-        'schedule.yaml',
+        'schedule-spec.yaml',
       );
 
       if (prettifyArg !== null && prettifyArg !== undefined) {
@@ -1889,7 +1889,7 @@ export default function OptimizeAndExportPage() {
             />
           </div>
           <p className="mt-1 text-sm text-gray-600">
-            Send the current Schedule Spec to the backend and download the generated XLSX result.
+            Send the current Schedule Spec to the backend and download the schedule as XLSX.
           </p>
         </div>
 

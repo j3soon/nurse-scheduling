@@ -58,8 +58,8 @@ export function parseOptimizerMessage(content: string): {
 export function optimizationMessage(activity: OptimizationActivity): string {
   const summary = activity.state === 'completed'
     ? activity.downloadable
-      ? 'Optimization finished. Download the optimized schedule to review it.'
-      : 'Optimization finished, but no result workbook is available to download.'
+      ? 'Optimization finished. Download the schedule to review it.'
+      : 'Optimization finished, but no schedule is available to download.'
     : `Optimization ended with status: ${activity.state}.`;
   const details: string[] = [];
   const add = (label: string, value: string | number | undefined) => {
