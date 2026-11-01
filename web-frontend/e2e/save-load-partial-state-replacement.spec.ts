@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('partial YAML upload replaces old sections instead of preserving stale group data', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('partial YAML upload replaces old sections instead of preserving stale grou
    * 4. Verify the downstream People page also no longer shows the stale group.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'partial replacement seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

@@ -21,7 +21,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
 import { Mode } from '@/constants/modes';
 import { DataType } from '@/types/scheduling';
@@ -46,7 +46,7 @@ export default function PeoplePage() {
     removeItemFromGroup,
     reorderItems,
     reorderGroups,
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   const bulkAddPeople = (names: string[]) => {
     if (names.length === 0) {

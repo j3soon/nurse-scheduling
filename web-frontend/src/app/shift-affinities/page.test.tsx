@@ -24,10 +24,10 @@ import userEvent from '@testing-library/user-event';
 import ShiftAffinitiesPage from '@/app/shift-affinities/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 function renderShiftAffinitiesPage() {
@@ -45,7 +45,7 @@ describe('ShiftAffinitiesPage', () => {
   beforeEach(() => {
     updatePreferencesByType.mockReset();
     duplicatePreferenceByType.mockReset();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -96,7 +96,7 @@ describe('ShiftAffinitiesPage', () => {
 
   it('dismisses the edited affinity draft before duplicating an affinity', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -140,7 +140,7 @@ describe('ShiftAffinitiesPage', () => {
 
   it('dismisses an added affinity draft before duplicating an affinity', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

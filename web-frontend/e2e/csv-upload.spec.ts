@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('csv uploads recover from invalid history input and populate downstream request/history state', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('csv uploads recover from invalid history input and populate downstream req
    * 4. Confirm the imported request and history summary appear.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'csv upload seed',
     dates: {

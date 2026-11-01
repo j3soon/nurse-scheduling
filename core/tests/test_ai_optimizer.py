@@ -46,16 +46,16 @@ from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.session_event_stream import SessionEventStream
 
 from .ai_eval.optimizer_fixtures import FIXTURE, completion_result
-from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
+from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_spec_yaml
 
-TEST_SCHEDULE = schedule_yaml()
+TEST_SCHEDULE = schedule_spec_yaml()
 WORKBOOK_BYTES = optimizer_workbook_bytes()
 
 
 @pytest.mark.parametrize("available", [False, True])
 def test_completion_reports_existing_download_only_when_available(available) -> None:
     message = optimizer_completion_message({"download_available": available, "result": {}})
-    assert ("Download result button" in message) == available
+    assert ("Download schedule button" in message) == available
 
 
 @pytest.mark.parametrize("score", [0, -20, 20, None])
@@ -116,7 +116,7 @@ def test_completion_audits_restored_workbook_against_submitted_snapshot(custom_e
                     "unmet": 1,
                 }
             assert result["download_available"]
-            assert not optimizer._jobs[result["job_id"]].schedule_yaml
+            assert not optimizer._jobs[result["job_id"]].schedule_spec_yaml
         finally:
             await optimizer.close()
 
@@ -156,14 +156,14 @@ class FakeOptimizerBackend:
         self.deleted_event = asyncio.Event()
 
     async def submit(
-        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+        self, schedule_spec_yaml: str, timeout_seconds: int | None, client_address: str | None = None
     ) -> OptimizerJobPayload:
         self.submit_entered.set()
         if self.submit_gate is not None:
             await self.submit_gate.wait()
         if self.submit_error:
             raise OptimizerError("The optimizer request failed.")
-        self.submissions.append((schedule_yaml, timeout_seconds))
+        self.submissions.append((schedule_spec_yaml, timeout_seconds))
         return OptimizerJobPayload(id=f"remote-{len(self.submissions)}", state="running")
 
     async def get(self, job_id: str) -> OptimizerJobPayload:
@@ -282,7 +282,7 @@ def test_http_backend_uses_the_existing_optimizer_routes_and_server_side_token()
         assert cancelled.state == "running"
         assert artifact.content == b"workbook"
         assert [request.url.path for request in requests] == [
-            "/optimize",
+            "/schedule_spec/optimize",
             "/optimize/remote-1/finish-now",
             "/optimize/remote-1/cancel",
             "/optimize/remote-1/xlsx",
@@ -314,7 +314,7 @@ def test_submission_without_provenance_does_not_probe_info(backend_info: dict[st
         def handle(request: httpx.Request) -> httpx.Response:
             # A slow or differently routed /info endpoint must never affect submission.
             assert request.method == "POST"
-            assert request.url.path == "/optimize"
+            assert request.url.path == "/schedule_spec/optimize"
             return httpx.Response(202, json={"id": "remote-1", "state": "running", **backend_info})
 
         backend = HttpOptimizerBackend(
@@ -529,9 +529,9 @@ def test_start_returns_immediately_and_completion_wakes_the_agent() -> None:
     async def scenario() -> None:
         class ProvenanceBackend(FakeOptimizerBackend):
             async def submit(
-                self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+                self, schedule_spec_yaml: str, timeout_seconds: int | None, client_address: str | None = None
             ) -> OptimizerJobPayload:
-                payload = await super().submit(schedule_yaml, timeout_seconds)
+                payload = await super().submit(schedule_spec_yaml, timeout_seconds)
                 payload.backend = {"url": "http://optimizer:8000", "app_version": "v0.4.3"}
                 payload.request = {"solver": "ortools/cp-sat", "timeout_seconds": timeout_seconds}
                 return payload
@@ -660,7 +660,7 @@ def test_session_optimizer_restores_named_people_in_download_and_attached_result
         payload["people"]["items"][1]["id"] = "Bob"
         payload["people"]["groups"][0]["members"] = [person_id, "Bob"]
         payload["preferences"][1]["person"] = [person_id]
-        original_yaml = schedule_yaml(payload)
+        original_yaml = schedule_spec_yaml(payload)
         backend = FakeOptimizerBackend(optimizer_workbook_bytes(("P1", "P2")))
         completed = asyncio.Event()
         attached_result: OptimizerArtifact | None = None
@@ -1033,9 +1033,9 @@ def test_finish_now_waits_for_workbook_before_terminal_update() -> None:
 def test_immediately_completed_submission_waits_for_workbook_before_terminal_update() -> None:
     class ImmediateBackend(FakeOptimizerBackend):
         async def submit(
-            self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+            self, schedule_spec_yaml: str, timeout_seconds: int | None, client_address: str | None = None
         ) -> OptimizerJobPayload:
-            self.submissions.append((schedule_yaml, timeout_seconds))
+            self.submissions.append((schedule_spec_yaml, timeout_seconds))
             return OptimizerJobPayload(id="remote-1", state="completed", terminal=True)
 
     async def scenario() -> None:
@@ -1403,14 +1403,14 @@ def test_retirement_during_preparation_revokes_submission(monkeypatch) -> None:
 
     entered = threading.Event()
     release = threading.Event()
-    prepare = module.prepare_optimizer_schedule
+    prepare = module.prepare_optimizer_spec
 
     def blocked_prepare(*args):
         entered.set()
         assert release.wait(timeout=2)
         return prepare(*args)
 
-    monkeypatch.setattr(module, "prepare_optimizer_schedule", blocked_prepare)
+    monkeypatch.setattr(module, "prepare_optimizer_spec", blocked_prepare)
 
     async def scenario():
         backend = FakeOptimizerBackend()

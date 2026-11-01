@@ -24,9 +24,9 @@ from io import BytesIO
 import pytest
 from openpyxl import load_workbook
 
-from nurse_scheduling.ai.optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
+from nurse_scheduling.ai.optimizer_privacy import OptimizerResultError, prepare_optimizer_spec, restore_people_ids
 
-from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_yaml
+from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_spec_yaml
 
 
 def named_schedule() -> str:
@@ -63,11 +63,11 @@ def named_schedule() -> str:
     payload["export"]["extraRows"] = [
         {"type": "count", "header": "Count", "countShiftTypes": ["D"], "countPeople": ["Bob"]}
     ]
-    return schedule_yaml(payload)
+    return schedule_spec_yaml(payload)
 
 
 def test_optimizer_submission_matches_frontend_basic_anonymization() -> None:
-    prepared = prepare_optimizer_schedule(named_schedule(), 1_000_000)
+    prepared = prepare_optimizer_spec(named_schedule(), 1_000_000)
     outbound = parse_schedule(prepared.submission_yaml)
 
     assert prepared.original_id_by_anonymized_id == {"P2": "Alice", "P3": "Bob"}
@@ -89,8 +89,8 @@ def test_optimizer_generates_default_layout_only_for_workbook_submission() -> No
     payload = base_schedule_payload()
     del payload["export"]
     payload["dates"]["groups"].append({"id": "FREEDAY", "members": ["2026-01-01"], "description": ""})
-    source = schedule_yaml(payload)
-    outbound = parse_schedule(prepare_optimizer_schedule(source, 1_000_000).submission_yaml)
+    source = schedule_spec_yaml(payload)
+    outbound = parse_schedule(prepare_optimizer_spec(source, 1_000_000).submission_yaml)
     assert "export" not in parse_schedule(source)
     layout = outbound["export"]
     assert any(rule.get("appendText") == " [X]" for rule in layout["formatting"])
@@ -98,12 +98,12 @@ def test_optimizer_generates_default_layout_only_for_workbook_submission() -> No
     assert [rule["header"] for rule in layout["extraRows"]] == ["D Count", "N Count", "WORK Count"]
     assert "OFF (FREEDAY)" in [rule["header"] for rule in layout["extraColumns"]]
     payload["export"] = {"formatting": []}
-    custom = parse_schedule(prepare_optimizer_schedule(schedule_yaml(payload), 1_000_000).submission_yaml)
+    custom = parse_schedule(prepare_optimizer_spec(schedule_spec_yaml(payload), 1_000_000).submission_yaml)
     assert custom["export"] == {"formatting": []}
 
 
 def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> None:
-    prepared = prepare_optimizer_schedule(named_schedule(), 1_000_000)
+    prepared = prepare_optimizer_spec(named_schedule(), 1_000_000)
     restored = restore_people_ids(
         optimizer_workbook_bytes(("P2", "P3")),
         prepared.original_id_by_anonymized_id,
@@ -129,7 +129,7 @@ def test_optimizer_submission_accepts_a_schedule_without_people_groups() -> None
     del payload["people"]["groups"]
     payload["preferences"][1]["person"] = ["Alice"]
 
-    prepared = prepare_optimizer_schedule(schedule_yaml(payload), 1_000_000)
+    prepared = prepare_optimizer_spec(schedule_spec_yaml(payload), 1_000_000)
     outbound = parse_schedule(prepared.submission_yaml)
 
     assert prepared.original_id_by_anonymized_id == {"P1": "Alice"}

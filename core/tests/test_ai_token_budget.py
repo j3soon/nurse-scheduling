@@ -330,7 +330,7 @@ def test_direct_discovery_keeps_input_room_when_output_can_fill_the_window(monke
     provider._include_usage = True
     provider.context_tokens = None
     provider._context_tokens_loaded = False
-    messages = [{"role": "user", "content": "Inspect the current schedule."}]
+    messages = [{"role": "user", "content": "Inspect the current Schedule Spec."}]
     asyncio.run(_collect(provider.stream_events(messages)))
     assert provider.context_tokens == 32000
     assert json.loads(requests[0].content)["max_tokens"] == 32000 - 4096 - estimate_context_tokens(messages, [])

@@ -3,7 +3,7 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
-import { getLatestSchedulingYamlForSentry } from "@/utils/sentrySchedulingState";
+import { getLatestSchedulingYamlForSentry } from "@/utils/sentryScheduleSpecState";
 
 const isSentryDisabled = process.env.NEXT_PUBLIC_DISABLE_SENTRY === "1";
 const defaultSentryDsn = "https://e5bffd2f416c149dfb0d17751071c61d@o4510953883107328.ingest.us.sentry.io/4510953885401088";

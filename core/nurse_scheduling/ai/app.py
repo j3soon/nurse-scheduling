@@ -45,7 +45,7 @@ from ..sentry import SentryClientAddressMiddleware, init_sentry
 from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_token
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
-from .agent_session import AgentSession, SessionRuntime, schedule_data_changed
+from .agent_session import AgentSession, SessionRuntime, schedule_spec_changed
 from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, PreparedChatArchives, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
@@ -68,12 +68,12 @@ from .sandbox import SandboxFactory, managed_sandbox_factory
 from .sandbox.factory import create_sandbox_factory
 from .session_event_stream import SessionEventStream, SessionResetData
 from .session_events import OptimizerUpdate
-from .sessions import SessionStore, schedule_revision
+from .sessions import SessionStore, schedule_spec_revision
 from .workspace import SandboxAttachment
 
 SERVICE_NAME = "nurse-scheduling-ai-api"
-__all__ = ("SessionStore", "schedule_revision")
-API_VERSION = "0.2.0"
+__all__ = ["SessionStore", "schedule_spec_revision"]
+API_VERSION = "1.0.0"
 OWNER_COOKIE = "nurse_scheduling_ai_owner"
 FrontendTimezone = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(validate_frontend_timezone)]
 # HTTPS deployments send the owner cookie with `SameSite=None`, so every allowed origin can act
@@ -112,10 +112,12 @@ def _question_log_preview(question: str) -> str:
     return preview
 
 
-class UpdateScheduleRequest(BaseModel):
-    """A newer schedule snapshot for an existing session."""
+class UpdateScheduleSpecRequest(BaseModel):
+    """A newer Schedule Spec snapshot for an existing session."""
 
-    schedule_yaml: str = Field(min_length=1)
+    model_config = {"extra": "forbid"}
+
+    schedule_spec_yaml: str = Field(min_length=1)
 
 
 class CreateSessionResponse(BaseModel):
@@ -131,9 +133,11 @@ class SessionStatusResponse(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    """The schedule snapshot owned by a new chat session."""
+    """The Schedule Spec snapshot owned by a new chat session."""
 
-    schedule_yaml: str = Field(min_length=1)
+    model_config = {"extra": "forbid"}
+
+    schedule_spec_yaml: str = Field(min_length=1)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     ai_endpoint: str | None = Field(default=None, min_length=1, max_length=2048)
     frontend_timezone: FrontendTimezone = "UTC"
@@ -205,7 +209,7 @@ def owner_cookie_token(owner: str | None) -> str:
 async def _session_sse(
     session: AgentSession, after_id: int, *, until_run: AgentRun | None = None, force_reset: bool = False
 ) -> AsyncIterator[str]:
-    """Frame the shared replay journal. A compatibility reader ends with its own run."""
+    """Frame the shared replay journal. A POST subscriber ends with its own run."""
     async with aclosing(session.events(after_id, force_reset=force_reset)) as reader:
         async for event in reader:
             if event is None:
@@ -339,7 +343,7 @@ def create_app(
     def require_session_auth(request: Request) -> None:
         # The body-limit middleware runs before router path parameters exist.
         path = get_route_path(request.scope).rstrip("/")
-        match = re.fullmatch(r"/sessions/([^/]+)/export", path)
+        match = re.fullmatch(r"/v1/sessions/([^/]+)/export", path)
         if auth_registry.enabled and request.method == "GET" and match is not None:
             credential = auth_registry.authenticate_stream(
                 export_scope(match[1]),
@@ -598,7 +602,7 @@ def create_app(
         }
 
     @app.post(
-        "/sessions",
+        "/v1/sessions",
         response_model=CreateSessionResponse,
         status_code=status.HTTP_201_CREATED,
         dependencies=[Depends(require_auth)],
@@ -610,8 +614,8 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ):
         """Create a chat session for the calling browser."""
-        if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
-            raise HTTPException(status_code=413, detail="Schedule is too large.")
+        if len(request.schedule_spec_yaml.encode("utf-8")) > settings.max_schedule_bytes:
+            raise HTTPException(status_code=413, detail="Schedule Spec is too large.")
         credential_id = http_request.state.auth_credential_id
         if request.selection is not None:
             selected_runtime = await runtime_for(credential_id, request.selection)
@@ -623,7 +627,7 @@ def create_app(
             selection = ModelSelection(model=default_model).model_dump()
         owner = owner_cookie_token(owner)
         refresh_owner_cookie(response, owner)
-        session = store.create(owner, request.schedule_yaml)
+        session = store.create(owner, request.schedule_spec_yaml)
         session.provider_credential_id = http_request.state.auth_credential_id
         session.model_selection = selection
         session.observe_frontend_version(request.frontend_version, app.state.app_version)
@@ -673,7 +677,7 @@ def create_app(
             release()
         return archive
 
-    @app.post("/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.post("/v1/sessions/{session_id}/export", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def prepare_export(
         session_id: str,
         request: Request,
@@ -702,7 +706,7 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         return {"download_token": token, "download_id": download_id}
 
-    @app.get("/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
+    @app.get("/v1/sessions/{session_id}/export", dependencies=[Depends(require_session_auth), Depends(restore_session)])
     async def export_session(
         session_id: str,
         request: Request,
@@ -720,7 +724,7 @@ def create_app(
             archive = await build_chat_archive(session_id, owner)
         return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
 
-    @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.get("/v1/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(
         session_id: str,
         request: Request,
@@ -742,7 +746,7 @@ def create_app(
         )
 
     @app.post(
-        "/sessions/{session_id}/stop",
+        "/v1/sessions/{session_id}/stop",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -757,7 +761,7 @@ def create_app(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
-        "/sessions/{session_id}/uploads",
+        "/v1/sessions/{session_id}/uploads",
         dependencies=[Depends(require_auth), Depends(restore_session)],
         status_code=status.HTTP_201_CREATED,
     )
@@ -782,7 +786,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return [_upload_metadata(item) for item in retained]
 
-    @app.get("/sessions/{session_id}/uploads", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.get("/v1/sessions/{session_id}/uploads", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def list_uploads(
         session_id: str,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
@@ -791,7 +795,7 @@ def create_app(
         return [_upload_metadata(item) for item in store.attachments(session_id, owner)]
 
     @app.delete(
-        "/sessions/{session_id}/uploads/{upload_id}",
+        "/v1/sessions/{session_id}/uploads/{upload_id}",
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -809,7 +813,8 @@ def create_app(
         return response
 
     @app.get(
-        "/sessions/{session_id}/downloads/{download_id}", dependencies=[Depends(require_auth), Depends(restore_session)]
+        "/v1/sessions/{session_id}/downloads/{download_id}",
+        dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def download_generated_zip(
         session_id: str,
@@ -827,7 +832,7 @@ def create_app(
         )
 
     @app.delete(
-        "/sessions/{session_id}/downloads/{download_id}",
+        "/v1/sessions/{session_id}/downloads/{download_id}",
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -845,7 +850,7 @@ def create_app(
         return response
 
     @app.post(
-        "/sessions/{session_id}/optimizations/{job_id}/cancel",
+        "/v1/sessions/{session_id}/optimizations/{job_id}/cancel",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -865,7 +870,7 @@ def create_app(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.post(
-        "/sessions/{session_id}/optimizations/{job_id}/finish-now",
+        "/v1/sessions/{session_id}/optimizations/{job_id}/finish-now",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -885,7 +890,7 @@ def create_app(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     @app.get(
-        "/sessions/{session_id}/optimizations/{job_id}/xlsx",
+        "/v1/sessions/{session_id}/optimizations/{job_id}/xlsx",
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
     async def download_optimization(
@@ -906,7 +911,7 @@ def create_app(
         )
 
     @app.get(
-        "/sessions/{session_id}",
+        "/v1/sessions/{session_id}",
         response_model=SessionStatusResponse,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -918,7 +923,7 @@ def create_app(
         return SessionStatusResponse(expires_in_seconds=store.status(session_id, owner))
 
     @app.get(
-        "/sessions/{session_id}/model-selection",
+        "/v1/sessions/{session_id}/model-selection",
         response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -939,7 +944,7 @@ def create_app(
         return SessionModelSelection(model=session.locked_model or default_model, locked=locked)
 
     @app.put(
-        "/sessions/{session_id}/model-selection",
+        "/v1/sessions/{session_id}/model-selection",
         response_model=SessionModelSelection,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -959,7 +964,7 @@ def create_app(
         return SessionModelSelection.model_validate({**selection, "locked": session.locked_model is not None})
 
     @app.post(
-        "/sessions/{session_id}/messages/queue",
+        "/v1/sessions/{session_id}/messages/queue",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -988,7 +993,7 @@ def create_app(
         return response
 
     @app.post(
-        "/sessions/{session_id}/compact",
+        "/v1/sessions/{session_id}/compact",
         status_code=status.HTTP_202_ACCEPTED,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
@@ -1014,7 +1019,7 @@ def create_app(
         refresh_owner_cookie(response, owner)
         return {"run_id": receipt.run_id}
 
-    @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
+    @app.post("/v1/sessions/{session_id}/messages", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def send_message(
         session_id: str,
         body: ChatRequest,
@@ -1052,9 +1057,8 @@ def create_app(
                 json.dumps(_question_log_preview(question), ensure_ascii=False),
                 len(session.uploads),
             )
-        # Compatibility readers explicitly request SSE. They use the same journal
-        # and cannot cancel execution by leaving. New clients, and a message accepted
-        # earlier or stopped before its run began, receive a message acknowledgement.
+        # POST subscribers explicitly request SSE and read the same journal. Leaving
+        # does not cancel execution. Other requests receive an acknowledgement.
         if run is not None and "text/event-stream" in request.headers.get("accept", ""):
             response: Response = StreamingResponse(
                 _session_sse(session, cursor, until_run=run),
@@ -1067,22 +1071,22 @@ def create_app(
         return response
 
     @app.put(
-        "/sessions/{session_id}/schedule",
+        "/v1/sessions/{session_id}/schedule_spec",
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth), Depends(restore_session)],
     )
-    async def update_schedule(
+    async def update_schedule_spec(
         session_id: str,
-        request: UpdateScheduleRequest,
+        request: UpdateScheduleSpecRequest,
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> Response:
-        """Point an existing session at the schedule the browser now holds."""
-        if len(request.schedule_yaml.encode("utf-8")) > settings.max_schedule_bytes:
-            raise HTTPException(status_code=413, detail="The schedule is too large for the AI service.")
-        base = store.require_owned(session_id, owner).schedule_yaml
-        # Parsing a large schedule on the event loop would stall every session's stream.
-        data_changed = await asyncio.to_thread(schedule_data_changed, base, request.schedule_yaml)
-        store.update_schedule(session_id, owner, request.schedule_yaml, compared=(base, data_changed))
+        """Point an existing session at the Schedule Spec the browser now holds."""
+        if len(request.schedule_spec_yaml.encode("utf-8")) > settings.max_schedule_bytes:
+            raise HTTPException(status_code=413, detail="The Schedule Spec is too large for the AI service.")
+        base = store.require_owned(session_id, owner).schedule_spec_yaml
+        # Parsing a large Schedule Spec on the event loop would stall every session's stream.
+        data_changed = await asyncio.to_thread(schedule_spec_changed, base, request.schedule_spec_yaml)
+        store.update_schedule_spec(session_id, owner, request.schedule_spec_yaml, compared=(base, data_changed))
         # A retry repeats the same update, so the browser can send it again until it is saved.
         if not await recovery.save(session_id):
             raise HTTPException(status_code=503, detail="AI message recovery is temporarily unavailable.")

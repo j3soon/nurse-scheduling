@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('export formatting delete can be undone and redone', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('export formatting delete can be undone and redone', async ({ page }) => {
    * 4. Redo to remove it again.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'export formatting delete undo redo seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

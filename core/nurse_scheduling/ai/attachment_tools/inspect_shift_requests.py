@@ -76,7 +76,7 @@ def inspect_requests(context, source, *, weights=None, people=None, dates=None, 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--context", type=Path, default=Path("/workspace/schedule-context.json"))
-    parser.add_argument("--source", type=Path, default=Path("/workspace/schedule.yaml"))
+    parser.add_argument("--source", type=Path, default=Path("/workspace/schedule-spec.yaml"))
     parser.add_argument(
         "--weight",
         action="append",

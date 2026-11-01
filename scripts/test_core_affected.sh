@@ -87,6 +87,11 @@ elif [[ "$run_full_suite" == false ]]; then
   fi
 fi
 
+# Explicit test paths bypass pytest's discovery ignores. Share its transition policy.
+if ((${#test_paths[@]} > 0)); then
+  mapfile -d '' test_paths < <(python "$CORE_DIR/tests/collection.py" "${test_paths[@]}")
+fi
+
 if ((${#test_paths[@]} > 0)); then
   mapfile -d '' test_paths < <(printf '%s\0' "${test_paths[@]}" | LC_ALL=C sort -zu)
 fi

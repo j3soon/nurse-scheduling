@@ -92,7 +92,7 @@ class ToolResultMessage:
 
 @dataclass(frozen=True)
 class AppEventEntry:
-    """A trusted app event between runs, such as an upload or schedule change, specific to this service."""
+    """A trusted app event between runs, such as an upload or Schedule Spec change, specific to this service."""
 
     text: str
 
@@ -110,18 +110,6 @@ class CompactionEntry:
 
 
 AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry | CompactionEntry
-
-# Earlier versions stored the user's approval of each schedule change. A stored decision
-# restores as the app event the model received.
-_LEGACY_DECISION_EVENTS = {
-    "approved": "[App event] The user approved the previous schedule proposal. Its changes are now part of the current "
-    "schedule.",
-    "rejected": "[App event] The user rejected the previous schedule proposal. All schedule changes made during that "
-    "agent turn were discarded. This turn starts with a fresh workspace containing the current schedule.",
-    "invalid": "[App event] The previous schedule proposal failed trusted validation when the user approved it, so it "
-    "was discarded. All schedule changes made during that agent turn were dropped. This turn starts with a fresh "
-    "workspace containing the current schedule.",
-}
 
 ENTRY_TYPES = {
     UserMessage: "user",
@@ -159,8 +147,6 @@ def entry_from_record(entry_type: str, payload: dict[str, Any]) -> AgentMessage:
             payload.get("usage"),
             payload.get("context_omitted", False),
         )
-    if entry_type == "proposal_decision":
-        return AppEventEntry(_LEGACY_DECISION_EVENTS[payload["decision"]])
     if entry_type == "compaction":
         payload = {
             **payload,

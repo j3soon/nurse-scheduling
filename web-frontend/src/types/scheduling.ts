@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// The types for the scheduling data.
+// The types for the Schedule Spec.
 export type ExportFormattingType =
   | 'cell'
   | 'row'

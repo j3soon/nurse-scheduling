@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize and export submits YAML to the backend and renders success metadata', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('optimize and export submits YAML to the backend and renders success metada
    */
   await disableModalDialogs(page);
   let submittedBody = '';
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'optimize seed',
     dates: {
@@ -71,9 +71,9 @@ test('optimize and export submits YAML to the backend and renders success metada
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
   await expect(page.getByText('output.xlsx')).toBeVisible();
-  expect(submittedBody).toContain('name="file"');
-  expect(submittedBody).toContain('filename="schedule.yaml"');
-  expect(submittedBody).not.toContain('name="yaml_content"');
+  expect(submittedBody).toContain('name="schedule_spec_file"');
+  expect(submittedBody).toContain('filename="schedule-spec.yaml"');
+  expect(submittedBody).not.toContain('name="schedule_spec_yaml"');
   expect(submittedBody).toContain('2026-05-01');
   expect(submittedBody).toContain('prettify');
   expect(submittedBody).toContain('timeout');
@@ -111,7 +111,7 @@ test('optimize and export renders backend phase SSE messages in the event log', 
     });
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'optimize sse seed',
     dates: {

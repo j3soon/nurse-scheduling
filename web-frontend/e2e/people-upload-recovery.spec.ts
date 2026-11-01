@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('people upload recovers from an invalid duplicate list and then accepts a valid list', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('people upload recovers from an invalid duplicate list and then accepts a v
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people upload recovery seed',
     dates: { range: {}, groups: [] },

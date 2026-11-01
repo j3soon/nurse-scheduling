@@ -2,19 +2,19 @@
 
 [Open Save and Load](https://nursescheduling.org/save-and-load){ .md-button .md-button--primary }
 
-The app stores the schedule data and up to 50 recent states in this browser. Browser
-cleanup, private browsing, another device, or **New Schedule** can make that
+The app stores the Schedule Spec and up to 50 recent states in this browser. Browser
+cleanup, private browsing, another device, or **New Schedule Spec** can make that
 data unavailable. This page is optional for a first test, but downloading a
 backup is strongly recommended for useful work.
 
 ## Real scenario example
 
 The anonymized ward YAML contains the November 2025 range, 87 people, shift
-groups, and 183 preference rules. Upload replaces the current schedule and then
+groups, and 183 preference rules. Upload replaces the current Schedule Spec and then
 shows a short success notice with 30 dates, 87 people, 11 shift types, and 183
 preferences.
 
-![Compact Schedule uploaded notice with imported counts and undo guidance](../assets/images/user-guide/build-a-real-schedule/yaml-import-summary.png)
+![Compact Schedule Spec uploaded notice with imported counts and undo guidance](../assets/images/user-guide/build-a-real-schedule/yaml-import-summary.png)
 
 After loading, the YAML preview shows the November dates and groups.
 
@@ -22,11 +22,11 @@ After loading, the YAML preview shows the November dates and groups.
 
 ## Back up and restore
 
-- **Download** saves the current schedule data as YAML.
-- Optional **Upload** replaces the current schedule with the selected YAML.
+- **Download** saves the current Schedule Spec as YAML.
+- Optional **Upload** replaces the current Schedule Spec with the selected YAML.
   If the file's app version is missing, different, or from a development build,
   review the warning and confirm before replacement. Cancel to keep the current
-  schedule. The notice confirms success and shows imported counts and warnings.
+  Schedule Spec. The notice confirms success and shows imported counts and warnings.
   Select **Undo** in the tab bar or press **Ctrl+Z** (or **Cmd+Z** on macOS)
   to undo the upload.
 - Optional **Copy** copies the same YAML to the clipboard.
@@ -49,4 +49,4 @@ configuration can remain sensitive.
 
 The hosted app also uses analytics and error reporting. Read the full [privacy
 policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) before
-using real schedule data.
+using a real Schedule Spec.

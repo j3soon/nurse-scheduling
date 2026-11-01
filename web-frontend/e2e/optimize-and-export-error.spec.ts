@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedLocalOptimizeBackend, seedSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedLocalOptimizeBackend, seedScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize and export renders backend errors without a stale success state', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('optimize and export renders backend errors without a stale success state',
    * 3. Confirm the page shows the backend error and does not render the success state.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'optimize error seed',
     dates: {
@@ -71,7 +71,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
    * 2. Confirm Auto declines the backend and the missing options endpoint uses legacy defaults.
    * 3. Select the backend explicitly, inspect its details, and confirm the warning action sends the request.
    */
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'incompatible backend seed',
     dates: {
@@ -119,7 +119,7 @@ test('allows an explicitly selected incompatible backend with a warning', async 
       headers: { 'Access-Control-Allow-Origin': '*' },
     });
   });
-  await page.route('http://localhost:8000/optimize', async route => {
+  await page.route('http://localhost:8000/schedule_spec/optimize', async route => {
     optimizeRequested = true;
     await route.fulfill({
       status: 422,

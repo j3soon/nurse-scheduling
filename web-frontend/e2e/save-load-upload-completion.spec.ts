@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('save-load upload waits for completion dialogs before downstream state is asserted', async ({ page }) => {
   /*
@@ -35,7 +35,7 @@ test('save-load upload waits for completion dialogs before downstream state is a
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'upload completion seed',
     dates: {
@@ -61,8 +61,8 @@ test('save-load upload waits for completion dialogs before downstream state is a
   expect(yamlText).toContain('Team Alpha');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByTitle('Team Alpha', { exact: true })).toHaveCount(0);

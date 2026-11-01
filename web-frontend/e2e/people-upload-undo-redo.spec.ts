@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('people upload reorder can be undone and redone', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('people upload reorder can be undone and redone', async ({ page }) => {
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people upload undo redo seed',
     dates: { range: {}, groups: [] },

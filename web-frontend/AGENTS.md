@@ -121,7 +121,7 @@ generated guidance separately from intentional edits. If it is outside the
 task scope, remove only the newly appended block after the dev server stops.
 Preserve existing guidance and user changes.
 
-New schedules contain no user-defined people, shift types, or groups. E2E tests
+New empty Schedule Specs contain no user-defined people, shift types, or groups. E2E tests
 that require populated entities must seed them explicitly.
 
 For responsive UI changes, check populated pages and open editing forms at phone
@@ -157,6 +157,8 @@ explicitly when an E2E build must use another version.
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve
 unrecognized versioned settings until a migration is defined.
+After decoding legacy browser storage, check the current key again so a newer
+save from another tab takes precedence over the migration.
 
 Send backend requests through the page's authorized fetch helper so the selected
 backend's token is attached. Job events use `EventSource` with the backend's
@@ -204,8 +206,10 @@ after the run is identified before deciding that its output expired. Preserve ea
 answer's original position when replacement replay rebuilds its output.
 Replay snapshots replace output without completing unrelated active operations.
 Keep queued messages waiting until foreground and background work are both idle.
-AI chat does not require compatibility with older AI backend APIs. Update the
-client and server together when their contract changes. When auth is
+Current AI clients use `/v1/sessions` and Schedule Spec fields. Update the AI
+client and server together. Older AI APIs, conversations, and chat history need
+no compatibility adapters. Follow the root compatibility policy for automatic
+migration of browser Schedule Specs and settings. When auth is
 required, send the AI token through the shared authorized-header helper on
 every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
@@ -250,7 +254,7 @@ When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 Store AI chat history with the saving frontend `appVersion`, without a separate
 numeric storage version.
 
-When switching saved AI chats, preserve browser schedule data during event replay.
+When switching saved AI chats, preserve browser Schedule Spec during event replay.
 Reset pending model and reasoning choices on explicit chat switches. Preserve
 choices made while the current conversation creates its first session.
 Keep local history expiry separate from backend session expiry. Test that forgetting
@@ -276,7 +280,7 @@ For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,
 select that URL in the AI server control, and use `AI_AUTH_TOKEN` from the
 ignored `../docker/.env.staging` when available. Never print or persist the
-token in test output or browser storage. Seed a small valid schedule for
+token in test output or browser storage. Seed a small valid Schedule Spec for
 optimizer flows, then follow the visible chat and session events through the
 terminal response. Mocked component tests alone cannot verify this path.
 

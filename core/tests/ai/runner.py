@@ -41,7 +41,7 @@ from nurse_scheduling.ai.agent_types import (
 )
 from nurse_scheduling.ai.config import AiSettings
 from nurse_scheduling.ai.context import (
-    SCHEDULE_CHANGED_EVENT,
+    SCHEDULE_SPEC_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
     project_history,
@@ -122,7 +122,7 @@ async def run_case(
     pending = False
     errors = []
 
-    async def unsupported_optimizer(schedule_yaml: str, arguments: str) -> AgentToolOutcome:
+    async def unsupported_optimizer(schedule_spec_yaml: str, arguments: str) -> AgentToolOutcome:
         return AgentToolOutcome("Optimizer execution is not supported by this testcase runner.", False)
 
     def assert_schedule():
@@ -144,7 +144,7 @@ async def run_case(
                 schedule = step.value.read_text(encoding="utf-8")
                 analysis = None
                 if history:
-                    history.append(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+                    history.append(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
             elif step.kind == "user":
                 turn += 1
                 turn_step = step.number

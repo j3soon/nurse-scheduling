@@ -22,7 +22,7 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from './test';
-import { createMockXlsxBuffer, disableModalDialogs, seedSchedulingState, setDateRange } from './helpers';
+import { createMockXlsxBuffer, disableModalDialogs, seedScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize and export works against a real local HTTP server instead of Playwright route mocking', async ({ page }) => {
   /*
@@ -33,7 +33,7 @@ test('optimize and export works against a real local HTTP server instead of Play
    * 4. Confirm the server received the YAML and the page rendered the returned metadata.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'http server optimize seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -98,7 +98,7 @@ test('optimize and export works against a real local HTTP server instead of Play
       return;
     }
 
-    if (req.method === 'POST' && req.url === '/optimize') {
+    if (req.method === 'POST' && req.url === '/schedule_spec/optimize') {
       const chunks: Buffer[] = [];
       for await (const chunk of req) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -211,9 +211,9 @@ test('optimize and export works against a real local HTTP server instead of Play
     const liveResult = page.getByRole('heading', { name: 'Live Result' }).locator('xpath=ancestor::section');
     await expect(liveResult.getByText('99', { exact: true })).toBeVisible();
     await expect(liveResult.getByText('OPTIMAL')).toBeVisible();
-    expect(submittedBody).toContain('name="file"');
-    expect(submittedBody).toContain('filename="schedule.yaml"');
-    expect(submittedBody).not.toContain('name="yaml_content"');
+    expect(submittedBody).toContain('name="schedule_spec_file"');
+    expect(submittedBody).toContain('filename="schedule-spec.yaml"');
+    expect(submittedBody).not.toContain('name="schedule_spec_yaml"');
     expect(submittedBody).toContain('2026-05-01');
     expect(submittedBody).toContain('name="solver"');
     expect(submittedBody).toContain('ortools/cp-sat');

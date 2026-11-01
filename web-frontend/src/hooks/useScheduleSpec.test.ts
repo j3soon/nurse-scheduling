@@ -21,7 +21,7 @@
 
 import { createElement } from 'react';
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
-import { SchedulingDataProvider, useSchedulingData } from '@/hooks/useSchedulingData';
+import { ScheduleSpecProvider, useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { loadStateFromStorage } from '@/hooks/schedulingStorage';
 import {
   AT_MOST_ONE_SHIFT_PER_DAY,
@@ -36,7 +36,7 @@ import {
 import { ALL, OFF } from '@/utils/keywords';
 import { TAIWAN_FREEDAY_GROUP_ID, TAIWAN_WORKDAY_GROUP_ID } from '@/utils/taiwanHolidays';
 
-const STORAGE_KEY = 'nurse-scheduling-data';
+const STORAGE_KEY = 'nurse-scheduling-spec';
 
 function createPopulatedHistoryState() {
   const state = {
@@ -88,7 +88,7 @@ function createPopulatedHistoryState() {
   return { state, history: [state], currentHistoryIndex: 0 };
 }
 
-describe('useSchedulingData', () => {
+describe('useScheduleSpec', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
@@ -150,7 +150,7 @@ describe('useSchedulingData', () => {
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storedState));
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.descriptionData).toBe('loaded from storage');
@@ -166,28 +166,28 @@ describe('useSchedulingData', () => {
     const getItemSpy = vi.spyOn(Storage.prototype, 'getItem');
 
     function Consumer() {
-      useSchedulingData();
+      useScheduleSpec();
       return null;
     }
 
     const { rerender } = render(
-      createElement(SchedulingDataProvider, null, createElement(Consumer))
+      createElement(ScheduleSpecProvider, null, createElement(Consumer))
     );
 
     await waitFor(() => {
       expect(getItemSpy).toHaveBeenCalledTimes(1);
     });
 
-    rerender(createElement(SchedulingDataProvider));
-    rerender(createElement(SchedulingDataProvider, null, createElement(Consumer)));
+    rerender(createElement(ScheduleSpecProvider));
+    rerender(createElement(ScheduleSpecProvider, null, createElement(Consumer)));
 
     expect(getItemSpy).toHaveBeenCalledTimes(1);
   });
 
   it('shows and dismisses the cross-tab change banner for matching storage events', async () => {
-    render(createElement(SchedulingDataProvider));
+    render(createElement(ScheduleSpecProvider));
 
-    expect(screen.queryByText('Schedule data changed in another browser tab.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Schedule Spec changed in another browser tab.')).not.toBeInTheDocument();
 
     act(() => {
       window.dispatchEvent(new StorageEvent('storage', {
@@ -197,17 +197,17 @@ describe('useSchedulingData', () => {
       }));
     });
 
-    expect(screen.getByText('Schedule data changed in another browser tab.')).toBeInTheDocument();
+    expect(screen.getByText('Schedule Spec changed in another browser tab.')).toBeInTheDocument();
 
     act(() => {
       screen.getByRole('button', { name: 'Dismiss' }).click();
     });
 
-    expect(screen.queryByText('Schedule data changed in another browser tab.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Schedule Spec changed in another browser tab.')).not.toBeInTheDocument();
   });
 
   it('shows the cross-tab change banner when localStorage is cleared in another tab', async () => {
-    render(createElement(SchedulingDataProvider));
+    render(createElement(ScheduleSpecProvider));
 
     act(() => {
       window.dispatchEvent(new StorageEvent('storage', {
@@ -216,12 +216,12 @@ describe('useSchedulingData', () => {
       }));
     });
 
-    expect(screen.getByText('Schedule data changed in another browser tab.')).toBeInTheDocument();
+    expect(screen.getByText('Schedule Spec changed in another browser tab.')).toBeInTheDocument();
   });
 
   it('shows and dismisses YAML import warnings for preserved advanced reference syntax', async () => {
     function Importer() {
-      const { loadFromYaml } = useSchedulingData();
+      const { loadFromYaml } = useScheduleSpec();
       return createElement(
         'button',
         {
@@ -252,7 +252,7 @@ describe('useSchedulingData', () => {
       );
     }
 
-    render(createElement(SchedulingDataProvider, null, createElement(Importer)));
+    render(createElement(ScheduleSpecProvider, null, createElement(Importer)));
 
     act(() => {
       screen.getByRole('button', { name: 'Import YAML' }).click();
@@ -270,7 +270,7 @@ describe('useSchedulingData', () => {
   });
 
   it('ignores storage events for unrelated keys and storage areas', async () => {
-    render(createElement(SchedulingDataProvider));
+    render(createElement(ScheduleSpecProvider));
 
     act(() => {
       window.dispatchEvent(new StorageEvent('storage', {
@@ -285,7 +285,7 @@ describe('useSchedulingData', () => {
       }));
     });
 
-    expect(screen.queryByText('Schedule data changed in another browser tab.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Schedule Spec changed in another browser tab.')).not.toBeInTheDocument();
   });
 
   it('reloads provider state from storage when the cross-tab banner reload action is clicked', async () => {
@@ -355,7 +355,7 @@ describe('useSchedulingData', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(initialState));
 
     function Consumer() {
-      const { descriptionData, peopleData } = useSchedulingData();
+      const { descriptionData, peopleData } = useScheduleSpec();
       return createElement(
         'div',
         null,
@@ -364,7 +364,7 @@ describe('useSchedulingData', () => {
       );
     }
 
-    render(createElement(SchedulingDataProvider, null, createElement(Consumer)));
+    render(createElement(ScheduleSpecProvider, null, createElement(Consumer)));
 
     await waitFor(() => {
       expect(screen.getByText('initial state')).toBeInTheDocument();
@@ -382,13 +382,13 @@ describe('useSchedulingData', () => {
       }));
     });
 
-    expect(screen.getByText('Schedule data changed in another browser tab.')).toBeInTheDocument();
+    expect(screen.getByText('Schedule Spec changed in another browser tab.')).toBeInTheDocument();
 
     act(() => {
       screen.getByRole('button', { name: 'Reload data' }).click();
     });
 
-    expect(screen.queryByText('Schedule data changed in another browser tab.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Schedule Spec changed in another browser tab.')).not.toBeInTheDocument();
     expect(screen.getByText('updated in another tab')).toBeInTheDocument();
     expect(screen.getByText('P2')).toBeInTheDocument();
   });
@@ -464,7 +464,7 @@ describe('useSchedulingData', () => {
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(storedState));
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       const requirement = result.current.getPreferencesByType(SHIFT_TYPE_REQUIREMENT)[0] as
@@ -480,7 +480,7 @@ describe('useSchedulingData', () => {
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.peopleData.items).toEqual([]);
@@ -490,11 +490,11 @@ describe('useSchedulingData', () => {
     });
 
     expect(getItemSpy).toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledWith('Failed to load data from localStorage:', expect.any(Error));
+    expect(errorSpy).toHaveBeenCalledWith('Failed to load Schedule Spec from localStorage:', expect.any(Error));
   });
 
   it('persists date range updates to localStorage and keeps computed items out of stored payload', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -523,7 +523,7 @@ describe('useSchedulingData', () => {
       throw new Error('quota exceeded');
     });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -541,7 +541,7 @@ describe('useSchedulingData', () => {
   });
 
   it('undoes and redoes date identifier format transitions across month and year boundaries', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -606,7 +606,7 @@ describe('useSchedulingData', () => {
   });
 
   it('imports and replaces Taiwan holiday groups when explicitly requested on a supported range', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addGroup(DataType.DATES, result.current.dateData, TAIWAN_WORKDAY_GROUP_ID, [], 'Old workday group');
@@ -633,7 +633,7 @@ describe('useSchedulingData', () => {
   });
 
   it('preserves unrelated custom date groups while replacing existing Taiwan holiday groups', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -673,7 +673,7 @@ describe('useSchedulingData', () => {
   });
 
   it('preserves custom manual date items while overwriting only generated Taiwan holiday groups', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -711,7 +711,7 @@ describe('useSchedulingData', () => {
   });
 
   it('ignores Taiwan holiday import requests for unsupported ranges', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange(
@@ -734,7 +734,7 @@ describe('useSchedulingData', () => {
   });
 
   it('undoes and redoes supported Taiwan holiday imports as one visible range change', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange(
@@ -784,7 +784,7 @@ describe('useSchedulingData', () => {
 
 
   it('supports undo and redo for history-aware updates', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -815,7 +815,7 @@ describe('useSchedulingData', () => {
   });
 
   it('leaves undo shortcuts in text fields to the browser and reports undo and redo availability', () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     expect(result.current.canUndo).toBe(false);
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -847,7 +847,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces the latest undo entry when replaceLatestHistoryEntry is true', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferencesByType(SHIFT_REQUEST, [
@@ -910,7 +910,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces the latest undo entry across mixed history mutators', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -934,7 +934,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps one-step undo semantics when replaceLatestHistoryEntry mixes add and update history mutators', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -958,7 +958,7 @@ describe('useSchedulingData', () => {
   });
 
   it('truncates redo history after undo and a new mixed replacement mutation chain', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST, [
@@ -1024,7 +1024,7 @@ describe('useSchedulingData', () => {
   });
 
   it('loads YAML with compatibility conversions and restores Infinity from storage', async () => {
-    const { result, unmount } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result, unmount } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -1101,7 +1101,7 @@ describe('useSchedulingData', () => {
 
     unmount();
 
-    const { result: reloadedResult } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result: reloadedResult } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     await waitFor(() => {
       const reloadedRequest = reloadedResult.current.preferences.find(pref => pref.type === SHIFT_REQUEST) as
         | { weight: number }
@@ -1111,7 +1111,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces stale people and shift-type metadata when loading sparse YAML sections', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -1156,7 +1156,7 @@ describe('useSchedulingData', () => {
   });
 
   it('defaults omitted descriptions and person history when loading backend-shaped YAML', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -1213,7 +1213,7 @@ describe('useSchedulingData', () => {
       }),
     );
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.peopleData.items).toEqual([{ id: 'n1', description: '', history: [] }]);
@@ -1227,7 +1227,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts SHIFT_REQUEST preferences and date arrays in updatePreferencesByType', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1295,7 +1295,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts SHIFT_TYPE_REQUIREMENT arrays in updatePreferencesByType', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1332,7 +1332,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts unordered arrays for remaining preference types in updatePreferencesByType', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1417,7 +1417,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts unordered arrays in direct updatePreferences calls', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1455,7 +1455,7 @@ describe('useSchedulingData', () => {
   });
 
   it('blocks reserved keyword mutations for people items/groups', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     const initialItemCount = result.current.peopleData.items.length;
@@ -1475,7 +1475,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting a person cascades and removes invalid dependent preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -1540,7 +1540,7 @@ describe('useSchedulingData', () => {
   });
 
   it('handles keyboard shortcuts for undo and redo', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -1571,7 +1571,7 @@ describe('useSchedulingData', () => {
   });
 
   it('propagates people ID renames across all preference types via updateItem and updateGroup', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -1671,7 +1671,7 @@ describe('useSchedulingData', () => {
   });
 
   it('logs and ignores out-of-bounds updatePersonHistory operations', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -1687,7 +1687,7 @@ describe('useSchedulingData', () => {
   });
 
   it('caps history length to MAX_HISTORY_SIZE through repeated updates', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       for (let i = 0; i < 60; i++) {
@@ -1708,7 +1708,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps state unchanged when undo/redo are called at boundaries', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     // At initial boundary: undo should be a no-op.
     act(() => {
@@ -1752,7 +1752,7 @@ describe('useSchedulingData', () => {
   });
 
   it('logs and skips invalid SHIFT_REQUEST entries with empty date arrays', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -1788,7 +1788,7 @@ describe('useSchedulingData', () => {
   });
 
   it('allows updateExportFormatting to clear formatting with undefined', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateExportFormatting([
@@ -1814,7 +1814,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts unordered export layout ID arrays without reordering rules', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1883,7 +1883,7 @@ describe('useSchedulingData', () => {
   });
 
   it('sorts unordered export layout ID arrays in updateExportConfig', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -1937,7 +1937,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces existing export formatting when YAML omits the export section', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateExportFormatting([
@@ -1971,7 +1971,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces existing export extra rows and columns when loading sparse export YAML', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateExportExtraColumns([
@@ -2031,7 +2031,7 @@ describe('useSchedulingData', () => {
       },
     ],
   ])('rejects imported export layout entries missing %s', (expectedError, exportLayout) => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     expect(() => {
       act(() => {
@@ -2062,7 +2062,7 @@ describe('useSchedulingData', () => {
   });
 
   it('cascades entity deletion through export layout rules and extra count rows', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2156,7 +2156,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames people, date groups, and shift types inside export layout state', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2236,7 +2236,7 @@ describe('useSchedulingData', () => {
   });
 
   it('logs and skips sorting checks for invalid SHIFT_REQUEST person/shiftType shapes', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -2278,7 +2278,7 @@ describe('useSchedulingData', () => {
   });
 
   it('clears person history entries before a position when shiftTypeId is undefined', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -2302,7 +2302,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps state unchanged when person history is updated for unknown person IDs', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const getPerson1History = () =>
       result.current.peopleData.items.find(item => item.id === 'Person 1')?.history ?? [];
@@ -2321,7 +2321,7 @@ describe('useSchedulingData', () => {
   });
 
   it('filters by preference type and supports direct preference replacement', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferences([
@@ -2364,7 +2364,7 @@ describe('useSchedulingData', () => {
   });
 
   it('resets to defaults via createNewState after mutations', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferences([
@@ -2400,7 +2400,7 @@ describe('useSchedulingData', () => {
   });
 
   it('undoes and redoes across a loadFromYaml to createNewState boundary', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2452,7 +2452,7 @@ describe('useSchedulingData', () => {
   });
 
   it('reorders people groups and preserves the new order', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const originalGroups = result.current.peopleData.groups;
     expect(originalGroups.length).toBeGreaterThan(1);
@@ -2472,7 +2472,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting a people group cascades and removes dependent group-based preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2534,7 +2534,7 @@ describe('useSchedulingData', () => {
   });
 
   it('undoes and redoes grouped delete cascades across dependent preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2608,7 +2608,7 @@ describe('useSchedulingData', () => {
   });
 
   it('reorders items and keeps each group member order aligned to item order', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const reversedItems = [...result.current.peopleData.items].reverse();
     const group1Before = result.current.peopleData.groups.find(group => group.id === 'Group 1');
@@ -2626,7 +2626,7 @@ describe('useSchedulingData', () => {
   });
 
   it('duplicates items and groups under the original with hook-generated copied IDs', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2680,7 +2680,7 @@ describe('useSchedulingData', () => {
   });
 
   it('duplicates preferences by type under the original with hook-generated copied descriptions', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2726,7 +2726,7 @@ describe('useSchedulingData', () => {
   });
 
   it('duplicates export entries under the original with hook-generated copied descriptions', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2773,19 +2773,19 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps the generated export layout stable across renders', () => {
-    const { result, rerender } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result, rerender } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const generated = result.current.effectiveExportData;
     rerender();
 
-    // Consumers derive schedule YAML from this, so a new object per render would
+    // Consumers derive Schedule Spec YAML from this, so a new object per render would
     // rebuild that YAML on every keystroke and every streamed chat token.
     expect(result.current.exportData).toBeUndefined();
     expect(result.current.effectiveExportData).toBe(generated);
   });
 
   it('preserves automatic and custom export layouts through saved schedule round trips', () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     act(() => result.current.createNewState());
     expect(result.current.savedState.export).toBeUndefined();
     act(() => result.current.loadFromYaml({ ...result.current.savedState, description: 'AI edit' }));
@@ -2800,7 +2800,7 @@ describe('useSchedulingData', () => {
 
   it('logs and no-ops when duplicate preference or export indexes are invalid', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2857,7 +2857,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renaming/deleting shift types cascades to preferences and people history', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -2951,7 +2951,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting dates cascades through date-based preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3018,7 +3018,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames date groups across all date-based preference fields', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3114,7 +3114,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deletes shift type successions when their date group reference is deleted', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3163,7 +3163,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deletes shift type requirements when their only qualified person reference is deleted', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3207,7 +3207,7 @@ describe('useSchedulingData', () => {
   });
 
   it('blocks reserved-keyword mutations for update item/group and remove-from-group across data types', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -3253,7 +3253,7 @@ describe('useSchedulingData', () => {
   });
 
   it('removes item membership from a non-reserved group', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const beforeGroup = result.current.peopleData.groups.find(group => group.id === 'Group 1');
     expect(beforeGroup?.members).toContain('Person 1');
@@ -3269,7 +3269,7 @@ describe('useSchedulingData', () => {
   });
 
   it('leaves state unchanged when removing an item from a group it is not part of', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     const beforeGroup1 = result.current.peopleData.groups.find(group => group.id === 'Group 1');
     const beforeGroup2 = result.current.peopleData.groups.find(group => group.id === 'Group 2');
@@ -3287,7 +3287,7 @@ describe('useSchedulingData', () => {
   });
 
   it('logs and no-ops when updateItem would create inconsistent group members', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -3318,7 +3318,7 @@ describe('useSchedulingData', () => {
   });
 
   it('logs and no-ops when updateGroup receives members not present in items', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -3333,7 +3333,7 @@ describe('useSchedulingData', () => {
   });
 
   it('updates person history at a valid index when shiftTypeId is provided', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -3356,7 +3356,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps preferences unchanged when updateDateRange removes no date IDs', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updateDateRange({
@@ -3388,7 +3388,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps memberships and preferences stable for description-only item updates', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferencesByType(SHIFT_REQUEST, [
@@ -3424,7 +3424,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps group memberships and preference identities intact across chained reorders', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.updatePreferencesByType(SHIFT_REQUEST, [
@@ -3465,7 +3465,7 @@ describe('useSchedulingData', () => {
   });
 
   it('truncates redo history after loadFromYaml is called from an undone state', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -3506,7 +3506,7 @@ describe('useSchedulingData', () => {
   });
 
   it('treats loadFromYaml as a single undoable history boundary', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.addPersonHistory('Person 1', 'D');
@@ -3553,7 +3553,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps persisted history length capped with mixed mutators', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     for (let i = 0; i < 60; i++) {
       act(() => {
@@ -3581,7 +3581,7 @@ describe('useSchedulingData', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: null, history: 'bad', currentHistoryIndex: 999 }));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.peopleData.items).toEqual([]);
@@ -3604,7 +3604,7 @@ describe('useSchedulingData', () => {
     }));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.peopleData.items).toEqual([]);
@@ -3615,7 +3615,7 @@ describe('useSchedulingData', () => {
   });
 
   it('converts numeric IDs in affinity and count preference shapes during YAML load', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3682,7 +3682,7 @@ describe('useSchedulingData', () => {
   });
 
   it('normalizes scalar YAML preference references into frontend arrays', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3743,7 +3743,7 @@ describe('useSchedulingData', () => {
   });
 
   it('warns for backend-compatible shift request shapes outside the frontend editing subset', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3791,7 +3791,7 @@ describe('useSchedulingData', () => {
   });
 
   it('warns for backend-compatible shift count vector expressions outside the frontend editing subset', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3841,7 +3841,7 @@ describe('useSchedulingData', () => {
   });
 
   it('preserves nested YAML reference syntax and still updates nested references on rename', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3906,7 +3906,7 @@ describe('useSchedulingData', () => {
   });
 
   it('cascades person deletion across multiple preference types in one state blob', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -3952,7 +3952,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames a shift type consistently across combined preference shapes in one mutation', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4042,7 +4042,7 @@ describe('useSchedulingData', () => {
   });
 
   it('rejects renaming derived date IDs and leaves date-based preferences unchanged', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     act(() => {
@@ -4113,7 +4113,7 @@ describe('useSchedulingData', () => {
     }));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.peopleData.items).toEqual([]);
@@ -4157,7 +4157,7 @@ describe('useSchedulingData', () => {
       currentHistoryIndex: 999,
     }));
 
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     await waitFor(() => {
       expect(result.current.descriptionData).toBe('current');
@@ -4199,7 +4199,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames a shift-type group consistently across group-referenced preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4262,7 +4262,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames a people group referenced across mixed preference types', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4312,7 +4312,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames only the targeted reference when item and group IDs are mixed in preferences', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4354,7 +4354,7 @@ describe('useSchedulingData', () => {
   });
 
   it('removes old IDs after chained person renames', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4403,7 +4403,7 @@ describe('useSchedulingData', () => {
   });
 
   it('keeps renamed references coherent when updatePreferencesByType runs afterward', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4445,7 +4445,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting a repeated shift type from history keeps only the usable suffix', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4475,7 +4475,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting an unrelated shift type leaves people history unchanged', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4505,7 +4505,7 @@ describe('useSchedulingData', () => {
   });
 
   it('deleting multiple shift types shortens history through repeated public deletions', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4548,7 +4548,7 @@ describe('useSchedulingData', () => {
   });
 
   it('undoes and redoes shift-type deletion history truncation exactly', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4594,7 +4594,7 @@ describe('useSchedulingData', () => {
   });
 
   it('renames repeated shift-type history entries and export layout references', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4638,7 +4638,7 @@ describe('useSchedulingData', () => {
   });
 
   it('removes person references across export formatting, extra rows, and extra columns together', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4683,7 +4683,7 @@ describe('useSchedulingData', () => {
   });
 
   it('removes stale export formatting rules when a date range shrinks', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4727,7 +4727,7 @@ describe('useSchedulingData', () => {
   });
 
   it('drops export date references during date identifier format transitions', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4762,7 +4762,7 @@ describe('useSchedulingData', () => {
   });
 
   it('replaces formatting and extra layout arrays when loading sparse export YAML', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({
@@ -4802,7 +4802,7 @@ describe('useSchedulingData', () => {
   });
 
   it('new schedule clears loaded export layout and people history back to defaults', async () => {
-    const { result } = renderHook(() => useSchedulingData(), { wrapper: SchedulingDataProvider });
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     act(() => {
       result.current.loadFromYaml({

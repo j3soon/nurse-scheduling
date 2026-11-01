@@ -4,8 +4,8 @@ SPDX-FileCopyrightText: 2026 Johnson Sun -->
 
 # Frontend Browser Storage
 
-The frontend keeps schedule data, backend settings, and recent AI chats in the
-browser. Schedule data remains independent of saved chats. The backend owns AI
+The frontend keeps a Schedule Spec, backend settings, and recent AI chats in the
+browser. The Schedule Spec remains independent of saved chats. The backend owns AI
 execution and retains session data separately.
 
 ## Storage Scope
@@ -31,7 +31,7 @@ All records below use `localStorage` except the active conversation.
 
 | Key | Contents | Lifetime |
 | --- | --- | --- |
-| `nurse-scheduling-data` | Schedule data and Undo/Redo history. | No automatic expiry. |
+| `nurse-scheduling-spec` | Schedule Spec and Undo/Redo history. | No automatic expiry. |
 | `nurse-scheduling-optimize-server-options` | Optimize backend endpoints, selected endpoint, remembered tokens, and saving `appVersion`. | No automatic expiry. |
 | `nurse-scheduling-ai-history` | Recent conversation snapshots and activity times, with saving `appVersion`. | Seven days after chat activity. |
 | `nurse-scheduling-ai-conversation` | Active conversation snapshot in `sessionStorage`. | Tab session, subject to the seven-day activity check. |
@@ -39,17 +39,30 @@ All records below use `localStorage` except the active conversation.
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
 | `nurse-scheduling-ai-auth` | Remembered AI tokens by backend endpoint. | No automatic expiry. |
 
-### Schedule Data
+<a id="schedule-data"></a>
 
-[Schedule storage][schedule-storage] saves the Undo/Redo history and current
+### Schedule Spec
+
+[Schedule Spec storage][schedule-storage] saves the Undo/Redo history and current
 history index. Serialization omits generated groups and computed date items,
 uses date strings for ranges, and escapes infinity values. Loading normalizes
-schedule structures without a separate storage version.
+Schedule Spec structures without a separate storage version.
 
 External storage changes produce a warning without automatically importing
-another tab's schedule data. Browser tests can set
+another tab's Schedule Spec. Browser tests can set
 `window.__PLAYWRIGHT_WORKER_NAMESPACE__` to use
-`nurse-scheduling-data__<namespace>` instead of the production key.
+`nurse-scheduling-spec__<namespace>` instead of the production key.
+
+Legacy Schedule Spec storage is normalized by `src/compat/scheduleSpec.ts`.
+The loader reads `nurse-scheduling-spec` first. When that key is absent, it
+validates `nurse-scheduling-data` and checks the current key again before writing.
+If another tab has saved the current key, the loader uses that record. Otherwise,
+it writes the current key and removes the old key. A failed write retains the
+old record and its full history. Once the current key exists, writes from an
+older tab to the old key are ignored. These checks reduce migration races.
+`localStorage` does not provide an atomic read-and-write operation across tabs.
+AI conversation snapshots and chat history can be discarded after an update.
+They are excluded from the [browser migration guarantee](compatibility.md).
 
 ### Backend Settings and Credentials
 
@@ -71,7 +84,7 @@ without a separate numeric storage version.
 
 The [conversation parser][conversation-parser] validates snapshots from both
 stores. A snapshot includes the transcript, activity and expiry times, synced
-schedule YAML, browser-normalized schedule YAML, applied-run records, event
+Schedule Spec YAML, browser-normalized Schedule Spec YAML, applied-run records, event
 cursor, pending request metadata, optimization state, context usage, and costs.
 The tab snapshot has no version envelope. Its `backendVersion` identifies the
 AI backend rather than the frontend.
@@ -81,7 +94,7 @@ Each tab owns an in-memory conversation and event reader. After state changes,
 it to tab storage, then shared history. These are independent writes. Failure in
 tab storage does not prevent an attempt to save shared history. Leaving the page,
 unmounting the chat, or switching conversations flushes the pending snapshot.
-Selecting a saved chat preserves the browser's current schedule data.
+Selecting a saved chat preserves the browser's current Schedule Spec.
 
 ### Retention and Removal
 

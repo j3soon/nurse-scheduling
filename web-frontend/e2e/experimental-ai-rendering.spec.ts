@@ -189,14 +189,14 @@ function exportHtml(snapshot: Snapshot): Promise<string> {
 async function startBackend(origin: string, snapshot: Snapshot) {
   let stream: ServerResponse | undefined;
   let accepted = 0;
-  let scheduleYaml = '';
+  let scheduleSpecYaml = '';
   const requests = new Map<string, string>();
   const journal: string[] = [];
   const server = createServer(async (request, response) => {
     let requestBody = '';
     for await (const chunk of request) requestBody += chunk;
     const sent = requestBody ? JSON.parse(requestBody) : {};
-    if (typeof sent.schedule_yaml === 'string') scheduleYaml = sent.schedule_yaml;
+    if (typeof sent.schedule_spec_yaml === 'string') scheduleSpecYaml = sent.schedule_spec_yaml;
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Last-Event-ID');
@@ -209,14 +209,14 @@ async function startBackend(origin: string, snapshot: Snapshot) {
       session_retention_seconds: 172800,
       file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
     };
-    else if (url.pathname.endsWith('/sessions')) { response.statusCode = 201; body = { id: snapshot.session_id }; }
+    else if (url.pathname.endsWith('/v1/sessions')) { response.statusCode = 201; body = { id: snapshot.session_id }; }
     else if (url.pathname.endsWith('/messages')) {
       const previous = requests.get(sent.message_id);
       const run = previous ? snapshot.runs.find(run => run.id === previous)! : snapshot.runs.filter(run => run.kind === 'foreground')[accepted++];
       requests.set(sent.message_id, run.id);
       const input = snapshot.events.find(event => event.type === 'model_input' && event.data.run_id === run.id)!;
       // Save the schedule actually accepted by the mock service, as production does.
-      input.data.schedule_yaml = scheduleYaml;
+      input.data.schedule_spec_yaml = scheduleSpecYaml;
       body = { run_id: run.id };
       response.statusCode = 202;
     } else if (url.pathname.endsWith('/compact')) {
@@ -257,7 +257,7 @@ async function replay(page: Page, snapshot: Snapshot, backend: Awaited<ReturnTyp
       if (run.kind === 'compaction') {
         await page.getByRole('button', { name: 'Compact context', exact: true }).click();
       } else if (run.kind === 'foreground') {
-        await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill(run.prompt);
+        await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill(run.prompt);
         await page.getByRole('button', { name: 'Send', exact: true }).click();
         await expect.poll(() => backend.accepted).toBe(++sent);
         // Cover a slow first event that arrives after the accepted request was saved.

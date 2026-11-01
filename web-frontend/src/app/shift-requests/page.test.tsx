@@ -24,7 +24,7 @@ import userEvent from '@testing-library/user-event';
 import ShiftRequestsPage from '@/app/shift-requests/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 const fileContentsByName = new Map<string, string>();
 
 class MockResizeObserver {
@@ -42,8 +42,8 @@ class MockFileReader {
   }
 }
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 vi.mock('@/components/UploadButton', () => ({
@@ -78,7 +78,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     reorderItems.mockReset();
     updatePreferencesByType.mockReset();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -272,7 +272,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
   it('shows validation error for duplicate person rows in people-history CSV', async () => {
     const user = userEvent.setup();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -371,7 +371,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
         weight: 2,
       },
     ];
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -435,7 +435,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const addPersonHistory = vi.fn();
     const updatePersonHistory = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -482,7 +482,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     const updatePersonHistory = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -661,7 +661,7 @@ describe('ShiftRequestsPage CSV parsing validation', () => {
     const user = userEvent.setup();
     (alert as unknown as ReturnType<typeof vi.fn>).mockClear();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

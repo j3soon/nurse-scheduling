@@ -34,8 +34,8 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
 }));
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: () => ({ createNewState, loadFromYaml }),
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: () => ({ createNewState, loadFromYaml }),
 }));
 
 vi.mock('@/utils/version', () => ({
@@ -64,9 +64,9 @@ describe('Home', () => {
     const user = userEvent.setup();
     render(<Home />);
 
-    await user.click(screen.getByRole('button', { name: 'New Schedule' }));
-    expect(screen.getByText(/Start an empty schedule/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Create empty schedule' }));
+    await user.click(screen.getByRole('button', { name: 'New Schedule Spec' }));
+    expect(screen.getByText(/Start an empty Schedule Spec/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create empty Schedule Spec' }));
 
     expect(createNewState).toHaveBeenCalledOnce();
     expect(loadFromYaml).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ people:
     }));
     render(<Home />);
 
-    await user.click(screen.getByRole('button', { name: 'Choose new schedule type' }));
+    await user.click(screen.getByRole('button', { name: 'Choose new Schedule Spec type' }));
     await user.click(screen.getByRole('button', { name: /87-person example/ }));
     expect(screen.getByText(/Load the 87-person example/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Load example' }));

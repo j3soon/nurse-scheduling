@@ -344,7 +344,7 @@ def test_export_keeps_answer_metadata_before_a_trailing_app_notice(status):
             "costSummary": {"usd": "0.02", "calls": 1, "pending": 0, "unavailable": 0},
             "activity": [
                 {"kind": "response", "text": "Updated."},
-                {"kind": "schedule-applied", "text": "The schedule was applied."},
+                {"kind": "schedule-spec-applied", "text": "The schedule was applied."},
             ],
         }
     ]

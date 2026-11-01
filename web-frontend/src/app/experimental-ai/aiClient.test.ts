@@ -132,11 +132,11 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(createSession('description: test', 'ai-client-token')).resolves.toBe('session-id');
-    expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/sessions', {
+    expect(fetchMock).toHaveBeenCalledWith('https://api.nursescheduling.org/ai/v1/sessions', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ai-client-token' },
-      body: JSON.stringify({ schedule_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION, ai_endpoint: 'https://api.nursescheduling.org/ai', frontend_timezone: FRONTEND_TIMEZONE }),
+      body: JSON.stringify({ schedule_spec_yaml: 'description: test', frontend_version: CURRENT_APP_VERSION, ai_endpoint: 'https://api.nursescheduling.org/ai', frontend_timezone: FRONTEND_TIMEZONE }),
     });
   });
 
@@ -168,11 +168,11 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', fetchMock);
     const signal = new AbortController().signal;
     await expect(getSessionModelSelection('session/id', signal, 'chat-token', '/ai')).resolves.toEqual({ selection, locked: true });
-    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/v1/sessions/session%2Fid/model-selection', {
       signal, credentials: 'include', headers: { Authorization: 'Bearer chat-token' },
     });
     await expect(updateSessionModelSelection('session/id', selection, 'chat-token', '/ai')).resolves.toEqual({ selection, locked: true });
-    expect(fetchMock).toHaveBeenLastCalledWith('/ai/sessions/session%2Fid/model-selection', {
+    expect(fetchMock).toHaveBeenLastCalledWith('/ai/v1/sessions/session%2Fid/model-selection', {
       method: 'PUT', credentials: 'include',
       headers: { Authorization: 'Bearer chat-token', 'Content-Type': 'application/json' },
       body: JSON.stringify(selection),
@@ -224,7 +224,7 @@ describe('AI client', () => {
 
     await expect(getSessionStatus('session/id', 'ai-client-token')).resolves.toBe(120);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid',
       {
         credentials: 'include',
         headers: { Authorization: 'Bearer ai-client-token' },
@@ -351,7 +351,7 @@ describe('AI client', () => {
     const recovery = {
       events: [
         { type: 'delta', data: { run_id: 'r', text: 'Do not apply this.' } },
-        { type: 'schedule_change', data: { run_id: 'r', schedule_yaml: 42 } },
+        { type: 'schedule_spec_change', data: { run_id: 'r', schedule_spec_yaml: 42 } },
       ],
     };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
@@ -362,7 +362,7 @@ describe('AI client', () => {
 
     await expect(streamSessionEvents('s', {
       lastEventId: 5, onEvent, onEventId: cursor,
-    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid schedule change.');
+    }, new AbortController().signal, null)).rejects.toThrow('The AI backend returned an invalid Schedule Spec change.');
 
     expect(onEvent).not.toHaveBeenCalled();
     expect(cursor).not.toHaveBeenCalled();
@@ -427,7 +427,7 @@ describe('AI client', () => {
       { type: 'done', runId: 'message-id' },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/messages',
       expect.objectContaining({
         body: JSON.stringify({ message: 'Who works?', frontend_version: CURRENT_APP_VERSION, frontend_timezone: FRONTEND_TIMEZONE }),
         credentials: 'include',
@@ -482,7 +482,7 @@ describe('AI client', () => {
   it('reports when streamed output was discarded as stale', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: delta\ndata: {"text":"Obsolete"}\n\n',
-      'event: stale\ndata: {"message":"The schedule changed."}\n\n',
+      'event: stale\ndata: {"message":"The Schedule Spec changed."}\n\n',
     ])));
 
     await expect(streamMessage(
@@ -491,7 +491,7 @@ describe('AI client', () => {
       { onEvent: event => { if (event.type === 'stale') throw new AiStaleRunError(event.message); } },
       new AbortController().signal,
       null,
-    )).rejects.toEqual(new AiStaleRunError('The schedule changed.'));
+    )).rejects.toEqual(new AiStaleRunError('The Schedule Spec changed.'));
   });
 
   it('uploads files as multipart form data and sends the question as typed', async () => {
@@ -509,12 +509,12 @@ describe('AI client', () => {
     )).toBe('run-1');
 
     const [uploadUrl, uploadRequest] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/sessions/session-id/uploads');
+    expect(uploadUrl).toBe('https://api.nursescheduling.org/ai/v1/sessions/session-id/uploads');
     expect(uploadRequest).toMatchObject({
       method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer stream-token' }, signal,
     });
     expect((uploadRequest.body as FormData).getAll('files')).toEqual([image]);
-    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session-id/messages', {
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/v1/sessions/session-id/messages', {
       method: 'POST',
       credentials: 'include',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer stream-token' },
@@ -554,7 +554,7 @@ describe('AI client', () => {
       signal: new AbortController().signal, shouldStop: () => true, onConnectionChange,
     })).resolves.toBe('compact-run');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/ai/sessions/session-id/compact', '/ai/sessions/session-id/stop', '/ai/sessions/session-id/compact',
+      '/ai/v1/sessions/session-id/compact', '/ai/v1/sessions/session-id/stop', '/ai/v1/sessions/session-id/compact',
     ]);
     for (const [, request] of fetchMock.mock.calls) {
       expect(request).toMatchObject({
@@ -672,7 +672,7 @@ describe('AI client', () => {
       expect(fetchMock.mock.calls.map(([, request]) => (request as RequestInit).method ?? 'GET'))
         .toEqual(['POST', 'POST', 'POST']);
       expect(new Set(fetchMock.mock.calls.map(([url]) => String(url)))).toEqual(new Set([
-        `https://api.nursescheduling.org/ai/sessions/session-id/uploads?upload_id=${uploadId}`,
+        `https://api.nursescheduling.org/ai/v1/sessions/session-id/uploads?upload_id=${uploadId}`,
       ]));
     } finally {
       vi.restoreAllMocks();
@@ -759,12 +759,12 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: reasoning\ndata: {"text":"Checking people."}\n\n',
       'event: tool_start\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}"}\n\n',
-      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true,"schedule_check":{"ok":true,"text":"Valid."}}\n\n',
+      'event: tool\ndata: {"tool_call_id":"call-1","name":"bash","arguments":"{\\"command\\":\\"sed -n 1p schedule.yaml\\"}","result":"exit_code: 0","ok":true,"schedule_spec_check":{"ok":true,"text":"Valid."}}\n\n',
       'event: steering\ndata: {"message_id":"queued-1","message":"Focus on P2."}\n\n',
-      'event: schedule_change\ndata: {"schedule_yaml":"people:\\n  - id: Head\\n"}\n\n',
+      'event: schedule_spec_change\ndata: {"schedule_spec_yaml":"people:\\n  - id: Head\\n"}\n\n',
       'event: delta\ndata: {"text":"Renamed P1."}\n\n',
       'event: truncated\ndata: {}\n\n',
-      'event: schedule_applied\ndata: {"run_id":"change-run","schedule_yaml":"people: []\\n","diff":"- people.items[0].id","replaced_queued_schedule":true}\n\n',
+      'event: schedule_spec_applied\ndata: {"run_id":"change-run","schedule_spec_yaml":"people: []\\n","diff":"- people.items[0].id","replaced_queued_schedule_spec":true}\n\n',
       'event: done\ndata: {"run_id":"1"}\n\n',
     ])));
     const events: SessionEvent[] = [];
@@ -782,14 +782,14 @@ describe('AI client', () => {
       { type: 'tool_start', activity: { toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}' } },
       { type: 'tool', activity: {
         toolCallId: 'call-1', name: 'bash', arguments: '{"command":"sed -n 1p schedule.yaml"}', result: 'exit_code: 0', ok: true,
-        scheduleCheck: { ok: true, text: 'Valid.' },
+        scheduleSpecCheck: { ok: true, text: 'Valid.' },
       } },
       { type: 'steering', messageId: 'queued-1', message: 'Focus on P2.' },
-      { type: 'schedule_change', scheduleYaml: 'people:\n  - id: Head\n' },
+      { type: 'schedule_spec_change', scheduleSpecYaml: 'people:\n  - id: Head\n' },
       { type: 'delta', text: 'Renamed P1.' },
       { type: 'truncated' },
       { type: 'run_context', runId: 'change-run' },
-      { type: 'schedule_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleYaml: 'people: []\n', diff: '- people.items[0].id', replacedQueuedSchedule: true } },
+      { type: 'schedule_spec_applied', runId: 'change-run', applied: { runId: 'change-run', scheduleSpecYaml: 'people: []\n', diff: '- people.items[0].id', replacedQueuedScheduleSpec: true } },
       { type: 'run_context', runId: '1' },
       { type: 'done', runId: '1' },
     ]);
@@ -932,7 +932,7 @@ describe('AI client', () => {
       { type: 'done', runId: 'background-1' },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/events',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/events',
       {
         method: 'GET',
         credentials: 'include',
@@ -945,7 +945,7 @@ describe('AI client', () => {
   it('acknowledges a stale background turn instead of replaying it forever', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'id: 7\nevent: delta\ndata: {"text":"Obsolete"}\n\n',
-      'id: 8\nevent: stale\ndata: {"message":"The schedule changed."}\n\n',
+      'id: 8\nevent: stale\ndata: {"message":"The Schedule Spec changed."}\n\n',
     ])));
     const onEvent = vi.fn();
     const eventIds: number[] = [];
@@ -957,7 +957,7 @@ describe('AI client', () => {
       null,
     );
 
-    expect(onEvent).toHaveBeenCalledWith({ type: 'stale', message: 'The schedule changed.' });
+    expect(onEvent).toHaveBeenCalledWith({ type: 'stale', message: 'The Schedule Spec changed.' });
     expect(eventIds).toEqual([7, 8]);
   });
 
@@ -973,7 +973,7 @@ describe('AI client', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session-id/events',
+      'https://api.nursescheduling.org/ai/v1/sessions/session-id/events',
       expect.objectContaining({ headers: { 'Last-Event-ID': '4' } }),
     );
   });
@@ -1016,7 +1016,7 @@ describe('AI client', () => {
     await stopSession('session/id', 'result-token');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/stop',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/stop',
       {
         method: 'POST',
         credentials: 'include',
@@ -1032,7 +1032,7 @@ describe('AI client', () => {
     vi.stubGlobal('fetch', fetchMock);
     expect(await getUploads('session/id', 'upload-token')).toEqual(files);
     await removeUpload('session/id', 'file/id', 'upload-token');
-    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/uploads/file%2Fid', {
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/uploads/file%2Fid', {
       method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer upload-token' },
     });
   });
@@ -1043,7 +1043,7 @@ describe('AI client', () => {
     const zip = await downloadGeneratedZip('session/id', 'run/id', 'zip-token');
     expect(await zip.text()).toBe('zip-data');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/run%2Fid',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/downloads/run%2Fid',
       { credentials: 'include', headers: { Authorization: 'Bearer zip-token' } },
     );
   });
@@ -1053,7 +1053,7 @@ describe('AI client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'The ZIP is no longer available.' }), { status: 404 }));
     vi.stubGlobal('fetch', fetchMock);
     await removeGeneratedZip('session/id', 'run/id', 'zip-token');
-    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/sessions/session%2Fid/downloads/run%2Fid', {
+    expect(fetchMock).toHaveBeenLastCalledWith('https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/downloads/run%2Fid', {
       method: 'DELETE', credentials: 'include', headers: { Authorization: 'Bearer zip-token' },
     });
     await expect(removeGeneratedZip('session/id', 'run/id', 'zip-token')).rejects.toThrow('The ZIP is no longer available.');
@@ -1073,7 +1073,7 @@ describe('AI client', () => {
     expect(workbook.type).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/optimizations/opt%2Fid/xlsx',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/optimizations/opt%2Fid/xlsx',
       {
         method: 'GET',
         credentials: 'include',
@@ -1085,7 +1085,7 @@ describe('AI client', () => {
   it.each([null, `1234567890.${'a'.repeat(64)}`])('requests a native chat download link (%s)', async token => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ download_token: token, download_id: "a".repeat(32) })));
     vi.stubGlobal('fetch', fetchMock);
-    const path = 'https://ai.example.test/sessions/session%2Fid/export';
+    const path = 'https://ai.example.test/v1/sessions/session%2Fid/export';
     await expect(getChatExportUrl('session/id', 'ai-token', 'https://ai.example.test'))
       .resolves.toEqual(`${path}?download=${"a".repeat(32)}${token === null ? "" : `&token=${token}`}`);
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(path, {
@@ -1114,7 +1114,7 @@ describe('AI client', () => {
     await queueMessage('session/id', 'queued-1', 'Focus on P2.', 'stream-token');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.nursescheduling.org/ai/sessions/session%2Fid/messages/queue',
+      'https://api.nursescheduling.org/ai/v1/sessions/session%2Fid/messages/queue',
       {
         method: 'POST',
         credentials: 'include',
@@ -1131,7 +1131,7 @@ describe('AI client', () => {
     await cancelOptimization('session/id', 'opt/id', 'ai-token', 'https://ai.example.test');
 
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-      'https://ai.example.test/sessions/session%2Fid/optimizations/opt%2Fid/cancel',
+      'https://ai.example.test/v1/sessions/session%2Fid/optimizations/opt%2Fid/cancel',
       { method: 'POST', credentials: 'include', headers: { Authorization: 'Bearer ai-token' } },
     );
   });
@@ -1152,11 +1152,11 @@ describe('AI client', () => {
 
     await updateSessionSchedule('session-id', 'description: newer', 'session-token');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/sessions/session-id/schedule');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.nursescheduling.org/ai/v1/sessions/session-id/schedule_spec');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer session-token' },
-      body: JSON.stringify({ schedule_yaml: 'description: newer' }),
+      body: JSON.stringify({ schedule_spec_yaml: 'description: newer' }),
     });
   });
 
@@ -1173,9 +1173,9 @@ describe('AI client', () => {
     expect(onEvent).toHaveBeenCalledWith({ type: 'tool', activity: { name: 'bash', arguments: '', result: '', ok: true } });
   });
 
-  it('rejects malformed schedule change events', async () => {
+  it('rejects malformed Schedule Spec change events', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
-      'event: schedule_change\ndata: {"schedule_yaml":3}\n\n',
+      'event: schedule_spec_change\ndata: {"schedule_spec_yaml":3}\n\n',
     ])));
 
     await expect(streamMessage(
@@ -1184,22 +1184,15 @@ describe('AI client', () => {
       { onEvent: vi.fn() },
       new AbortController().signal,
       null,
-    )).rejects.toThrow('The AI backend returned an invalid schedule change.');
+    )).rejects.toThrow('The AI backend returned an invalid Schedule Spec change.');
   });
 
-  it('reads an applied schedule saved without the queued-update flag and rejects a malformed flag', async () => {
-    const applied = (flag: string) => streamedResponse([
-      `event: schedule_applied\ndata: {"run_id":"run","schedule_yaml":"people: []\\n","diff":""${flag}}\n\n`,
-    ]);
-    const events: SessionEvent[] = [];
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(applied('')).mockResolvedValueOnce(applied(',"replaced_queued_schedule":1')));
-
-    await streamMessage('session-id', 'Look.', { onEvent: event => events.push(event) }, new AbortController().signal, null);
-    expect(events).toContainEqual({ type: 'schedule_applied', runId: 'run', applied: {
-      runId: 'run', scheduleYaml: 'people: []\n', diff: '', replacedQueuedSchedule: false,
-    } });
+  it.each(['', ',"replaced_queued_schedule_spec":1'])('rejects an applied schedule without the required boolean flag (%s)', async flag => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
+      `event: schedule_spec_applied\ndata: {"run_id":"run","schedule_spec_yaml":"people: []\\n","diff":""${flag}}\n\n`,
+    ])));
     await expect(streamMessage('session-id', 'Look.', { onEvent: vi.fn() }, new AbortController().signal, null))
-      .rejects.toThrow('The AI backend returned an invalid schedule change.');
+      .rejects.toThrow('The AI backend returned an invalid Schedule Spec change.');
   });
 
   it('recognizes the official AI endpoints regardless of spelling', () => {

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('clear-data actions remove current requests and history summaries', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('clear-data actions remove current requests and history summaries', async (
    * 3. Clear all people history and confirm the history section empties.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'clear data seed',
     dates: {

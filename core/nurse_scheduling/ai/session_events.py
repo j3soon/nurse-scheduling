@@ -104,7 +104,7 @@ class ToolStartEvent(ToolFields):
     type: Literal["tool_start"]
 
 
-class ScheduleCheck(TypedDict):
+class ScheduleSpecCheck(TypedDict):
     ok: bool
     text: str
 
@@ -114,8 +114,8 @@ class ToolEndEvent(ToolFields):
     result: str
     ok: bool
     replay_arguments: NotRequired[str]
-    # The trusted schedule check included in `result`, when the tool changed the working copy.
-    schedule_check: NotRequired[ScheduleCheck]
+    # The trusted Schedule Spec check included in `result`, when the tool changed the working copy.
+    schedule_spec_check: NotRequired[ScheduleSpecCheck]
 
 
 class SteeringEvent(RunFields):
@@ -124,17 +124,17 @@ class SteeringEvent(RunFields):
     message: str
 
 
-class ScheduleChangeEvent(RunFields):
-    type: Literal["schedule_change"]
-    schedule_yaml: str
+class ScheduleSpecChangeEvent(RunFields):
+    type: Literal["schedule_spec_change"]
+    schedule_spec_yaml: str
 
 
-class ScheduleAppliedEvent(RunFields):
-    type: Literal["schedule_applied"]
-    schedule_yaml: str
+class ScheduleSpecAppliedEvent(RunFields):
+    type: Literal["schedule_spec_applied"]
+    schedule_spec_yaml: str
     diff: str
-    # The run's schedule replaced a browser update queued during the run.
-    replaced_queued_schedule: bool
+    # The run's Schedule Spec replaced a browser update queued during the run.
+    replaced_queued_schedule_spec: bool
 
 
 class DownloadEvent(RunFields):
@@ -161,7 +161,7 @@ class ModelInputEvent(RunFields):
     type: Literal["model_input"]
     system: str
     messages: list[ModelInputMessage]
-    schedule_yaml: NotRequired[str]
+    schedule_spec_yaml: NotRequired[str]
 
 
 class CompactionFields(RunFields):
@@ -252,8 +252,8 @@ AgentSessionRunEvent = (
     | SteeringEvent
     | ProviderRetryEvent
     | ResponseEndEvent
-    | ScheduleChangeEvent
-    | ScheduleAppliedEvent
+    | ScheduleSpecChangeEvent
+    | ScheduleSpecAppliedEvent
     | DownloadEvent
     | WarningEvent
     | ModelInputEvent

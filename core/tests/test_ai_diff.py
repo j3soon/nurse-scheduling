@@ -19,7 +19,7 @@
 
 # This test is mostly AI generated.
 
-from nurse_scheduling.ai.diff import MAX_DIFF_ENTRIES, MAX_DIFF_VALUE_CHARS, diff_schedules
+from nurse_scheduling.ai.diff import MAX_DIFF_ENTRIES, MAX_DIFF_VALUE_CHARS, diff_schedule_specs
 
 from .ai_test_helper import base_schedule_payload
 
@@ -29,7 +29,7 @@ def _locations(diff) -> list[str]:
 
 
 def test_reports_no_changes_for_equal_schedules():
-    diff = diff_schedules(base_schedule_payload(), base_schedule_payload())
+    diff = diff_schedule_specs(base_schedule_payload(), base_schedule_payload())
 
     assert diff.entries == ()
     assert diff.render() == "No changes."
@@ -39,7 +39,7 @@ def test_reports_a_changed_value_with_its_path():
     after = base_schedule_payload()
     after["people"]["items"][0]["description"] = "Head nurse"
 
-    diff = diff_schedules(base_schedule_payload(), after)
+    diff = diff_schedule_specs(base_schedule_payload(), after)
 
     assert _locations(diff) == ["people.items[0].description"]
     assert diff.render() == '- people.items[0].description: "" -> "Head nurse"'
@@ -50,7 +50,7 @@ def test_reports_added_and_removed_mapping_keys():
     del after["description"]
     after["people"]["items"][0]["note"] = "added"
 
-    diff = diff_schedules(base_schedule_payload(), after)
+    diff = diff_schedule_specs(base_schedule_payload(), after)
 
     kinds = {entry.location: entry.kind for entry in diff.entries}
     assert kinds["description"] == "removed"
@@ -61,7 +61,7 @@ def test_insertion_reports_one_entry_instead_of_shifting_every_later_entry():
     after = base_schedule_payload()
     after["people"]["items"].insert(0, {"id": "P0", "description": "", "history": []})
 
-    diff = diff_schedules(base_schedule_payload(), after)
+    diff = diff_schedule_specs(base_schedule_payload(), after)
 
     assert _locations(diff) == ["people.items[0]"]
     assert diff.entries[0].kind == "added"
@@ -72,7 +72,7 @@ def test_removal_is_visible_even_though_the_result_stays_valid():
     del after["people"]["items"][1]
     after["people"]["groups"][0]["members"] = ["P1"]
 
-    diff = diff_schedules(base_schedule_payload(), after)
+    diff = diff_schedule_specs(base_schedule_payload(), after)
 
     kinds = {entry.location: entry.kind for entry in diff.entries}
     assert kinds["people.items[1]"] == "removed"
@@ -85,7 +85,7 @@ def test_bounds_the_reported_changes():
     after = base_schedule_payload()
     after["people"]["items"] = [{"id": f"P{index}", "description": "renamed"} for index in range(MAX_DIFF_ENTRIES + 10)]
 
-    diff = diff_schedules(before, after)
+    diff = diff_schedule_specs(before, after)
 
     assert len(diff.entries) == MAX_DIFF_ENTRIES
     assert diff.omitted == 10
@@ -96,7 +96,7 @@ def test_bounds_one_rendered_value():
     after = base_schedule_payload()
     after["description"] = "x" * (MAX_DIFF_VALUE_CHARS * 2)
 
-    diff = diff_schedules(base_schedule_payload(), after)
+    diff = diff_schedule_specs(base_schedule_payload(), after)
 
     assert len(diff.entries[0].after) == MAX_DIFF_VALUE_CHARS
     assert diff.entries[0].after.endswith("...")

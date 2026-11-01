@@ -33,7 +33,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from .config import MAX_OPTIMIZER_RESULT_BYTES, MAX_OPTIMIZER_RUNS_PER_SESSION, MAX_SCHEDULE_BYTES
-from .optimizer_privacy import OptimizerResultError, prepare_optimizer_schedule, restore_people_ids
+from .optimizer_privacy import OptimizerResultError, prepare_optimizer_spec, restore_people_ids
 from .result_context import build_request_audit, build_result_context
 
 OPTIMIZER_TOOL = "optimizer"
@@ -53,12 +53,12 @@ def optimizer_completion_message(result_data: dict[str, Any]) -> str:
         }
     result_path = WORKSPACE_OPTIMIZER_RESULT if result_data["download_available"] else "unavailable"
     download_status = (
-        "The user can already download this workbook with the chat's Download result button.\n"
+        "The user can already download this workbook with the chat's Download schedule button.\n"
         if result_data["download_available"]
         else ""
     )
     return (
-        f"Optimizer job finished. Result workbook: {result_path}.\n"
+        f"Optimizer job finished. Schedule: {result_path}.\n"
         f"{download_status}"
         f"Optimizer result JSON:\n{json.dumps(result_data, ensure_ascii=False)}"
     )
@@ -98,7 +98,7 @@ class OptimizerBackend(Protocol):
     """Transport boundary used by session-scoped optimization jobs."""
 
     async def submit(
-        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+        self, schedule_spec_yaml: str, timeout_seconds: int | None, client_address: str | None = None
     ) -> OptimizerJobPayload: ...
 
     async def get(self, job_id: str) -> OptimizerJobPayload: ...
@@ -127,7 +127,7 @@ class SessionOptimization:
     payload: OptimizerJobPayload
     original_id_by_anonymized_id: dict[str, str]
     people_count: int
-    schedule_yaml: str
+    schedule_spec_yaml: str
     submitted_yaml: str = ""
     model_selection: dict[str, str] | None = None
     backend: dict[str, Any] = field(default_factory=dict)
@@ -291,7 +291,7 @@ class SessionOptimizer:
     async def start(
         self,
         session_id: str,
-        schedule_yaml: str,
+        schedule_spec_yaml: str,
         timeout_seconds: int | None,
         client_address: str | None = None,
         model_selection: dict[str, str] | None = None,
@@ -322,7 +322,7 @@ class SessionOptimizer:
         owner.runs += 1
         submission = asyncio.create_task(
             self._submit(
-                session_id, owner, reservation, schedule_yaml, timeout_seconds, client_address, model_selection
+                session_id, owner, reservation, schedule_spec_yaml, timeout_seconds, client_address, model_selection
             )
         )
         self._submissions.add(submission)
@@ -347,7 +347,7 @@ class SessionOptimizer:
         session_id: str,
         owner: OptimizerSession,
         reservation: object,
-        schedule_yaml: str,
+        schedule_spec_yaml: str,
         timeout_seconds: int | None,
         client_address: str | None,
         model_selection: dict[str, str] | None,
@@ -357,7 +357,7 @@ class SessionOptimizer:
 
         expired = OptimizerError("This chat session expired while the optimizer job was starting.")
         try:
-            prepared = await asyncio.to_thread(prepare_optimizer_schedule, schedule_yaml, self._max_schedule_bytes)
+            prepared = await asyncio.to_thread(prepare_optimizer_spec, schedule_spec_yaml, self._max_schedule_bytes)
             if not owns_submission():
                 raise expired
             payload = await self._backend.submit(
@@ -367,11 +367,11 @@ class SessionOptimizer:
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer requires a valid frontend schedule. {exc}")
+            raise OptimizerError(f"The optimizer requires a valid frontend Schedule Spec. {exc}")
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer could not accept the schedule. {exc}")
+            raise OptimizerError(f"The optimizer could not accept the Schedule Spec. {exc}")
         except BaseException:
             self._release_reservation(session_id, owner, reservation)
             raise
@@ -382,11 +382,11 @@ class SessionOptimizer:
             id=f"opt_{uuid4().hex}",
             session_id=session_id,
             remote_id=payload.id,
-            source_sha256=hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest(),
+            source_sha256=hashlib.sha256(schedule_spec_yaml.encode("utf-8")).hexdigest(),
             payload=payload,
             original_id_by_anonymized_id=prepared.original_id_by_anonymized_id,
             people_count=prepared.people_count,
-            schedule_yaml=schedule_yaml,
+            schedule_spec_yaml=schedule_spec_yaml,
             submitted_yaml=prepared.submission_yaml,
             model_selection=model_selection,
             backend=payload.backend or {},
@@ -601,7 +601,9 @@ class SessionOptimizer:
                 )
                 if len(restored_content) > self._max_result_bytes:
                     raise OptimizerResultError("The restored workbook exceeded the assistant download limit.")
-                context = await asyncio.to_thread(build_result_context, job.schedule_yaml, workbook=restored_content)
+                context = await asyncio.to_thread(
+                    build_result_context, job.schedule_spec_yaml, workbook=restored_content
+                )
                 artifact = OptimizerArtifact(
                     restored_content,
                     artifact.filename,
@@ -611,7 +613,9 @@ class SessionOptimizer:
                 if self._save_result is None:
                     await self._retain_artifact(job, artifact)
                 if artifact is not None:
-                    request_audit = await asyncio.to_thread(build_request_audit, job.schedule_yaml, restored_content)
+                    request_audit = await asyncio.to_thread(
+                        build_request_audit, job.schedule_spec_yaml, restored_content
+                    )
             except (OptimizerError, OptimizerResultError) as exc:
                 logger.warning("Optimizer result read failed job_id=%s error=%s", job.id, exc)
                 artifact_error = str(exc)
@@ -621,7 +625,7 @@ class SessionOptimizer:
             job.artifact_saved = save_error is None and artifact is not None
             if save_error is not None:
                 artifact_error = save_error
-        job.schedule_yaml = ""
+        job.schedule_spec_yaml = ""
         job.submitted_yaml = ""
         await self._delete_retired(job)
         if self._jobs.get(job.id) is not job:

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('labels the year-end substitute holiday with the next New Year', async ({ page }) => {
   await disableModalDialogs(page);
@@ -40,7 +40,7 @@ test('setting a real date range through the Dates page propagates downstream', a
    * 3. Revisit Shift Requests and confirm the generated date columns are now available.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'dates editor seed',
     dates: {

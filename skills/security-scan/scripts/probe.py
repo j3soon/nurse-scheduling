@@ -88,8 +88,8 @@ def concrete(path: str) -> str:
 
 def submit(client: httpx.Client, url: str, address: str, timeout: int = 20, **headers: str) -> httpx.Response:
     return client.post(
-        f"{url}/optimize",
-        files={"file": ("ward.yaml", LONG_SCHEDULE.read_bytes(), "application/yaml")},
+        f"{url}/schedule_spec/optimize",
+        files={"schedule_spec_file": ("ward.yaml", LONG_SCHEDULE.read_bytes(), "application/yaml")},
         data={"timeout": str(timeout), "prettify": "false"},
         headers={"X-Forwarded-For": address, **headers},
     )
@@ -150,7 +150,7 @@ def check_api(client: httpx.Client, stack: dict[str, str]) -> None:
     response = client.get(f"{keyed_url}/optimize/options", params={"token": stack["API_TOKEN"]})
     check("api keyed: a key in the query string is refused", response.status_code == 401, str(response.status_code))
     check("api keyed: generated docs are hidden", client.get(f"{keyed_url}/openapi.json").status_code == 404)
-    check_cors(client, "api", open_url, "/optimize", "POST")
+    check_cors(client, "api", open_url, "/schedule_spec/optimize", "POST")
 
     # The scanner stands in for NGINX, which sets one forwarded address per visitor.
     created = []
@@ -191,32 +191,32 @@ def check_api(client: httpx.Client, stack: dict[str, str]) -> None:
             client.post(f"{open_url}/optimize/{job_id}/cancel")
 
     big = b"a" * (3 * 1024 * 1024)
-    response = client.post(f"{open_url}/optimize", content=big, headers={"Content-Type": "application/x-yaml"})
+    response = client.post(f"{open_url}/schedule_spec/optimize", content=big, headers={"Content-Type": "application/x-yaml"})
     check("api: an oversize declared body is refused", response.status_code == 413, str(response.status_code))
 
     def chunks() -> Iterator[bytes]:
-        boundary = b'--scan\r\nContent-Disposition: form-data; name="yaml_content"\r\n\r\n'
+        boundary = b'--scan\r\nContent-Disposition: form-data; name="schedule_spec_yaml"\r\n\r\n'
         yield boundary
         for _ in range(48):
             yield b"a" * (64 * 1024)
         yield b"\r\n--scan--\r\n"
 
     response = client.post(
-        f"{open_url}/optimize", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=scan"}
+        f"{open_url}/schedule_spec/optimize", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=scan"}
     )
     check("api: an oversize chunked body is refused", response.status_code == 413, str(response.status_code))
     bomb = "a: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(
         f"{chr(98 + index)}: &{chr(98 + index)} [{', '.join([f'*{chr(97 + index)}'] * 9)}]\n" for index in range(8)
     )
-    response = client.post(f"{open_url}/optimize", data={"yaml_content": bomb})
+    response = client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": bomb})
     check("api: a YAML alias bomb is refused", response.status_code == 400, str(response.status_code))
-    response = client.post(f"{open_url}/optimize", data={"yaml_content": "[" * 5000})
+    response = client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "[" * 5000})
     check("api: deeply nested YAML is refused", response.status_code == 400, str(response.status_code))
     probes = [
-        client.post(f"{open_url}/optimize", content=b"--x\r\nbroken", headers={"Content-Type": "multipart/form-data"}),
+        client.post(f"{open_url}/schedule_spec/optimize", content=b"--x\r\nbroken", headers={"Content-Type": "multipart/form-data"}),
         client.get(f"{open_url}/optimize/{'%00' * 4}"),
-        client.post(f"{open_url}/optimize", data={"yaml_content": "a", "timeout": "1e309"}),
-        client.post(f"{open_url}/optimize", data={"yaml_content": "a", "solver": "../../bin/sh"}),
+        client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "timeout": "1e309"}),
+        client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "solver": "../../bin/sh"}),
     ]
     leaking = [f"{response.request.method} {response.status_code}" for response in probes if leaks_internals(response)]
     check("api: malformed requests do not reveal internals", not leaking, ", ".join(leaking))
@@ -230,14 +230,14 @@ def check_ai(client: httpx.Client, stack: dict[str, str]) -> None:
     ai_app = create_ai_app(settings=settings, sandbox_factory=FakeSandboxFactory())
     check_route_auth(client, "ai, no key", url, ai_app, PUBLIC_AI_ROUTES, {})
     check("ai: generated docs are hidden", client.get(f"{url}/openapi.json").status_code == 404)
-    check_cors(client, "ai", url, "/sessions", "POST")
+    check_cors(client, "ai", url, "/v1/sessions", "POST")
 
     schedule = (REPO_ROOT / "web-frontend/public/examples/large-ward-with-87-people-2025-11.yaml").read_text()
 
     def browser() -> tuple[httpx.Client, httpx.Response]:
         # The owner cookie is Secure, which httpx withholds over plain HTTP, so carry it by hand.
         client = httpx.Client(timeout=30, headers=bearer)
-        created = client.post(f"{url}/sessions", json={"schedule_yaml": schedule})
+        created = client.post(f"{url}/v1/sessions", json={"schedule_spec_yaml": schedule})
         owner_cookie = created.headers.get("set-cookie", "").split(";", 1)[0]
         client.cookies.clear()
         client.headers["Cookie"] = owner_cookie
@@ -253,28 +253,28 @@ def check_ai(client: httpx.Client, stack: dict[str, str]) -> None:
         cookie = response.headers.get("set-cookie", "")
         flags = {flag.strip().lower().split("=")[0] for flag in cookie.split(";")[1:]}
         check("ai: the owner cookie is HttpOnly and Secure", {"httponly", "secure"} <= flags, cookie.split(";", 1)[-1])
-        owner.post(f"{url}/sessions/{session_id}/messages", json={"message": "hello"})
-        with owner.stream("GET", f"{url}/sessions/{session_id}/events", timeout=15) as events:
+        owner.post(f"{url}/v1/sessions/{session_id}/messages", json={"message": "hello"})
+        with owner.stream("GET", f"{url}/v1/sessions/{session_id}/events", timeout=15) as events:
             answered = received_stub_reply(events.iter_lines())
         check("ai: the stub provider answers a message", answered)
         foreign = [
-            intruder.get(f"{url}/sessions/{session_id}/export"),
-            intruder.get(f"{url}/sessions/{session_id}/uploads"),
-            intruder.post(f"{url}/sessions/{session_id}/messages", json={"message": "x"}),
-            intruder.put(f"{url}/sessions/{session_id}/schedule", json={"schedule_yaml": schedule}),
+            intruder.get(f"{url}/v1/sessions/{session_id}/export"),
+            intruder.get(f"{url}/v1/sessions/{session_id}/uploads"),
+            intruder.post(f"{url}/v1/sessions/{session_id}/messages", json={"message": "x"}),
+            intruder.put(f"{url}/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": schedule}),
         ]
         statuses = [response.status_code for response in foreign]
         check("ai: another browser cannot use the session", all(code == 404 for code in statuses), str(statuses))
 
         files = [("files", (f"{index}.txt", b"x", "text/plain")) for index in range(40)]
-        response = owner.post(f"{url}/sessions/{session_id}/uploads", files=files)
+        response = owner.post(f"{url}/v1/sessions/{session_id}/uploads", files=files)
         check("ai: too many attachments are refused", response.status_code == 413, str(response.status_code))
         traversal = ("files", ("../../../../etc/passwd", b"x", "text/plain"))
-        response = owner.post(f"{url}/sessions/{session_id}/uploads", files=[traversal])
+        response = owner.post(f"{url}/v1/sessions/{session_id}/uploads", files=[traversal])
         check("ai: an attachment with a path in its name is accepted only as data", response.status_code < 500)
         response = owner.post(
-            f"{url}/sessions",
-            content=b'{"schedule_yaml": "\\ud800 SECRET-MARKER"',
+            f"{url}/v1/sessions",
+            content=b'{"schedule_spec_yaml": "\\ud800 SECRET-MARKER"',
             headers={"Content-Type": "application/json"},
         )
         check(

@@ -25,12 +25,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 SCRIPT = Path(__file__).with_name("probe.py")
 with patch.object(sys, "argv", [str(SCRIPT), str(SCRIPT.parents[3])]):
     PROBE = runpy.run_path(str(SCRIPT))
 
 
 class ProbeReplyTests(unittest.TestCase):
+    def test_submission_reaches_the_current_optimizer_api(self) -> None:
+        with patch("nurse_scheduling.server.app.init_sentry"):
+            app = PROBE["create_api_app"](settings=PROBE["ServerSettings"](), start_background=False)
+        with TestClient(app) as client:
+            response = PROBE["submit"](client, "http://testserver", "198.51.100.20")
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["state"], "queued")
+
     def test_reply_stops_reading_the_persistent_stream(self) -> None:
         def lines():
             yield "event: text"

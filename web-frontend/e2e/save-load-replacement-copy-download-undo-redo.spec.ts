@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 async function readDownloadText(download: Awaited<ReturnType<typeof Promise.resolve>>) {
   const stream = await (download as { createReadStream: () => Promise<NodeJS.ReadableStream | null> }).createReadStream();
@@ -43,7 +43,7 @@ test('save-load preview, copy, and download follow undo and redo of an uploaded 
   await disableModalDialogs(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'original save-load export state',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

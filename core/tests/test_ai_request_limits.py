@@ -62,7 +62,7 @@ def mount_app(app, prefix):
     return parent
 
 
-def request(app, chunks, headers=(), path="/sessions"):
+def request(app, chunks, headers=(), path="/v1/sessions"):
     async def run():
         received = 0
         messages = []
@@ -100,12 +100,12 @@ def request(app, chunks, headers=(), path="/sessions"):
 @pytest.mark.parametrize("credential", [None, "wrong-key"])
 @pytest.mark.parametrize("prefix", ["", "/ai"])
 def test_invalid_authentication_does_not_read_the_body(credential, prefix):
-    body = json.dumps({"schedule_yaml": "x" * 100_000}).encode()
+    body = json.dumps({"schedule_spec_yaml": "x" * 100_000}).encode()
     headers = [(b"content-type", b"application/json")]
     if credential:
         headers.append((b"authorization", f"Bearer {credential}".encode()))
 
-    status, received = request(mount_app(make_app(), prefix), [(body, False)], headers, f"{prefix}/sessions")
+    status, received = request(mount_app(make_app(), prefix), [(body, False)], headers, f"{prefix}/v1/sessions")
 
     assert status == 401
     assert received == 0
@@ -115,7 +115,7 @@ def test_invalid_authentication_does_not_read_the_body(credential, prefix):
 def test_declared_oversize_json_is_rejected_without_reading_it(prefix):
     headers = [(b"content-type", b"application/json"), (b"content-length", b"100000")]
     status, received = request(
-        mount_app(make_app(authenticated=False), prefix), [(b"x" * 100_000, False)], headers, f"{prefix}/sessions"
+        mount_app(make_app(authenticated=False), prefix), [(b"x" * 100_000, False)], headers, f"{prefix}/v1/sessions"
     )
     assert status == 413
     assert received == 0
@@ -136,14 +136,14 @@ def test_streamed_bodies_stop_at_the_limit(multipart, prefix):
         session_id = app.state.session_store.create(owner, "x").id
         cookie = f"{OWNER_COOKIE}={owner}"
         headers.extend([(b"cookie", cookie.encode()), (b"content-type", b"multipart/form-data; boundary=scan")])
-        path = f"/sessions/{session_id}/uploads"
+        path = f"/v1/sessions/{session_id}/uploads"
 
         def chunks():
             yield b'--scan\r\nContent-Disposition: form-data; name="files"; filename="x"\r\n\r\n' + b"x" * 40_000, True
             yield b"x" * 40_000, True
             pytest.fail("The multipart parser read more data after exceeding the limit")
     else:
-        app, path = make_app(), "/sessions"
+        app, path = make_app(), "/v1/sessions"
         headers.append((b"content-type", b"application/json"))
     status, received = request(mount_app(app, prefix), chunks(), headers, f"{prefix}{path}")
     assert status == 413
@@ -154,13 +154,15 @@ def test_streamed_bodies_stop_at_the_limit(multipart, prefix):
 def test_valid_escaped_json_public_routes_and_preflights_still_work(prefix):
     with TestClient(mount_app(make_app(), prefix)) as client:
         response = client.post(
-            f"{prefix}/sessions", headers={"Authorization": f"Bearer {TOKEN}"}, json={"schedule_yaml": "\x01" * 32}
+            f"{prefix}/v1/sessions",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"schedule_spec_yaml": "\x01" * 32},
         )
         assert response.status_code == 201
         assert client.get(f"{prefix}/health").status_code == 200
         assert (
             client.options(
-                f"{prefix}/sessions",
+                f"{prefix}/v1/sessions",
                 headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "POST"},
             ).status_code
             == 200
@@ -186,7 +188,7 @@ def test_uploads_use_the_attachment_budget_above_the_json_limit(prefix, declared
         headers.append((b"content-length", str(len(body)).encode()))
 
     status, received = request(
-        mount_app(app, prefix), [(body, False)], headers, f"{prefix}/sessions/{session_id}/uploads"
+        mount_app(app, prefix), [(body, False)], headers, f"{prefix}/v1/sessions/{session_id}/uploads"
     )
 
     assert status == 201

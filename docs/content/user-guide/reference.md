@@ -4,7 +4,7 @@
 
 | Screen | Use it for | Needed for a basic run |
 | --- | --- | --- |
-| [Home](../index.md) | Start or reset a schedule and view the app build | Once |
+| [Home](../index.md) | Start or reset a Schedule Spec and view the app build | Once |
 | [Dates](dates.md) | Set the scheduling period and date groups | Yes |
 | [People](people.md) | Manage people and reusable groups | Yes |
 | [Shift Types](shift-types.md) | Manage working shifts and groups | Yes |
@@ -32,7 +32,7 @@
 
 Shortcuts are ignored while typing in a field. There, undo and redo shortcuts
 change only the text. The **Undo** and **Redo** buttons at the right end of the
-tab bar always change the schedule.
+tab bar always change the Schedule Spec.
 
 | Key | Action |
 | --- | --- |

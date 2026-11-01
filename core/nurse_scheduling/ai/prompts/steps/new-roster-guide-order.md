@@ -5,6 +5,6 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <!-- This file is mostly AI generated. -->
 
-When building a new roster, read `/reference/user-guide/build-a-real-schedule.md` first.
-For an empty schedule, this guide read comes before any holiday-calendar question. Creating the first
+When building a new Schedule Spec, read `/reference/user-guide/build-a-real-schedule.md` first.
+For an empty Schedule Spec, this guide read comes before any holiday-calendar question. Creating the first
 date range is not an expansion of an existing range.

@@ -67,8 +67,8 @@ def test_context_tokens_and_costs_update_before_the_stream_finishes():
 
     app = basic.create_test_app(settings=basic.make_settings(), provider=Provider())
     with basic.AuthenticatedTestClient(app) as client:
-        session = basic.create_session(client, basic.schedule_yaml())
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Question"})
+        session = basic.create_session(client, basic.schedule_spec_yaml())
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Question"})
     events = basic.parse_sse(response.text)
     last_delta = max(index for index, (kind, _) in enumerate(events) if kind == "delta")
     progress = [data for kind, data in events[:last_delta] if kind == "context_usage" and "used_tokens" in data]
@@ -198,7 +198,7 @@ def test_session_aggregates_calls_across_turns_without_replay_charges(monkeypatc
     app = basic.create_test_app(settings=basic.make_settings(), provider=None)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        path = f"/sessions/{session}/messages"
+        path = f"/v1/sessions/{session}/messages"
         first = {"message": "First", "message_id": "one"}
         assert client.post(path, json=first).status_code == 200
         assert client.post(path, json=first).status_code == 202
@@ -224,7 +224,7 @@ def test_cancelled_run_reports_unknown_cost_instead_of_free():
     app = basic.create_test_app(settings=basic.make_settings(), provider=WaitingProvider())
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        result = client.post(f"/sessions/{session}/messages", json={"message": "Wait"})
+        result = client.post(f"/v1/sessions/{session}/messages", json={"message": "Wait"})
         summary = [data for kind, data in basic.parse_sse(result.text) if kind == "cost_summary"][-1]
         assert {key: value for key, value in summary["conversation"].items() if key != "version"} == {
             "usd": "0",
@@ -277,14 +277,14 @@ def test_stop_during_cost_checkpoint_preserves_reported_prices(monkeypatch, post
                 transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            created = await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
             session_id = created.json()["id"]
             response = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "one"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question", "message_id": "one"})
             )
             try:
                 await asyncio.wait_for(started.wait(), timeout=1)
-                stopped = await client.post(f"/sessions/{session_id}/stop", json={"message_id": "one"})
+                stopped = await client.post(f"/v1/sessions/{session_id}/stop", json={"message_id": "one"})
                 assert stopped.status_code == 202
             finally:
                 release.set()
@@ -350,10 +350,10 @@ def test_reset_during_cost_checkpoint_keeps_the_cost_publication_version(monkeyp
                 transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            created = await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
             session_id = created.json()["id"]
             response = asyncio.create_task(
-                client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+                client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
             )
             await asyncio.wait_for(started.wait(), timeout=1)
             session = app.state.session_store.get(session_id)
@@ -451,7 +451,7 @@ def test_tool_follow_up_calls_contribute_to_the_same_turn_total():
     provider = basic.ScriptedToolProvider(
         [
             ProviderCall("first", "model", "reported", "0.1", TokenUsage(10, 10, 20), streaming_seconds=1),
-            ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule.yaml"}'),)),
+            ToolCallRequest((ToolCall("read", "read", '{"path":"/workspace/schedule-spec.yaml"}'),)),
         ],
         [
             ProviderCall("second", "model", "reported", "0.2", TokenUsage(10, 90, 100), streaming_seconds=3),
@@ -461,7 +461,7 @@ def test_tool_follow_up_calls_contribute_to_the_same_turn_total():
     app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Read schedule"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Read schedule"})
         summary = [data for kind, data in basic.parse_sse(response.text) if kind == "cost_summary"][-1]
         assert summary["run"] == {
             "usd": "0.3",
@@ -496,7 +496,7 @@ def test_cost_checkpoint_failure_preserves_attempt_counts_and_saved_totals(
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Question"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Question"})
         events = basic.parse_sse(response.text)
         if failed_status == "pending":
             assert events[-1][0] == "error"
@@ -556,7 +556,7 @@ def test_provider_times_only_generated_output_between_first_and_last_chunk(monke
                     }
                 ]
             },
-            {"tool_calls": [{"index": 0, "function": {"arguments": '"/workspace/schedule.yaml"}'}}]},
+            {"tool_calls": [{"index": 0, "function": {"arguments": '"/workspace/schedule-spec.yaml"}'}}]},
         ]
     else:
         key = "content" if kind == "text" else "reasoning_content"
@@ -693,7 +693,7 @@ def test_session_keeps_run_speed_separate_from_conversation_speed_and_replays():
     app = basic.create_test_app(settings=basic.make_settings(), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        path = f"/sessions/{session}/messages"
+        path = f"/v1/sessions/{session}/messages"
         first = {"message": "First", "message_id": "one"}
         client.post(path, json=first)
         assert client.post(path, json=first).status_code == 202

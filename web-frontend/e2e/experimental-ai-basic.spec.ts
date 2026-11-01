@@ -29,7 +29,7 @@ const FRONTEND_TIMEZONE = 'America/Los_Angeles';
 test.use({ timezoneId: FRONTEND_TIMEZONE });
 
 interface CapturedRequests {
-  scheduleYaml: string;
+  scheduleSpecYaml: string;
   frontendTimezone: string;
   messageBody: string;
   messageBodies: string[];
@@ -85,12 +85,12 @@ async function startCancelableAiBackend(retainUploads = false) {
       }));
       return;
     }
-    if (request.url === '/ai/sessions') {
+    if (request.url === '/ai/v1/sessions') {
       response.writeHead(201, { ...headers, 'Content-Type': 'application/json' })
         .end(JSON.stringify({ id: 'cancel-session' }));
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/events') {
+    if (request.url === '/ai/v1/sessions/cancel-session/events') {
       eventResponse = response;
       response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
       response.flushHeaders();
@@ -103,7 +103,7 @@ async function startCancelableAiBackend(retainUploads = false) {
       return;
     }
     const uploadUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
-    if (uploadUrl.pathname === '/ai/sessions/cancel-session/uploads') {
+    if (uploadUrl.pathname === '/ai/v1/sessions/cancel-session/uploads') {
       if (request.method === 'POST') {
         hasUpload = retainUploads;
         uploadId = uploadUrl.searchParams.get('upload_id')!;
@@ -113,13 +113,13 @@ async function startCancelableAiBackend(retainUploads = false) {
       ));
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/messages') {
+    if (request.url === '/ai/v1/sessions/cancel-session/messages') {
       response.writeHead(202, { ...headers, 'Content-Type': 'application/json' }).end(JSON.stringify({ run_id: 'cancel-run' }));
       publish('run_start', { trigger: 'user' });
       publish('tool_start', { name: 'bash', tool_call_id: 'call', arguments: JSON.stringify({ command: 'sleep 30' }) });
       return;
     }
-    if (request.url === '/ai/sessions/cancel-session/stop' && request.method === 'POST') {
+    if (request.url === '/ai/v1/sessions/cancel-session/stop' && request.method === 'POST') {
       stopped = true;
       response.writeHead(202, headers).end();
       publish('stopped', {});
@@ -164,7 +164,7 @@ async function mockAiBackend(
   finishTurn: () => void;
 }> {
   const captured = {
-    scheduleYaml: '',
+    scheduleSpecYaml: '',
     frontendTimezone: '',
     messageBody: '',
     messageBodies: [] as string[],
@@ -240,10 +240,10 @@ async function mockAiBackend(
       });
       return;
     }
-    if (request.url().endsWith('/sessions')) {
-      const body = request.postDataJSON() as { schedule_yaml: string; frontend_timezone: string; selection?: typeof currentSelection };
+    if (request.url().endsWith('/v1/sessions')) {
+      const body = request.postDataJSON() as { schedule_spec_yaml: string; frontend_timezone: string; selection?: typeof currentSelection };
       currentSelection = body.selection ?? currentSelection;
-      captured.scheduleYaml = body.schedule_yaml;
+      captured.scheduleSpecYaml = body.schedule_spec_yaml;
       captured.frontendTimezone = body.frontend_timezone;
       await route.fulfill({
         status: 201,
@@ -253,7 +253,7 @@ async function mockAiBackend(
       });
       return;
     }
-    if (request.url().endsWith('/sessions/browser-session/model-selection')) {
+    if (request.url().endsWith('/v1/sessions/browser-session/model-selection')) {
       if (request.method() === 'PUT') {
         currentSelection = request.postDataJSON() as typeof currentSelection;
         captured.modelSelections.push(currentSelection);
@@ -263,17 +263,17 @@ async function mockAiBackend(
         body: JSON.stringify({ ...currentSelection, locked: captured.messageBodies.length > 0 }) });
       return;
     }
-    if (request.url().endsWith('/sessions/browser-session/messages/queue')) {
+    if (request.url().endsWith('/v1/sessions/browser-session/messages/queue')) {
       await route.fulfill({ status: 202, headers: corsHeaders });
       return;
     }
-    if (request.url().endsWith('/sessions/browser-session/events')) {
+    if (request.url().endsWith('/v1/sessions/browser-session/events')) {
       const cursor = Number(request.headers()['last-event-id'] ?? 0);
       if (journal.length <= cursor) await new Promise<void>(resolve => { wakeReader = resolve; });
       await route.fulfill({ status: 200, contentType: 'text/event-stream', headers: corsHeaders, body: journal.slice(cursor).join('') });
       return;
     }
-    if (request.url().endsWith('/sessions/browser-session') && request.method() === 'GET') {
+    if (request.url().endsWith('/v1/sessions/browser-session') && request.method() === 'GET') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -283,7 +283,7 @@ async function mockAiBackend(
       return;
     }
 
-    if (new URL(request.url()).pathname.endsWith('/sessions/browser-session/uploads') && request.method() === 'POST') {
+    if (new URL(request.url()).pathname.endsWith('/v1/sessions/browser-session/uploads') && request.method() === 'POST') {
       const uploadBody = request.postDataBuffer()?.toString('latin1') ?? '';
       captured.uploadBody += uploadBody;
       captured.uploadContentType = request.headers()['content-type'] ?? '';
@@ -301,7 +301,7 @@ async function mockAiBackend(
       return;
     }
 
-    if (request.url().endsWith('/sessions/browser-session/compact')) {
+    if (request.url().endsWith('/v1/sessions/browser-session/compact')) {
       publish('run_start', { run_id: 'manual-summary', trigger: 'compaction' });
       publish('compaction_start', { run_id: 'manual-summary', reason: 'manual', tokens_before: 8000 });
       await route.fulfill({ status: 202, contentType: 'application/json', headers: corsHeaders,
@@ -376,7 +376,7 @@ for (const clearPending of [false, true]) {
       };
     });
     await page.goto('/experimental-ai');
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Keep this chat.');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Keep this chat.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const transcript = page.getByRole('region', { name: 'Chat messages' });
     await expect(transcript.getByText('Recovered answer.')).toBeVisible();
@@ -434,7 +434,7 @@ test('submits a long question without a character limit', async ({ page }) => {
     file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
   } }));
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await expect(input).not.toHaveAttribute('maxlength');
   const question = 'x'.repeat(300000);
@@ -451,7 +451,7 @@ test('converts rich clipboard text to Markdown before sending', async ({ page, c
   const captured = await mockAiBackend(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.fill('Please replace this.');
   await input.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(7, 19));
@@ -497,7 +497,7 @@ for (const { label, html, text } of [
     const captured = await mockAiBackend(page);
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await page.goto('/experimental-ai');
-    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await expect(input).toBeEnabled();
     await page.evaluate(async ({ html, text }) => {
       await navigator.clipboard.write([new ClipboardItem({
@@ -521,7 +521,7 @@ test('keeps formatted paste in native text undo history', async ({ page, context
   await mockAiBackend(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.fill('Keep this sentence.');
   await page.evaluate(async () => {
@@ -539,11 +539,11 @@ test('keeps formatted paste in native text undo history', async ({ page, context
   await expect(input).toHaveValue('**New text**');
 });
 
-test('asks about the current schedule and renders a streamed answer', async ({ page }) => {
+test('asks about the current Schedule Spec and renders a streamed answer', async ({ page }) => {
   const captured = await mockAiBackend(page);
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Who works first?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
@@ -561,7 +561,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   expect(Math.abs(composerBox!.y + composerBox!.height - viewport!.height)).toBeLessThanOrEqual(2);
   await expect(page.getByRole('contentinfo')).toHaveCount(0);
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Who works first?', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
-  expect(captured.scheduleYaml).toContain('apiVersion:');
+  expect(captured.scheduleSpecYaml).toContain('apiVersion:');
   expect(captured.frontendTimezone).toBe(FRONTEND_TIMEZONE);
 
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
@@ -570,7 +570,7 @@ test('asks about the current schedule and renders a streamed answer', async ({ p
   await page.getByRole('button', { name: '12. Experimental AI' }).click();
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
 
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check next week.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Check next week.');
   page.once('dialog', async dialog => {
     expect(dialog.message()).toBe('You have unsaved edits. Leave this page without saving?');
     await dialog.dismiss();
@@ -595,14 +595,14 @@ for (const submission of ['Enter', 'button'] as const) {
     let allowSelectionRead!: () => void;
     const selectionReady = new Promise<void>(resolve => { allowSelectionRead = resolve; });
     let selectionReadStarted = false;
-    await page.route('**/sessions/browser-session/model-selection', async route => {
+    await page.route('**/v1/sessions/browser-session/model-selection', async route => {
       selectionReadStarted = true;
       await selectionReady;
       await route.fallback();
     });
     await page.goto('/experimental-ai');
     await expect(page.getByLabel('AI model')).toBeEnabled();
-    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await input.fill('First question');
     if (submission === 'Enter') await page.keyboard.press('Enter');
     else await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -645,7 +645,7 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
   const captured = await mockAiBackend(page, []);
   captured.holdNextTurn();
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Explain the current schedule.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Explain the current Schedule Spec.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   const footer = page.locator('main form p[aria-live="polite"]');
@@ -673,7 +673,7 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
 test('compacts context on demand and restores the summary after reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Earlier answer.']);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Keep the night constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
@@ -731,7 +731,7 @@ test('shows character progress while preparing tools and preserves completed cou
   ]);
   captured.holdNextTurn();
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Inspect the ward.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Inspect the ward.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Preparing tool calls · 3 characters', { exact: true })).toBeVisible();
   captured.publishEvent('generation_progress', { run_id: 'answer-1', kind: 'tool_calls', characters: 8, step: 1 });
@@ -768,19 +768,19 @@ test('can stop manual compaction while admission waits before run_start', async 
   const admission = new Promise<void>(resolve => { accept = resolve; });
   let compactionMessageId: string | undefined;
   let stoppedMessageId: string | undefined;
-  await page.route('**/sessions/browser-session/compact', async route => {
+  await page.route('**/v1/sessions/browser-session/compact', async route => {
     compactionMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
     await admission;
     await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ run_id: 'delayed-summary' }) });
   });
-  await page.route('**/sessions/browser-session/stop', async route => {
+  await page.route('**/v1/sessions/browser-session/stop', async route => {
     stoppedMessageId = (route.request().postDataJSON() as { message_id: string }).message_id;
     captured.publishEvent('stopped', { run_id: 'delayed-summary' });
     accept();
     await route.fulfill({ status: 202, body: '{}' });
   });
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Keep the night constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Earlier answer.', { exact: true })).toBeVisible();
@@ -800,7 +800,7 @@ test('can stop manual compaction while admission waits before run_start', async 
 test('keeps short context with a manual request notice instead of a compaction failure', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Hello.']);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Hi');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Hello.', { exact: true })).toBeVisible();
@@ -836,7 +836,7 @@ for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['e
       false, undefined, [], true, trigger === 'user' ? events : []);
     if (trigger === 'user') captured.holdNextTurn();
     await page.goto('/experimental-ai');
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the constraints.');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue with the constraints.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const runId = trigger === 'user' ? 'answer-1' : 'optimizer-review';
     const optimizerInputText = 'The optimizer finished. Review its schedule.';
@@ -879,7 +879,7 @@ test('shows compaction status and the reduced context before an answer', async (
   ]);
   captured.holdNextTurn();
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue with the current constraints.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue with the current constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
   await expect(page.getByText('Thinking…', { exact: true })).toBeHidden();
@@ -913,7 +913,7 @@ test('shows compaction status and the reduced context before an answer', async (
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {
   await mockAiBackend(page, ['Done.'], false, undefined, [], false);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Question');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const usage = page.getByText('Context unavailable');
   await expect(usage).toBeVisible();
@@ -923,7 +923,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
 test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {
   await mockAiBackend(page, [Array.from({ length: 80 }, (_, i) => `Chat line ${i + 1}.`).join('\n\n')]);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Show details.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Show details.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Chat line 80.', { exact: true })).toBeVisible();
 
@@ -951,7 +951,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
   );
 
   await page.goto('/experimental-ai');
-  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const composer = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(page.getByRole('button', { name: 'Enter token for AI assistant' })).toBeVisible();
   await expect(composer).toBeEnabled();
   await composer.fill('Draft before authentication');
@@ -969,6 +969,10 @@ test('authenticates AI session requests with an explicitly remembered token', as
   const tokenStatus = await page.getByText('Token saved on this device').boundingBox();
   const versionsBox = await versions.boundingBox();
   expect(versionsBox!.y).toBeGreaterThan(tokenStatus!.y + tokenStatus!.height);
+  const privacyBox = await page.getByRole('link', { name: 'Privacy Policy', exact: true }).boundingBox();
+  const optionsBox = await page.getByRole('checkbox', { name: 'Show reasoning' }).boundingBox();
+  expect(privacyBox!.y).toBeGreaterThan(versionsBox!.y + versionsBox!.height);
+  expect(optionsBox!.y).toBeGreaterThan(privacyBox!.y + privacyBox!.height);
 
   await expect(composer).toBeEnabled();
   await composer.fill('Use the protected service.');
@@ -990,7 +994,7 @@ test('continues a failed text run with a new message and keeps its provisional a
   );
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Who works first?');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Who works first?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Provisional response.')).toBeVisible();
@@ -1006,7 +1010,7 @@ test('continues a failed text run with a new message and keeps its provisional a
   await expect(page.getByText('{"command":"sleep 30"}', { exact: true })).toBeVisible();
   await page.screenshot({ path: '../artifacts/interrupted-context.png', fullPage: true });
   await expect(page.getByRole('button', { name: /retry/i })).toHaveCount(0);
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('Recovered response.')).toBeVisible();
@@ -1033,7 +1037,7 @@ test('Stop cancels the run while keeping the session stream open', async ({ page
 
   try {
     await page.goto('/experimental-ai');
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Wait for this command.');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Wait for this command.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
 
     await expect(page.getByText('bash · running')).toBeVisible();
@@ -1061,14 +1065,14 @@ test('downloads a completed background optimization from chat', async ({ page })
     { type: 'optimization', data: { job_id: 'opt-browser', state: 'running', terminal: false, downloadable: false } },
     { type: 'optimization', data: completedRun },
   ]);
-  await page.route('**/ai/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
+  await page.route('**/ai/v1/sessions/browser-session/optimizations/opt-browser/xlsx', route => route.fulfill({
     status: 200,
     contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     body: workbookBytes,
   }));
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const summary = page.locator('article').filter({ hasText: 'Optimization finished.' });
   await expect(summary).toContainText('Outcome: optimal');
@@ -1084,7 +1088,7 @@ test('downloads a completed background optimization from chat', async ({ page })
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   }
   await page.setViewportSize({ width: 1280, height: 720 });
-  const downloadButton = page.getByRole('button', { name: 'Download result' });
+  const downloadButton = page.getByRole('button', { name: 'Download schedule' });
   await expect(downloadButton).toBeVisible();
   const downloadEvent = page.waitForEvent('download');
   await downloadButton.click();
@@ -1105,7 +1109,7 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
     };
     const backend = await mockAiBackend(page, ['Optimization started.'], false, 'finish-token', [{ type: 'optimization', data: running }]);
     let requests = 0;
-    await page.route('**/ai/sessions/*/optimizations/opt-finish/finish-now', async route => {
+    await page.route('**/ai/v1/sessions/*/optimizations/opt-finish/finish-now', async route => {
       expect(route.request().method()).toBe('POST');
       expect(route.request().headers().authorization).toBe('Bearer finish-token');
       requests += 1;
@@ -1121,7 +1125,7 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
     await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('finish-token');
     await page.getByRole('checkbox', { name: /remember on this device/i }).check();
     await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize this.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const finish = page.getByRole('button', { name: 'Finish now', exact: true });
     await expect(finish).toBeEnabled();
@@ -1174,7 +1178,7 @@ test('cancels the background optimizer from its status box without asking the ag
     type: 'optimization', data: { job_id: 'opt-cancel', state: 'running', terminal: false, downloadable: false },
   }]);
   let cancellations = 0;
-  await page.route('**/ai/sessions/*/optimizations/opt-cancel/cancel', async route => {
+  await page.route('**/ai/v1/sessions/*/optimizations/opt-cancel/cancel', async route => {
     expect(route.request().method()).toBe('POST');
     cancellations += 1;
     backend.publishEvent('optimization', {
@@ -1183,7 +1187,7 @@ test('cancels the background optimizer from its status box without asking the ag
     await route.fulfill({ status: 202 });
   });
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize this.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
   await expect.poll(() => backend.hasWaitingReader()).toBe(true);
@@ -1191,7 +1195,7 @@ test('cancels the background optimizer from its status box without asking the ag
 
   await expect(page.getByRole('button', { name: /Cancel.*optimizer/i })).toHaveCount(0);
   await expect(page.getByText('Optimization ended with status: cancelled.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   expect(cancellations).toBe(1);
   expect(backend.messageBodies).toHaveLength(1);
 });
@@ -1199,7 +1203,7 @@ test('cancels the background optimizer from its status box without asking the ag
 test('keeps an empty background reply failure visible after another message and reload', async ({ page }) => {
   const backend = await mockAiBackend(page, ['Optimization started.']);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize this.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize this.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
   await expect.poll(() => backend.hasWaitingReader()).toBe(true);
@@ -1215,7 +1219,7 @@ test('keeps an empty background reply failure visible after another message and 
   const failedReply = page.locator('article').filter({ hasText: reason });
   await expect(failedReply).toHaveCount(1);
   await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
   await expect(failedReply.getByText(reason, { exact: true })).toBeVisible();
@@ -1233,7 +1237,7 @@ test('keeps multiline optimizer errors in one field in chat', async ({ page }) =
     },
   }]);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Optimize it.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const summary = page.locator('article').filter({ hasText: 'Optimization ended with status: failed.' });
   await expect(summary.locator('dt', { hasText: /^Error:$/ })).toHaveCount(1);
@@ -1252,7 +1256,7 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
   );
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Summarize coverage.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Summarize coverage.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByRole('heading', { level: 2, name: 'Coverage' })).toBeVisible();
@@ -1279,11 +1283,11 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
   await mockAiBackend(page, [longAnswer]);
 
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Give detailed coverage.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Give detailed coverage.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   const messages = page.getByRole('region', { name: 'Chat messages' });
-  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const composer = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(messages.getByText('Coverage detail 80')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true);
   await expect(composer).toBeInViewport();
@@ -1319,7 +1323,7 @@ test('previews and sends an image attachment', async ({ page }) => {
   await page.goto('/experimental-ai');
   await page.getByLabel('Attach files').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
   await expect(page.getByAltText('Preview of ward.png')).toBeVisible();
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('What is shown?');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('What is shown?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
@@ -1351,7 +1355,7 @@ test('uploads one file per request before sending the question', async ({ page }
   await page.getByLabel('Attach files').setInputFiles(
     ['one.txt', 'two.txt', 'three.txt'].map(name => ({ name, mimeType: 'text/plain', buffer: Buffer.from('abc') })),
   );
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read these files.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Read these files.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByLabel('Chat messages').getByText('The image and schedule were received.')).toBeVisible();
   expect(captured.uploadBatches).toEqual([['one.txt'], ['two.txt'], ['three.txt']]);
@@ -1383,7 +1387,7 @@ test('previews and sends arbitrary file attachments', async ({ page }) => {
   await expect(page.getByText('csv', { exact: true })).toBeVisible();
   await expect(page.getByText('pdf', { exact: true })).toBeVisible();
   await expect(page.getByText('custom', { exact: true })).toBeVisible();
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Check the documents.');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Check the documents.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
@@ -1408,7 +1412,7 @@ test('downloads and removes generated files through the ZIP controls', async ({ 
     { type: 'download', data: { download_id: 'zip-run' } },
   ]);
   let removed = false;
-  await page.route('**/ai/sessions/*/downloads/zip-run', route => {
+  await page.route('**/ai/v1/sessions/*/downloads/zip-run', route => {
     if (route.request().method() === 'DELETE') {
       removed = true;
       return route.fulfill({ status: 204 });
@@ -1416,7 +1420,7 @@ test('downloads and removes generated files through the ZIP controls', async ({ 
     return route.fulfill({ contentType: 'application/zip', body: Buffer.from('captured ZIP bytes') });
   });
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Create a downloadable CSV');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Create a downloadable CSV');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const pendingDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download files (ZIP)' }).click();
@@ -1444,7 +1448,7 @@ test('shows retained uploads while the assistant response is still running', asy
     await page.getByLabel('Attach files').setInputFiles({
       name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n'),
     });
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Read this file');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const panel = page.getByRole('complementary', { name: 'Session files' });
     await expect(panel.getByRole('button', { name: 'Remove ward.csv' })).toBeVisible();
@@ -1466,7 +1470,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     contentType: 'application/json',
     body: JSON.stringify({ auth: { required: true, scheme: 'bearer' }, file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200_000_000 } }),
   }));
-  await page.route(/\/ai\/sessions\/[^/]+\/uploads(?:\?.*)?$/, route => {
+  await page.route(/\/ai\/v1\/sessions\/[^/]+\/uploads(?:\?.*)?$/, route => {
     if (route.request().method() === 'POST') {
       retained = true;
       uploadId = new URL(route.request().url()).searchParams.get('upload_id')!;
@@ -1475,7 +1479,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
       contentType: 'application/json', body: JSON.stringify(retained ? [{ id: uploadId, filename: 'ward.csv', media_type: 'text/csv', bytes: 26 }] : []),
     });
   });
-  await page.route('**/ai/sessions/*/uploads/*', route => {
+  await page.route('**/ai/v1/sessions/*/uploads/*', route => {
     expect(route.request().method()).toBe('DELETE');
     expect(route.request().url()).toContain(`/uploads/${uploadId}`);
     retained = false;
@@ -1487,7 +1491,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('browser-ai-auth-token');
   await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
   await page.getByLabel('Attach files').setInputFiles({ name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n') });
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Read this file');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Read this file');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Workbook inspected.')).toBeVisible();
   expect(JSON.parse(captured.messageBody)).toEqual({ message: 'Read this file', message_id: expect.any(String), frontend_version: expect.any(String), frontend_timezone: FRONTEND_TIMEZONE });
@@ -1502,7 +1506,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     const fixedPanel = (await panel.boundingBox())!;
     for (const box of [
       (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!,
-      (await page.locator('form', { has: page.getByRole('textbox', { name: 'Ask about the current schedule' }) }).boundingBox())!,
+      (await page.locator('form', { has: page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) }).boundingBox())!,
     ]) {
       expect(Math.abs(box.x + box.width / 2 - pageCenter)).toBeLessThanOrEqual(2);
       expect(box.x + box.width).toBeLessThanOrEqual(fixedPanel.x);
@@ -1568,16 +1572,16 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         return;
       }
       // Hosted deployments require the token on every session request, including reload recovery.
-      if (request.url?.startsWith('/ai/sessions') && request.headers.authorization !== `Bearer ${authToken}`) {
+      if (request.url?.startsWith('/ai/v1/sessions') && request.headers.authorization !== `Bearer ${authToken}`) {
         unauthorized += 1;
         request.resume();
         json({ detail: 'Backend credentials are invalid.' }, 401);
         return;
       }
-      if (request.url === '/ai/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
-      if (request.url === '/ai/sessions/replay-session') { json({ expires_in_seconds: 2592000 }); return; }
-      if (request.url === '/ai/sessions/replay-session/uploads') { json([]); return; }
-      if (request.url === '/ai/sessions/replay-session/events') {
+      if (request.url === '/ai/v1/sessions' && request.method === 'POST') { request.resume(); json({ id: 'replay-session' }, 201); return; }
+      if (request.url === '/ai/v1/sessions/replay-session') { json({ expires_in_seconds: 2592000 }); return; }
+      if (request.url === '/ai/v1/sessions/replay-session/uploads') { json([]); return; }
+      if (request.url === '/ai/v1/sessions/replay-session/events') {
         const cursor = Number(request.headers['last-event-id'] ?? 0);
         cursors.push(cursor);
         response.writeHead(200, { ...headers, 'Cache-Control': 'no-cache', 'Content-Type': 'text/event-stream' });
@@ -1587,7 +1591,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         response.on('close', () => { readers.delete(response); closedReaders += 1; });
         return;
       }
-      if (request.url === '/ai/sessions/replay-session/messages') {
+      if (request.url === '/ai/v1/sessions/replay-session/messages') {
         let body = '';
         try { for await (const chunk of request) body += chunk; } catch { return; }
         const sent = JSON.parse(body) as { message_id: string };
@@ -1612,7 +1616,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
       await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
       await page.getByRole('checkbox', { name: /remember on this device/i }).check();
       await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
-      await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Continue while disconnected');
+      await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue while disconnected');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(page.getByText('First part and', { exact: true })).toBeVisible();
       await expect.poll(() => messageIds.length).toBe(2);
@@ -1667,15 +1671,25 @@ test('keeps phone chat readable and the growing composer clear of the last reply
   await page.setViewportSize({ width: 360, height: 740 });
   await mockAiBackend(page, ['Final reply for phone layout.']);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   const composer = page.getByRole('form', { name: 'Message composer' });
   expect((await composer.boundingBox())!.width).toBeGreaterThanOrEqual(328);
-  await expect(page.getByText('All AI chats are logged', { exact: false })).toBeVisible();
-  // The mocked backend version differs from the build, so the collapsed panel opens to show the warning.
+  const versions = page.getByRole('group', { name: 'AI versions' });
+  const privacy = page.getByRole('link', { name: 'Privacy Policy', exact: true });
+  const settings = page.getByRole('button', { name: 'Chat details and settings', exact: true });
+  await expect(privacy).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Request beta access' })).toBeVisible();
+  await expect(page.getByText('When a response finishes', { exact: false })).toHaveCount(0);
   await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Chat details and settings', exact: true }).click();
-  await expect(page.getByRole('group', { name: 'AI versions' })).not.toBeVisible();
+  await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  expect((await versions.boundingBox())!.y).toBeLessThan((await privacy.boundingBox())!.y);
+  expect((await privacy.boundingBox())!.y).toBeLessThan((await settings.boundingBox())!.y);
+  await settings.click();
+  await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).toBeVisible();
+  await settings.click();
+  await expect(page.getByRole('checkbox', { name: 'Show reasoning' })).not.toBeVisible();
+  await expect(versions).toBeVisible();
   await input.fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const reply = page.getByText('Final reply for phone layout.', { exact: true });
@@ -1700,10 +1714,15 @@ test.describe('phone chat keyboard', () => {
   test('inserts a newline with Enter and sends with the button', async ({ page }) => {
     const requests = await mockAiBackend(page, ['Phone reply.']);
     await page.goto('/experimental-ai');
-    const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await expect(input).toBeEnabled();
     // Phone keyboards provide dictation, so the page omits its own microphone.
     await expect(page.getByRole('button', { name: 'Start dictation' })).toBeHidden();
+    await expect(page.getByRole('link', { name: 'Privacy Policy', exact: true })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'AI versions' })).toBeVisible();
+    await expect(page.getByText('Frontend and backend versions do not match', { exact: false })).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: '../artifacts/ai-chat-setup-phone.png' });
     await input.fill('First line');
     await input.press('End');
     await input.press('Enter');
@@ -1726,7 +1745,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
   });
   await mockAiBackend(page);
   await page.goto('/experimental-ai');
-  const input = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.focus();
   const composer = page.getByRole('form', { name: 'Message composer' });
@@ -1761,7 +1780,7 @@ test('locks the model and changes reasoning during streaming for future runs and
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
   await expect(page.getByLabel('Reasoning', { exact: true }).locator('option')).toHaveText(['Off', 'High']);
   await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Selected model answered.')).toBeVisible();
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
@@ -1775,8 +1794,8 @@ test('locks the model and changes reasoning during streaming for future runs and
   await page.screenshot({ path: '../artifacts/model-locked.png', fullPage: true });
   expect(JSON.parse(captured.messageBodies[0]).selection).toEqual({ model: 'deep', reasoning: 'high' });
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Next question');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).press('Enter');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Next question');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).press('Enter');
   await expect(page.getByText('Queued for steering')).toBeVisible();
   captured.finishTurn();
   await expect.poll(() => captured.messageBodies.length).toBe(2);
@@ -1797,7 +1816,7 @@ test('keeps the model editable until the server accepts a message', async ({ pag
     ],
   });
   let rejected = false;
-  await page.route('**/ai/sessions/browser-session/messages', async route => {
+  await page.route('**/ai/v1/sessions/browser-session/messages', async route => {
     if (rejected || route.request().method() !== 'POST') return route.fallback();
     rejected = true;
     await route.fulfill({
@@ -1807,7 +1826,7 @@ test('keeps the model editable until the server accepts a message', async ({ pag
     });
   });
   await page.goto('/experimental-ai');
-  const composer = page.getByRole('textbox', { name: 'Ask about the current schedule' });
+  const composer = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await composer.fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('The AI service is busy. Try again later.').first()).toBeVisible();
@@ -1833,7 +1852,7 @@ test('follows the saved model lock after a question stops before its run starts'
     ],
   });
   let accepted = false;
-  await page.route('**/ai/sessions/browser-session/messages', async route => {
+  await page.route('**/ai/v1/sessions/browser-session/messages', async route => {
     if (accepted || route.request().method() !== 'POST') return route.fallback();
     accepted = true;
     // The server accepted the question, but Stop arrived before its run started, so the model stays unlocked.
@@ -1845,7 +1864,7 @@ test('follows the saved model lock after a question stops before its run starts'
     });
   });
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('First question');
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Stopped before completion.')).toBeVisible();
   await expect(page.getByLabel('AI model')).toBeEnabled();
@@ -1869,7 +1888,7 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
         run: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } } } },
     ]);
     await page.goto('/experimental-ai');
-    await page.getByRole('textbox', { name: 'Ask about the current schedule' }).fill('Cost question');
+    await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Cost question');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
     const conversationCost = page.getByText(`Est. cost: ${display}`, { exact: true });

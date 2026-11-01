@@ -1479,13 +1479,13 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
                         "index": 0,
                         "id": "read",
                         "type": "function",
-                        "function": {"name": "read", "arguments": '{"path":"/workspace/schedule.yaml"}'},
+                        "function": {"name": "read", "arguments": '{"path":"/workspace/schedule-spec.yaml"}'},
                     }
                 ]
             }
             reason = "tool_calls"
         else:
-            delta = {"content": "Goal: inspect the current schedule." if summary else "Done."}
+            delta = {"content": "Goal: inspect the current Schedule Spec." if summary else "Done."}
             reason = "stop"
         return httpx.Response(
             200,
@@ -1503,11 +1503,11 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
     settings = basic.make_settings(max_history_messages=1000, compaction_keep_recent_tokens=1000)
     app = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=FakeOptimizerBackend())
     with basic.AuthenticatedTestClient(app) as client:
-        first = basic.create_session(client, basic.schedule_yaml())
-        second = basic.create_session(client, basic.schedule_yaml())
+        first = basic.create_session(client, basic.schedule_spec_yaml())
+        second = basic.create_session(client, basic.schedule_spec_yaml())
         for session_id, question in [(first, "Inspect schedule"), (first, "Follow up"), (second, "New chat")]:
             expected_session = session_id
-            response = client.post(f"/sessions/{session_id}/messages", json={"message": question})
+            response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": question})
             assert basic.parse_sse(response.text)[-1][0] == "done"
         store = app.state.session_store
         session = store._sessions[first]
@@ -1519,7 +1519,7 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
             snapshot=snapshot,
         )
         expected_session = first
-        response = client.post(f"/sessions/{first}/messages", json={"message": "Continue"})
+        response = client.post(f"/v1/sessions/{first}/messages", json={"message": "Continue"})
         events = basic.parse_sse(response.text)
         assert events[-1][0] == "done"
         assert any(kind == "context_usage" and data.get("max_tokens") == 32000 for kind, data in events)
@@ -1531,7 +1531,7 @@ def test_chat_uuid_reaches_tools_compaction_and_runs_after_restore(monkeypatch):
     with basic.AuthenticatedTestClient(restarted) as client:
         client.cookies.set(basic.OWNER_COOKIE, owner)
         expected_session = first
-        response = client.post(f"/sessions/{first}/messages", json={"message": "After restart"})
+        response = client.post(f"/v1/sessions/{first}/messages", json={"message": "After restart"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
     assert len(captured) >= 7
     assert any(summary for _, _, summary, _ in captured)

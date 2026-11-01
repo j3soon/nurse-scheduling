@@ -19,11 +19,11 @@
 
 # This test is mostly AI generated.
 
-from nurse_scheduling.anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
+from nurse_scheduling.anonymize_schedule_spec import anonymize_schedule_spec_in_yaml
 from nurse_scheduling.loader import _load_yaml
 
 
-def test_anonymize_scheduling_data_in_yaml_updates_people_references_and_removes_descriptions():
+def test_anonymize_schedule_spec_in_yaml_updates_people_references_and_removes_descriptions():
     content = b"""\
 apiVersion: alpha
 description: Sensitive schedule
@@ -62,7 +62,7 @@ export:
       countPeople: [Bob, P1]
 """
 
-    anonymized = anonymize_scheduling_data_in_yaml(content)
+    anonymized = anonymize_schedule_spec_in_yaml(content)
 
     data = _load_yaml(anonymized)
     assert "description" not in data
@@ -79,13 +79,13 @@ export:
     assert b"Sensitive" not in anonymized
 
 
-def test_anonymize_scheduling_data_in_yaml_returns_original_unparseable_yaml():
+def test_anonymize_schedule_spec_in_yaml_returns_original_unparseable_yaml():
     content = b"people: ["
 
-    assert anonymize_scheduling_data_in_yaml(content) is content
+    assert anonymize_schedule_spec_in_yaml(content) is content
 
 
-def test_anonymize_scheduling_data_in_yaml_removes_descriptions_with_malformed_people():
+def test_anonymize_schedule_spec_in_yaml_removes_descriptions_with_malformed_people():
     content = b"""\
 apiVersion: alpha
 description: Sensitive schedule
@@ -97,7 +97,7 @@ preferences:
     person: Alice
 """
 
-    anonymized = anonymize_scheduling_data_in_yaml(content)
+    anonymized = anonymize_schedule_spec_in_yaml(content)
 
     data = _load_yaml(anonymized)
     assert "description" not in data
@@ -106,7 +106,7 @@ preferences:
     assert b"Sensitive" not in anonymized
 
 
-def test_anonymize_scheduling_data_in_yaml_removes_descriptions():
+def test_anonymize_schedule_spec_in_yaml_removes_descriptions():
     content = b"""\
 apiVersion: alpha
 description: Sensitive schedule
@@ -133,7 +133,7 @@ export:
       people: [Alice]
 """
 
-    anonymized = anonymize_scheduling_data_in_yaml(content)
+    anonymized = anonymize_schedule_spec_in_yaml(content)
 
     data = _load_yaml(anonymized)
     assert "description" not in data

@@ -5,9 +5,9 @@ ward schedule for November 2025 in the web UI and **why** the ward chose its
 groups, staffing levels, requests, and weights. The guide focuses on the
 rationale behind each step, including the ward's
 workload, staff qualifications, rest policies, and preference priorities. These
-explanations help users and AI assistants adapt the schedule data to another
-ward. The steps start from empty schedule data.
-**Save and Load → Download** produces the same schedule data as the bundled
+explanations help users and AI assistants adapt the Schedule Spec to another
+ward. The steps start from an empty Schedule Spec.
+**Save and Load → Download** produces the same Schedule Spec as the bundled
 example (`large-ward-with-87-people-2025-11.yaml`). The exported YAML is not
 byte-for-byte identical: the running app stamps `appVersion` and can write
 requests or fields in a different order. See
@@ -19,15 +19,14 @@ use the app's descriptions.
 
 ## Input and output
 
-The complete ward workflow starts with an **uncompleted monthly schedule
-workbook** containing dates, people, staffing requirements, and shift
+The complete ward workflow starts with an **monthly roster template** containing dates, people, staffing requirements, and shift
 requests, with daily assignments not yet filled in. It may also contain
 staff roles and previous-month shifts. Each ward uses its own layout
 and notation, and may provide additional requirements as text.
 
 This example starts with information already extracted from that source.
-It focuses on constructing the schedule data through the GUI and
-using it to generate an optimized schedule. Extracting an arbitrary ward
+It focuses on constructing the Schedule Spec through the GUI and
+using it to generate a schedule. Extracting an arbitrary ward
 workbook and converting the result into the ward's expected workbook are
 outside the walkthrough's scope. The following summary explains how the
 example's inputs and outputs relate to those tasks.
@@ -61,7 +60,7 @@ example's inputs and outputs relate to those tasks.
   cells blank, so each GUI upload can apply its own weight. The supplied
   strong and moderate request CSVs emulate this extraction. The app does
   not interpret Excel colors or ward shorthand.
-- **Schedule data and optimized schedule:** The GUI exports the schedule data
+- **Schedule Spec and schedule:** The GUI exports the Schedule Spec
   as YAML. The optimizer uses it to produce daily assignments. In the real
   workflow, these assignments must then be converted back to the ward's
   workbook layout and shift notation. For example, if the ward labels
@@ -102,24 +101,18 @@ These terms follow the order of the GUI tabs:
   weighted objectives, including staffing requirements, requests, successions,
   counts, and affinities. Some are mandatory. Others can be traded off during optimization.
 
-### Naming the schedule
+### Schedule Spec and schedule {#naming-the-schedule}
 
-These terms name the schedule by its state in the workflow:
-
-- **Schedule:** The nurse roster in any state of completion.
-- **Empty schedule data:** The schedule-data state right after **New
-  Schedule → Create empty schedule**: dates, people, shift types, and history
-  are unset, and only the built-in at-most-one-shift-per-day rule exists.
-- **Schedule data:** The schedule's editable content, stored in the browser
-  and saved as YAML: dates, people, shift types, histories, preference rules,
-  and the export layout. It holds no daily assignments within the date range.
-- **Completed schedule:** The schedule with daily assignments filled in for
-  every person and date, whether by the optimizer or by hand. A blank `OFF`
-  cell still counts as an assignment. The ward may adjust it further by hand
+- **Schedule Spec:** The input stored in the browser and saved as YAML: dates,
+  people, shift types, histories, preference rules, and the export layout.
+  Fixed assignments are input constraints.
+- **Empty Schedule Spec:** The input right after **New Schedule Spec → Create
+  empty Schedule Spec**: dates, people, shift types, and history are unset,
+  and only the built-in at-most-one-shift-per-day rule exists.
+- **Schedule:** The actual daily assignments, whether produced by the optimizer
+  or entered by hand. The app downloads the schedule as XLSX. A blank `OFF`
+  cell still counts as an assignment. The ward may adjust the schedule by hand
   before use.
-- **Optimized schedule:** The optimizer's output when it completes a
-  schedule, downloaded as an XLSX workbook. It is one way to produce a
-  completed schedule.
 
 ## Ward conventions
 
@@ -127,11 +120,11 @@ These describe the ward's source information and monthly staffing practice,
 rather than items created on a GUI tab.
 
 - **Source materials:** Everything a ward supplies, in whatever form: the
-  uncompleted monthly schedule workbook, last month's completed schedule,
+  monthly roster template, last month's schedule,
   natural-language staffing and fairness policies, and verbal instructions.
   When the source materials are complete, a person or an AI assistant can
-  interpret them into schedule data.
-- **Uncompleted monthly schedule workbook:** The ward's roster document before
+  interpret them into Schedule Spec.
+- **Monthly roster template:** The ward's roster document before
   daily assignments are completed, usually an Excel workbook. It contains
   dates, people, staffing requirements, and shift requests, and may include
   staff roles and previous-month shifts. Its layout and notation vary by
@@ -150,7 +143,7 @@ rather than items created on a GUI tab.
 ## Data files
 
 The companion files in the `build-a-real-schedule/` directory make the large,
-repetitive parts of the schedule importable in one action instead of hundreds
+repetitive parts of the Schedule Spec importable in one action instead of hundreds
 of cell edits:
 
 - [`people.txt`](build-a-real-schedule/people.txt): the 87 person IDs.
@@ -172,8 +165,8 @@ imported from a file.
 
 ## 1. Start from empty and set the dates
 
-1. On the app home page, select **New Schedule**, then **Create empty schedule**,
-   and confirm. The new schedule already includes the default *at most one shift
+1. On the app home page, select **New Schedule Spec**, then **Create empty Schedule Spec**,
+   and confirm. The new Schedule Spec already includes the default *at most one shift
    per day* preference.
 2. Open **Dates** and select **Set Date Range**.
 3. Set the start date to `2025-11-01` and the end date to `2025-11-30` (30 days
@@ -473,7 +466,7 @@ With this guide's `11b` and `11m` request tiers, `-1t` is the largest
 individual finite penalty. In practice, it usually keeps preferred staffing
 even alongside many `11b` requests. A shortfall remains possible. If none is
 acceptable, set Required equal to Preferred. That makes the count hard and
-may make an understaffed month infeasible with no completed schedule, which makes debugging much more difficult.
+may make an understaffed month infeasible with no schedule, which makes debugging much more difficult.
 
 The `D`, `E`, and `N` requirements count non-student nurses. `D` has separate
 workday and freeday counts because workload differs. The `+` requirements
@@ -546,7 +539,7 @@ together. Confirm their priority against the rest of a new ward's rules.
 
 This example assumes the ward balanced the number of `11b` requests per
 person before using the app, often through discussion while preparing the
-uncompleted monthly schedule workbook. The optimizer does not equalize those
+monthly roster template. The optimizer does not equalize those
 requests: someone with
 two and someone with ten receive the same weight per request. If that
 preparation is missing or the tier is unclear, start with `11m`, inspect how many requests are satisfied for each person, and only then promote selected requests to `11b`.
@@ -784,7 +777,7 @@ schedule meets the ward's policy.
    bun scripts/compare-schedule-yaml.mjs ../core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml ../artifacts/exported-schedule.yaml
    ```
 
-![Downloaded schedule data YAML](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
+![Downloaded Schedule Spec YAML](../assets/images/user-guide/build-a-real-schedule/build-real-final-yaml.png)
 
 ## 13. Optimize and review the schedule
 

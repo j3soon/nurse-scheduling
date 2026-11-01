@@ -265,8 +265,8 @@ preferences:
 
 def _create(client: TestClient, headers=None, **data):
     return client.post(
-        "/optimize",
-        data={"yaml_content": "apiVersion: alpha\n", **data},
+        "/schedule_spec/optimize",
+        data={"schedule_spec_yaml": "apiVersion: alpha\n", **data},
         headers=headers,
     )
 
@@ -807,7 +807,7 @@ def test_job_creation_offloads_the_synchronous_store_write():
         event_loop_thread_id = threading.get_ident()
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            response = await client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+            response = await client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha\n"})
         return event_loop_thread_id, response
 
     event_loop_thread_id, response = asyncio.run(create_job())
@@ -1186,7 +1186,7 @@ def test_server_executes_real_runner_in_child_process():
     with _client(OptimizationRunner()) as client:
         created = _create(
             client,
-            yaml_content=testcase,
+            schedule_spec_yaml=testcase,
             solver="ortools/cp-sat",
             timeout="5",
             prettify="false",
@@ -2444,18 +2444,22 @@ def test_authenticated_jobs_are_not_limited_per_address():
 def test_input_and_timeout_validation():
     settings = _settings(max_yaml_bytes=10, default_timeout_seconds=30, max_timeout_seconds=60)
     with _client(start_background=False, settings=settings) as client:
-        assert client.post("/optimize").status_code == 400
-        assert client.post("/optimize", data={"yaml_content": "a", "timeout": "0"}).status_code == 400
-        assert client.post("/optimize", data={"yaml_content": "a", "timeout": "61"}).status_code == 400
-        assert client.post("/optimize", data={"yaml_content": "x" * 11}).status_code == 413
+        assert client.post("/schedule_spec/optimize").status_code == 400
+        assert (
+            client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "timeout": "0"}).status_code == 400
+        )
+        assert (
+            client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "timeout": "61"}).status_code == 400
+        )
+        assert client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "x" * 11}).status_code == 413
         accepted = client.post(
-            "/optimize",
-            files={"file": ("SCHEDULE.YAML", b"x" * 10, "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("SCHEDULE.YAML", b"x" * 10, "application/x-yaml")},
         )
         assert accepted.status_code == 202
         oversized = client.post(
-            "/optimize",
-            files={"file": ("schedule.yaml", b"x" * 11, "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("schedule.yaml", b"x" * 11, "application/x-yaml")},
         )
         assert oversized.status_code == 413
 
@@ -2464,11 +2468,11 @@ def test_client_cookie_is_marked_secure_when_the_deployment_says_so():
     # A TLS-terminating proxy forwards plain HTTP, so the request scheme alone
     # would leave the cookie unmarked on an HTTPS deployment.
     with _client(start_background=False, settings=_settings()) as client:
-        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
         assert "secure" not in response.headers["set-cookie"].lower()
 
     with _client(start_background=False, settings=_settings(cookie_secure=True)) as client:
-        response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+        response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
         assert "; Secure" in response.headers["set-cookie"]
 
 
@@ -2478,19 +2482,19 @@ def test_declared_oversize_body_is_refused_before_the_upload_is_buffered():
     settings = _settings(max_yaml_bytes=1024)
     with _client(start_background=False, settings=settings) as client:
         refused = client.post(
-            "/optimize",
-            files={"file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("schedule.yaml", b"x" * (1024 * 1024), "application/x-yaml")},
         )
         assert refused.status_code == 413
         assert refused.json()["error"]["code"] == "request_too_large"
 
         # A body the middleware admits still reaches the route's own limit.
         oversized = client.post(
-            "/optimize",
-            files={"file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("schedule.yaml", b"x" * 1025, "application/x-yaml")},
         )
         assert oversized.status_code == 413
-        assert oversized.json()["detail"] == "Scheduling YAML is too large"
+        assert oversized.json()["detail"] == "Schedule Spec YAML is too large"
 
 
 def test_file_input_uses_configured_limit_above_multipart_text_default():
@@ -2498,14 +2502,14 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
     settings = _settings(max_yaml_bytes=max_yaml_bytes)
     with _client(start_background=False, settings=settings) as client:
         accepted = client.post(
-            "/optimize",
-            files={"file": ("schedule.yaml", b"x" * max_yaml_bytes, "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("schedule.yaml", b"x" * max_yaml_bytes, "application/x-yaml")},
         )
         assert accepted.status_code == 202
 
         oversized = client.post(
-            "/optimize",
-            files={"file": ("schedule.yaml", b"x" * (max_yaml_bytes + 1), "application/x-yaml")},
+            "/schedule_spec/optimize",
+            files={"schedule_spec_file": ("schedule.yaml", b"x" * (max_yaml_bytes + 1), "application/x-yaml")},
         )
         assert oversized.status_code == 413
 
@@ -2569,8 +2573,8 @@ def test_protected_routes_accept_the_configured_shared_token():
         assert client.get("/optimize/options", headers={"Authorization": f"bearer {AUTH_TOKEN}"}).status_code == 200
 
         created = client.post(
-            "/optimize",
-            data={"yaml_content": "apiVersion: alpha\n"},
+            "/schedule_spec/optimize",
+            data={"schedule_spec_yaml": "apiVersion: alpha\n"},
             headers=_auth_header(),
         )
         assert created.status_code == 202

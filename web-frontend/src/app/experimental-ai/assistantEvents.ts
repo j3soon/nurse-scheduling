@@ -47,11 +47,11 @@ export type AssistantEvent =
   | { type: 'error' | 'stale'; message: string }
   | { type: 'tool_start'; activity: ToolStartActivity }
   | { type: 'tool'; activity: ToolActivity }
-  | { type: 'schedule_change'; before: string; after: string }
-  | { type: 'schedule_applied'; diff: string; runId?: string; notice?: string; browserApplied?: boolean };
+  | { type: 'schedule_spec_change'; before: string; after: string }
+  | { type: 'schedule_spec_applied'; diff: string; runId?: string; notice?: string; browserApplied?: boolean };
 
 export function startsVisibleOutput(event: AssistantEvent): boolean {
-  return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_change'
+  return event.type === 'tool_start' || event.type === 'tool' || event.type === 'schedule_spec_change'
     || (event.type === 'generation_progress' && event.kind === 'tool_calls')
     || ((event.type === 'delta' || event.type === 'reasoning') && event.text.length > 0);
 }
@@ -85,7 +85,7 @@ function appendReasoningActivity(entries: ActivityEntry[], text: string): Activi
 
 // Concurrent calls finish in any order, so a result completes the start that shares its ID.
 function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): ActivityEntry[] {
-  const { scheduleCheck, ...tool } = result;
+  const { scheduleSpecCheck, ...tool } = result;
   const runningIndex = entries.findIndex(entry => (
     entry.kind === 'tool'
     && entry.state === 'running'
@@ -94,7 +94,7 @@ function finishToolActivity(entries: ActivityEntry[], result: ToolActivity): Act
   // The check follows its tool, so the chat shows the same result the model received.
   const completed: ActivityEntry[] = [
     { kind: 'tool', ...tool },
-    ...(scheduleCheck ? [{ kind: 'schedule-check' as const, ...scheduleCheck }] : []),
+    ...(scheduleSpecCheck ? [{ kind: 'schedule-spec-check' as const, ...scheduleSpecCheck }] : []),
   ];
   if (runningIndex < 0) return [...entries, ...completed];
   return [...entries.slice(0, runningIndex), ...completed, ...entries.slice(runningIndex + 1)];
@@ -183,16 +183,16 @@ export function applyAssistantEvent<T extends ChatMessageContent>(message: T, ev
       };
     case 'tool':
       return { ...message, activity: finishToolActivity(activity, event.activity) };
-    case 'schedule_change':
+    case 'schedule_spec_change':
       return {
         ...message,
-        activity: [...activity, { kind: 'schedule-change', before: event.before, after: event.after }],
+        activity: [...activity, { kind: 'schedule-spec-change', before: event.before, after: event.after }],
       };
-    case 'schedule_applied': {
-      const entry: ActivityEntry = { kind: 'schedule-applied', text: event.diff,
+    case 'schedule_spec_applied': {
+      const entry: ActivityEntry = { kind: 'schedule-spec-applied', text: event.diff,
         ...(event.browserApplied === false ? { browserApplied: false } : {}),
         ...(event.runId ? { runId: event.runId } : {}), ...(event.notice ? { notice: event.notice } : {}) };
-      const retained = event.runId ? activity.filter(item => item.kind !== 'schedule-applied' || item.runId !== event.runId) : activity;
+      const retained = event.runId ? activity.filter(item => item.kind !== 'schedule-spec-applied' || item.runId !== event.runId) : activity;
       return { ...message, activity: [...retained, entry] };
     }
   }
@@ -239,7 +239,7 @@ export function stopResponse<T extends ChatMessageContent>(message: T, completed
   };
 }
 
-// A preview diffs against the previous working copy, or the browser schedule
+// A preview diffs against the previous working copy, or the browser Schedule Spec
 // before the run's first preview. Other session events do not change an answer.
 export function toAssistantEvent(
   event: SessionEvent,
@@ -250,13 +250,13 @@ export function toAssistantEvent(
     case 'provider_retry': case 'delta': case 'reasoning': case 'truncated': case 'response_end': case 'tool_start': case 'tool':
     case 'compaction_start': case 'compaction_end': case 'generation_progress':
       return event;
-    case 'schedule_change': {
+    case 'schedule_spec_change': {
       const before = workingSchedule.current ?? browserSchedule.current;
-      workingSchedule.current = event.scheduleYaml;
-      return { type: 'schedule_change', before, after: event.scheduleYaml };
+      workingSchedule.current = event.scheduleSpecYaml;
+      return { type: 'schedule_spec_change', before, after: event.scheduleSpecYaml };
     }
-    case 'schedule_applied':
-      return { type: 'schedule_applied', runId: event.applied.runId, diff: event.applied.diff };
+    case 'schedule_spec_applied':
+      return { type: 'schedule_spec_applied', runId: event.applied.runId, diff: event.applied.diff };
     default: return null;
   }
 }

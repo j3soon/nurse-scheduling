@@ -130,9 +130,10 @@ def test_conversation_locks_model_preserves_reasoning_choices_and_replays_withou
     headers = {"Authorization": "Bearer institution-a-ai-token"}
     with basic.AuthenticatedTestClient(app, headers=headers) as client:
         session = basic.create_session(client)
-        path = f"/sessions/{session}/messages"
+        path = f"/v1/sessions/{session}/messages"
         assert (
-            client.get(f"/sessions/{session}", headers={"Authorization": "Bearer person-b-ai-token"}).status_code == 404
+            client.get(f"/v1/sessions/{session}", headers={"Authorization": "Bearer person-b-ai-token"}).status_code
+            == 404
         )
         request = {"message": "Help", "message_id": "one", "selection": {"model": "deep", "reasoning": "high"}}
         first = client.post(path, json=request)
@@ -140,7 +141,7 @@ def test_conversation_locks_model_preserves_reasoning_choices_and_replays_withou
         assert "event: model_selection" in first.text
         assert client.post(path, json={**request, "selection": {"model": "unknown"}}).status_code == 202
         assert client.post(path, json={"message": "Switch", "selection": {"model": "fast"}}).status_code == 409
-        assert client.put(f"/sessions/{session}/model-selection", json={"model": "fast"}).status_code == 409
+        assert client.put(f"/v1/sessions/{session}/model-selection", json={"model": "fast"}).status_code == 409
         assert (
             client.post(path, json={"message": "Next", "selection": {"model": "deep", "reasoning": "off"}}).status_code
             == 200
@@ -257,9 +258,9 @@ def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_questio
                 transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            created = await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
             session_id = created.json()["id"]
-            path = f"/sessions/{session_id}/messages"
+            path = f"/v1/sessions/{session_id}/messages"
             first = asyncio.create_task(client.post(path, json={"message": "Help", "message_id": "one"}))
             await asyncio.wait_for(started.wait(), timeout=1)
             duplicate = asyncio.create_task(
@@ -305,16 +306,16 @@ def test_stop_cancels_foreground_model_discovery(monkeypatch, stop_message_id):
                 transport=httpx.ASGITransport(app), base_url="http://testserver", headers=basic.AI_AUTH_HEADERS
             ) as client,
         ):
-            created = await client.post("/sessions", json={"schedule_yaml": "description: test"})
+            created = await client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test"})
             session_id = created.json()["id"]
             with monkeypatch.context() as discovery:
                 discovery.setattr(ModelCatalog, "resolve", delayed)
                 pending = asyncio.create_task(
-                    client.post(f"/sessions/{session_id}/messages", json={"message": "Help", "message_id": "one"})
+                    client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Help", "message_id": "one"})
                 )
                 await asyncio.wait_for(started.wait(), timeout=1)
                 stopped = await client.post(
-                    f"/sessions/{session_id}/stop", json={"message_id": stop_message_id} if stop_message_id else None
+                    f"/v1/sessions/{session_id}/stop", json={"message_id": stop_message_id} if stop_message_id else None
                 )
                 assert stopped.status_code == 202
                 assert (await asyncio.wait_for(pending, timeout=1)).status_code == 202
@@ -324,7 +325,7 @@ def test_stop_cancels_foreground_model_discovery(monkeypatch, stop_message_id):
             assert app.state.session_event_stream.events_after(session_id)[-1].type == "stopped"
             assert calls == []
             response = await client.post(
-                f"/sessions/{session_id}/messages", json={"message": "Next", "message_id": "two"}
+                f"/v1/sessions/{session_id}/messages", json={"message": "Next", "message_id": "two"}
             )
             assert response.status_code == 200
 
@@ -345,7 +346,7 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
     app = basic.create_test_app(settings=configuration, provider=None)
     with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/model-selection"
+        path = f"/v1/sessions/{session_id}/model-selection"
         assert client.get(path).json() == {"model": "fast", "reasoning": "default", "locked": False}
         selection = {"model": "deep", "reasoning": "off"}
         unlocked = {**selection, "locked": False}
@@ -369,7 +370,8 @@ def test_current_session_selection_is_authorized_validated_and_saved(monkeypatch
             assert "could not be saved" in failed.json()["detail"]
         assert client.get(path).json() == unlocked
         assert (
-            client.post(f"/sessions/{session_id}/messages", json={"message": "Use the saved model"}).status_code == 200
+            client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Use the saved model"}).status_code
+            == 200
         )
         owner, expires_at, state = recorded_history["saves"][-1]["state"]
         owner, expires_at, state = recorded_history["starts"][-1]["state"]
@@ -401,7 +403,7 @@ def test_midstream_selection_changes_only_future_turns(monkeypatch):
                     "id": "read-call",
                     "index": 0,
                     "type": "function",
-                    "function": {"name": "read", "arguments": '{"path":"/workspace/schedule.yaml"}'},
+                    "function": {"name": "read", "arguments": '{"path":"/workspace/schedule-spec.yaml"}'},
                 }
                 yield (
                     "data: "
@@ -429,10 +431,12 @@ def test_midstream_selection_changes_only_future_turns(monkeypatch):
             ) as client,
         ):
             original = {"model": "deep", "reasoning": "high"}
-            created = await client.post("/sessions", json={"schedule_yaml": "description: test", "selection": original})
+            created = await client.post(
+                "/v1/sessions", json={"schedule_spec_yaml": "description: test", "selection": original}
+            )
             session_id = created.json()["id"]
-            messages = f"/sessions/{session_id}/messages"
-            path = f"/sessions/{session_id}/model-selection"
+            messages = f"/v1/sessions/{session_id}/messages"
+            path = f"/v1/sessions/{session_id}/model-selection"
             assert (await client.post(messages, json={"message": "Read", "message_id": "one"})).status_code == 202
             await asyncio.wait_for(started.wait(), timeout=1)
             review = asyncio.create_task(
@@ -478,22 +482,22 @@ def test_postgres_restores_current_model_choice_after_restart(monkeypatch, postg
     first = basic.create_test_app(settings=configuration, provider=None)
     with basic.AuthenticatedTestClient(first, headers=headers) as client:
         created = client.post(
-            "/sessions",
-            json={"schedule_yaml": "description: test", "selection": {"model": "deep", "reasoning": "high"}},
+            "/v1/sessions",
+            json={"schedule_spec_yaml": "description: test", "selection": {"model": "deep", "reasoning": "high"}},
         )
         session_id = created.json()["id"]
         owner = client.cookies[basic.OWNER_COOKIE]
         selection = {"model": "deep", "reasoning": "off"}
-        assert client.put(f"/sessions/{session_id}/model-selection", json=selection).status_code == 200
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "First"}).status_code == 200
+        assert client.put(f"/v1/sessions/{session_id}/model-selection", json=selection).status_code == 200
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "First"}).status_code == 200
     restored = basic.create_test_app(settings=configuration, provider=None)
     with basic.AuthenticatedTestClient(
         restored, headers={**headers, "Cookie": f"{basic.OWNER_COOKIE}={owner}"}
     ) as client:
         # The restarted service reports the saved lock, so a resumed browser shows it.
-        assert client.get(f"/sessions/{session_id}/model-selection").json() == {**selection, "locked": True}
-        assert client.put(f"/sessions/{session_id}/model-selection", json={"model": "fast"}).status_code == 409
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Continue"}).status_code == 200
+        assert client.get(f"/v1/sessions/{session_id}/model-selection").json() == {**selection, "locked": True}
+        assert client.put(f"/v1/sessions/{session_id}/model-selection", json={"model": "fast"}).status_code == 409
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Continue"}).status_code == 200
     assert calls[0][1]["model"] == "deep"
     assert calls[0][1]["thinking"] == {"type": "disabled"}
 
@@ -503,17 +507,17 @@ def test_rejected_first_message_leaves_the_reported_model_unlocked(monkeypatch):
     app = basic.create_test_app(settings=settings(), provider=None)
     with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/model-selection"
+        path = f"/v1/sessions/{session_id}/model-selection"
 
         async def unavailable(*_args):
             raise HTTPException(503, "The selected model is temporarily unavailable.")
 
         with monkeypatch.context() as failed_discovery:
             failed_discovery.setattr(ModelCatalog, "resolve", unavailable)
-            rejected = client.post(f"/sessions/{session_id}/messages", json={"message": "Help"})
+            rejected = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Help"})
         assert rejected.status_code == 503
         assert client.get(path).json()["locked"] is False
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
         assert client.get(path).json()["locked"] is True
 
 
@@ -522,16 +526,16 @@ def test_rejected_first_receipt_leaves_model_choice_available(monkeypatch):
     app = basic.create_test_app(settings=replace(settings(), max_session_bytes=100), provider=None)
     with basic.AuthenticatedTestClient(app, headers={"Authorization": "Bearer institution-a-ai-token"}) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/model-selection"
+        path = f"/v1/sessions/{session_id}/model-selection"
         rejected = client.post(
-            f"/sessions/{session_id}/messages", json={"message": "Help", "message_id": "rejected" * 10}
+            f"/v1/sessions/{session_id}/messages", json={"message": "Help", "message_id": "rejected" * 10}
         )
         assert rejected.status_code == 429
         assert not app.state.runs.busy(session_id)
         assert calls == []
         assert client.get(path).json()["locked"] is False
         assert client.put(path, json={"model": "deep", "reasoning": "high"}).status_code == 200
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Help"}).status_code == 200
         assert client.get(path).json()["locked"] is True
         assert client.put(path, json={"model": "fast"}).status_code == 409
 
@@ -543,11 +547,11 @@ def test_optimizer_review_reports_model_discovery_failure(monkeypatch, status, r
     headers = {"Authorization": "Bearer institution-a-ai-token"}
     with basic.AuthenticatedTestClient(app, headers=headers) as client:
         selection = {"model": "deep", "reasoning": "high"}
-        created = client.post("/sessions", json={"schedule_yaml": "description: test", "selection": selection})
+        created = client.post("/v1/sessions", json={"schedule_spec_yaml": "description: test", "selection": selection})
         session_id = created.json()["id"]
         assert (
             client.post(
-                f"/sessions/{session_id}/messages", json={"message": "Help", "selection": selection}
+                f"/v1/sessions/{session_id}/messages", json={"message": "Help", "selection": selection}
             ).status_code
             == 200
         )
@@ -569,7 +573,7 @@ def test_optimizer_review_reports_model_discovery_failure(monkeypatch, status, r
         assert recorded_history["starts"][-1]["model"] == "deep"
         assert recorded_history["finishes"][-1][1:3] == ("failed", "provider_error")
         # A later request can still review the retained optimizer result.
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Try again"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Try again"}).status_code == 200
     assert len(calls) == 2
 
 

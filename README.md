@@ -19,9 +19,13 @@ The nurse scheduling (or employee scheduling) problem is a well-known problem in
 
 However, constraints can differ greatly between hospitals and wards, and there is currently no unified framework for modeling these diverse requirements. Most existing literature focuses on modeling an over-simplified constraint set, which is not applicable to real-world situations. Therefore, in practice, the problem is still often solved by hand with the help of Excel, which is often extremely time-consuming. The entire process requires several hours or even more than ten hours, depending on the problem complexity (e.g., co-scheduling of multiple understaffed wards).
 
-This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) provides a flexible web app and framework for automating schedule optimization across real-world scenarios. It has generated schedules used by real wards with minimal post-adjustment. We keep the main deployment stable, publish the latest features separately, retain versioned releases, and strive to preserve backward compatibility.
+This project (Nurse Scheduling System, or 護理排班系統 in Mandarin) provides a flexible web app and framework for automating schedule optimization across real-world scenarios. It has generated schedules used by real wards with minimal post-adjustment. We keep the main deployment stable, publish the latest features separately, retain versioned releases, and preserve the [supported compatibility contracts](https://nursescheduling.org/docs/developer-guide/compatibility/).
 
 Development builds may introduce breaking changes. Use the stable or versioned deployments when repeatability is important.
+
+A **Schedule Spec** defines the people, dates, shift types, constraints, preferences,
+and export settings. The app imports and exports it as YAML. A **Schedule**
+contains the actual shift assignments produced by the optimizer or entered manually.
 
 ## Project Scope
 
@@ -39,7 +43,7 @@ The project began in 2023 as a proof of concept verified by domain experts in a 
 
 ## Privacy Notice
 
-The hosted application anonymizes individual people IDs and removes descriptions by default before sending a schedule for optimization. A schedule without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
+The hosted application anonymizes individual people IDs and removes descriptions by default before sending a Schedule Spec for optimization. A Schedule Spec without direct identifiers may not identify anyone by itself, but dates, groups, and patterns can still be sensitive in context. Use nicknames or non-identifying IDs when in doubt. For greater control, self-host the open-source frontend and backend so your organization can inspect the code and apply its own security and retention policies. See [Privacy and Data Handling](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for details.
 
 ## AI Beta Access
 
@@ -282,7 +286,7 @@ for build settings and Sentry credentials.
 ### Experimental AI Chat
 
 Follow the [AI startup instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md#experimental-ai-chat).
-The chat runs as a separate backend and answers questions about the browser schedule.
+The chat runs as a separate backend and answers questions about the browser Schedule Spec.
 
 ### Core
 

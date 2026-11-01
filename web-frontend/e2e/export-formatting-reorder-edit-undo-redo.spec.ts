@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('export formatting reorder and edit can be undone and redone independently', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('export formatting reorder and edit can be undone and redone independently'
    * 4. Undo again to restore the original order, then redo both steps.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'format history seed',
     dates: {

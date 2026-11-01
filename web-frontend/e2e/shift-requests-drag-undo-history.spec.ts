@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('revisiting a cell during one quick-add drag gesture should still produce a single undo step', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('revisiting a cell during one quick-add drag gesture should still produce a
    * 4. Trigger one undo and expect the whole gesture to disappear in one step.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'drag undo history seed',
     dates: {

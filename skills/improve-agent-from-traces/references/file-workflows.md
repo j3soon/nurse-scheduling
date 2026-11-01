@@ -8,7 +8,7 @@ For file workflows, check actual delivered bytes and a later message in a fresh
 workspace. A claimed download path or a successful first-turn read does not prove
 delivery or retention. For complete imports, compare the whole parsed source
 with the proposal. Keep a partial-update control.
-Grade construction of YAML schedule data from an XLSX workbook by its validated proposal. Require a specific tool only when
+Grade construction of YAML Schedule Spec from an XLSX workbook by its validated proposal. Require a specific tool only when
 its use establishes evidence that the final artifact cannot show.
 For generated import files, grade the delivered file against the destination
 importer's row and field rules. Test malformed output with the real importer
@@ -47,11 +47,11 @@ rebuilt image with synthetic input. Mark comparisons that relied on its absence
 as historical and recheck the affected guidance before changing it.
 
 For read-only attachment questions, check whether inspecting the current
-schedule helps answer the user's request. Test a focused attachment question
+Schedule Spec helps answer the user's request. Test a focused attachment question
 alongside an explicit comparison request before changing source-selection guidance.
 
 For inline attachment scripts, group repeated operations before proposing helpers.
-Separate source inspection from schedule construction and domain policy audits.
+Separate source inspection from Schedule Spec construction and domain policy audits.
 For workbook value/style frequencies and row/column counts, use
 `/reference/tools/inspect_xlsx.py FILE --summary --range 'Sheet!B2:AC61' --styles --axis row`.
 The same inspector reads uploaded and generated workbooks. Summary mode reports
@@ -68,7 +68,7 @@ more capability text or tool fields. Declare any maintainability tradeoff before
 measuring it, rather than choosing a favorable metric afterward.
 
 For Taiwan calendar groups, use `build_taiwan_holiday_groups.py` with the
-current schedule and optional `--start`/`--end`. It reads the frontend's bundled
+current Schedule Spec and optional `--start`/`--end`. It reads the frontend's bundled
 calendar table, preserves custom groups and returns JSON without editing files.
 Test an official holiday and a makeup workday, not just an ordinary month.
 Reject unsupported dates instead of silently generating weekday-only groups.
@@ -84,7 +84,7 @@ telemetry. Keep final-source recovery and zero-rejection first-write cases separ
 Persistent rejection feedback can recur on reads. Do not count those reports as
 distinct invalid mutations.
 
-Report a command's outcome separately from an unresolved rejected schedule edit.
+Report a command's outcome separately from an unresolved rejected Schedule Spec edit.
 A successful read does not accept that edit. Keep its warning visible and block
 finishing or optimization until the edit is corrected or explicitly discarded.
 

@@ -20,11 +20,11 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('extra column coefficients persist through Save and Load YAML and page navigation', async ({ page }) => {
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'coefficient persistence seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

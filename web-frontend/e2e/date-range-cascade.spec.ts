@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shrinking the date range removes stale date references from downstream pages', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('shrinking the date range removes stale date references from downstream pag
    * 3. Revisit downstream pages and confirm references to the removed date are gone.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'date shrink seed',
     dates: {
@@ -100,7 +100,7 @@ test('shrinking the date range removes stale date references from export layout 
    * 3. Confirm Save and Load YAML keeps date 01 and drops date 02 from export layout.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'date export cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-02' }, groups: [] },
@@ -144,7 +144,7 @@ test('date identifier format changes remove stale export layout references', asy
    * 3. Confirm old export layout references are removed from Save and Load YAML.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'date id transition export seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-02' }, groups: [] },

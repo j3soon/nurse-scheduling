@@ -119,7 +119,7 @@ for row, person in enumerate(ordered, 4):
 
 assert strong_count == 408 and moderate_count == 90
 book.properties.title = "November 2025"
-book.properties.subject = "Unfilled anonymized ward schedule"
+book.properties.subject = "Anonymized ward roster template"
 book.properties.creator = "Nurse Scheduling Project"
 book.properties.keywords = "This file is mostly AI generated."
 parser = argparse.ArgumentParser(description=__doc__)

@@ -20,22 +20,22 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('new schedule resets the app to an empty state from the home page flow', async ({ page }) => {
   /*
    * Steps:
    * 1. Visit the home page and confirm the reset entry point is visible.
-   * 2. Trigger the New Schedule confirmation flow from the real home page.
+   * 2. Trigger the New Schedule Spec confirmation flow from the real home page.
    * 3. Confirm downstream management pages contain no user-defined entries.
    */
   await disableModalDialogs(page);
 
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'New Schedule', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Schedule Spec', exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByRole('heading', { name: 'People Management' })).toBeVisible();
@@ -58,13 +58,13 @@ test('new schedule resets the app to an empty state from the home page flow', as
 test('new schedule reset is undoable from downstream pages', async ({ page }) => {
   /*
    * Steps:
-   * 1. Seed a distinctive schedule, then reset through the New Schedule flow.
+   * 1. Seed a distinctive schedule, then reset through the New Schedule Spec flow.
    * 2. Confirm the seeded person disappeared and the reset state is empty.
    * 3. Undo from a downstream page and confirm the seeded state returns.
    * 4. Redo and confirm the empty reset state returns again.
   */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'undoable new schedule seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -75,8 +75,8 @@ test('new schedule reset is undoable from downstream pages', async ({ page }) =>
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('P9', { exact: true })).toHaveCount(0);
@@ -96,11 +96,11 @@ test('new schedule reset clears custom people history and export layout', async 
   /*
    * Steps:
    * 1. Seed custom history and export layout.
-   * 2. Reset through the New Schedule flow.
+   * 2. Reset through the New Schedule Spec flow.
    * 3. Confirm the saved YAML no longer contains the custom history or export extras.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'new schedule clears history export seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -118,8 +118,8 @@ test('new schedule reset clears custom people history and export layout', async 
   await expect(page.locator('pre')).toContainText('Custom count');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/save-and-load');
   const yamlPreview = page.locator('pre');

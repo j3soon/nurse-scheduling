@@ -32,7 +32,7 @@ const bashEntry: ActivityEntry = {
 };
 
 const scheduleChangeEntry: ActivityEntry = {
-  kind: 'schedule-change',
+  kind: 'schedule-spec-change',
   before: "people:\n  - id: P1\n    description: ''\npreferences: []",
   after: 'people:\n  - id: P1\n    description: Head\npreferences: []',
 };
@@ -127,20 +127,20 @@ describe('AssistantActivity', () => {
 
   it('labels non-shell input as arguments and omits an empty result', async () => {
     const user = userEvent.setup();
-    render(<AssistantActivity entries={[{ kind: 'tool', name: 'read', arguments: '{"path":"/workspace/schedule.yaml"}', result: '', ok: true, state: 'running' }]} />);
+    render(<AssistantActivity entries={[{ kind: 'tool', name: 'read', arguments: '{"path":"/workspace/schedule-spec.yaml"}', result: '', ok: true, state: 'running' }]} />);
     await user.click(screen.getByText('read · running'));
     expect(screen.getByRole('heading', { name: /^Arguments · / })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Tool result' })).not.toBeInTheDocument();
   });
 
-  it('shows a simple red and green schedule edit', async () => {
+  it('shows a simple red and green Schedule Spec edit', async () => {
     const user = userEvent.setup();
     render(<AssistantActivity entries={[scheduleChangeEntry]} />);
 
-    expect(screen.getByText('schedule edit')).toBeVisible();
+    expect(screen.getByText('Schedule Spec edit')).toBeVisible();
     expect(screen.getByText(/description: ''/)).not.toBeVisible();
 
-    await user.click(screen.getByText('schedule edit'));
+    await user.click(screen.getByText('Schedule Spec edit'));
 
     expect(screen.getByText(/description: ''/)).toHaveClass('removed');
     expect(screen.getByText(/description: Head/)).toHaveClass('added');
@@ -165,17 +165,17 @@ describe('AssistantActivity', () => {
         entries={[
           { kind: 'reasoning', text: 'First thought.' },
           { kind: 'tool', name: 'bash', arguments: '{}', result: 'lines', ok: true },
-          { kind: 'schedule-change', before: 'old', after: 'new' },
+          { kind: 'schedule-spec-change', before: 'old', after: 'new' },
           { kind: 'reasoning', text: 'Second thought.' },
         ]}
       />,
     );
 
-    const summaries = screen.getAllByText(/Reasoning ·|bash|schedule edit/).map(element => element.textContent);
+    const summaries = screen.getAllByText(/Reasoning ·|bash|Schedule Spec edit/).map(element => element.textContent);
     expect(summaries).toEqual([
       'Reasoning · 14 characters',
       'bash',
-      'schedule edit',
+      'Schedule Spec edit',
       'Reasoning · 15 characters',
     ]);
   });

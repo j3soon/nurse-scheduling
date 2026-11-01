@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import type { SchedulingState } from '@/hooks/useSchedulingData';
+import type { ScheduleSpecState } from '@/hooks/useScheduleSpec';
 import type { ShiftRequestPreference } from '@/types/scheduling';
 import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 
@@ -28,7 +28,7 @@ const dateGroups = [
   { id: 'WORKDAY', members: ['01', '02', '05', '06'], description: '' },
   { id: 'FREEDAY', members: ['03', '04', '07', '08'], description: '' }
 ];
-const state: SchedulingState = {
+const state: ScheduleSpecState = {
   apiVersion: 'alpha',
   description: '',
   dates: { range: {}, items: [], groups: [] },
@@ -77,7 +77,7 @@ describe('randomizeConcreteDateShiftRequests', () => {
       { id: 'WORKDAY', members: ['01', '04'], description: '' },
       { id: 'FREEDAY', members: ['02', '03'], description: '' }
     ];
-    const mixedState: SchedulingState = {
+    const mixedState: ScheduleSpecState = {
       ...state,
       preferences: [{ type: 'shift request', person: ['Alice'], date: ['01', '02'], shiftType: ['D'], weight: 1 }]
     };
@@ -92,7 +92,7 @@ describe('randomizeConcreteDateShiftRequests', () => {
   });
 
   it('rejects backend-compatible multi-person or multi-shift requests', () => {
-    const multiTargetState: SchedulingState = {
+    const multiTargetState: ScheduleSpecState = {
       ...state,
       preferences: [
         { type: 'shift request', person: ['Alice', 'Team'], date: ['01'], shiftType: ['D'], weight: 1 },

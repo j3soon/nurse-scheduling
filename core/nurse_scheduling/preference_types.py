@@ -105,7 +105,7 @@ def shift_type_requirements(
                 coverage_key = (d, s)
                 if coverage_key in ctx.shift_type_requirement_coverage:
                     previous_preference_idx = ctx.shift_type_requirement_coverage[coverage_key]
-                    date_id = str(ctx.compiled_schedule.dates[d])
+                    date_id = str(ctx.compiled_schedule_spec.dates[d])
                     shift_type_id = ctx.scenario.shiftTypes.items[s].id
                     logger.info(
                         "Duplicate shift type requirement coverage for "
@@ -246,7 +246,7 @@ def shift_type_successions(
         return sum(matches), False
 
     for p, d_begin, pattern_idx, pattern in iter_succession_patterns(
-        compiled_preference, ctx.compiled_schedule.histories, ctx.n_days
+        compiled_preference, ctx.compiled_schedule_spec.histories, ctx.n_days
     ):
         target_n_matched = len(pattern)
         unique_var_prefix = f"shift_type_successions_pref_{preference_idx}_p_{p}_dbegin_{d_begin}_pattern_{pattern_idx}"

@@ -47,7 +47,7 @@ const mockRunEvents = vi.hoisted(() => vi.fn());
 const mockSendMessage = vi.hoisted(() => vi.fn());
 const mockStreamSessionEvents = vi.hoisted(() => vi.fn());
 const mockStopSession = vi.hoisted(() => vi.fn());
-const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current schedule\n'));
+const mockGenerateYaml = vi.hoisted(() => vi.fn(() => 'description: current Schedule Spec\n'));
 const mockQueueMessage = vi.hoisted(() => vi.fn());
 const mockUpdateSessionSchedule = vi.hoisted(() => vi.fn());
 const mockLoadFromYaml = vi.hoisted(() => vi.fn());
@@ -109,17 +109,17 @@ vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYaml,
 }));
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: () => ({
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: () => ({
     apiVersionData: 'alpha',
-    descriptionData: 'current schedule',
+    descriptionData: 'current Schedule Spec',
     dateData: { items: [], groups: [], range: {} },
     peopleData: { items: [], groups: [] },
     shiftTypeData: { items: [], groups: [] },
     preferences: [],
     exportData: undefined,
     savedState: {
-      apiVersion: 'alpha', description: 'current schedule',
+      apiVersion: 'alpha', description: 'current Schedule Spec',
       dates: { items: [], groups: [], range: {} },
       people: { items: [], groups: [] }, shiftTypes: { items: [], groups: [] }, preferences: [],
     },
@@ -160,7 +160,7 @@ describe('ExperimentalAiPage', () => {
     pendingForegroundRunId = null;
     vi.restoreAllMocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
-    mockGetChatExportUrl.mockReset().mockResolvedValue('/ai/sessions/session-id/export?token=temporary');
+    mockGetChatExportUrl.mockReset().mockResolvedValue('/ai/v1/sessions/session-id/export?token=temporary');
     mockCreateSession.mockReset().mockResolvedValue('session-id');
     mockGetUploads.mockReset().mockResolvedValue([]);
     mockRemoveUpload.mockReset().mockResolvedValue(undefined);
@@ -214,7 +214,7 @@ describe('ExperimentalAiPage', () => {
       const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as SessionStreamOptions | undefined;
       if (pendingForegroundRunId) runEvents(stream, pendingForegroundRunId)?.onEvent({ type: 'stopped' });
     });
-    mockGenerateYaml.mockClear().mockReturnValue('description: current schedule\n');
+    mockGenerateYaml.mockClear().mockReturnValue('description: current Schedule Spec\n');
     mockQueueMessage.mockReset().mockResolvedValue(undefined);
     mockUpdateSessionSchedule.mockReset().mockResolvedValue(undefined);
     mockLoadFromYaml.mockReset();
@@ -227,7 +227,7 @@ describe('ExperimentalAiPage', () => {
     const conversation: StoredChatConversation = {
       sessionId, endpoint, lastActivityAt: Date.now() - 1000,
       expiresAt: Date.now() + 86400_000, retentionSeconds: 30 * 86400,
-      syncedSchedule: 'description: older schedule\n', sessionEventId: 5,
+      syncedScheduleSpec: 'description: older schedule\n', sessionEventId: 5,
       messages: [{ id: 'old-question', role: 'user', content: `Review ${sessionId}` },
         { id: 'old-answer', role: 'assistant', content: 'An earlier answer.', activity: [{ kind: 'response', text: 'An earlier answer.' }] }],
     };
@@ -258,11 +258,11 @@ describe('ExperimentalAiPage', () => {
       expect(screen.getByLabelText('Reasoning')).toHaveValue('default');
     });
     expect(mockUpdateSessionModelSelection).not.toHaveBeenCalled();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue this chat.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Continue this chat.');
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
   });
 
-  it('selects a recent chat without uploading or replacing browser schedule data, then syncs on send', async () => {
+  it('selects a recent chat without uploading or replacing browser Schedule Spec, then syncs on send', async () => {
     const chat = seedRecentChat();
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -273,23 +273,23 @@ describe('ExperimentalAiPage', () => {
     expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
     expect(mockCreateSession).not.toHaveBeenCalled();
     expect(mockLoadFromYaml).not.toHaveBeenCalled();
-    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('differs');
-    await waitFor(() => expect(readChatHistory()[0].conversation.preserveBrowserSchedule).toBe(true));
+    expect(screen.getByLabelText('Schedule Spec status')).toHaveTextContent('differs');
+    await waitFor(() => expect(readChatHistory()[0].conversation.preserveBrowserScheduleSpec).toBe(true));
     expect(readChatHistory()[0].lastActivityAt).toBe(chat.lastActivityAt);
     const stream = mockStreamSessionEvents.mock.calls.at(-1)?.[1] as SessionStreamOptions;
     act(() => {
       stream.onEvent({ type: 'run_context', runId: 'away-run' });
-      stream.onEvent({ type: 'schedule_applied', applied: { runId: 'away-run', scheduleYaml: 'description: changed while away\n', diff: 'Changed while away', replacedQueuedSchedule: false } });
+      stream.onEvent({ type: 'schedule_spec_applied', applied: { runId: 'away-run', scheduleSpecYaml: 'description: changed while away\n', diff: 'Changed while away', replacedQueuedScheduleSpec: false } });
       stream.onEvent({ type: 'done', runId: 'away-run' });
     });
     expect(mockLoadFromYaml).not.toHaveBeenCalled();
-    expect(await screen.findByText(/Browser schedule data was kept unchanged/)).toBeInTheDocument();
+    expect(await screen.findByText(/Browser Schedule Spec was kept unchanged/)).toBeInTheDocument();
     expect(screen.getByText('Saved in this chat')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue with my schedule');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Continue with my schedule');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    expect(mockUpdateSessionSchedule).toHaveBeenCalledWith('older-session', 'description: current schedule\n', null, '/ai');
+    expect(mockUpdateSessionSchedule).toHaveBeenCalledWith('older-session', 'description: current Schedule Spec\n', null, '/ai');
     expect(mockUpdateSessionSchedule.mock.invocationCallOrder[0]).toBeLessThan(mockSendMessage.mock.invocationCallOrder[0]);
-    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('matches');
+    expect(screen.getByLabelText('Schedule Spec status')).toHaveTextContent('matches');
     expect(chatKey(chat)).toBe('/ai\nolder-session');
   });
 
@@ -315,21 +315,21 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     const user = userEvent.setup();
     const view = render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Review this schedule');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Review this schedule');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Stop' });
     mockGenerateYaml.mockReturnValue('description: manually edited schedule\n');
     view.rerender(<ExperimentalAiPage />);
-    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('This response keeps its schedule data');
+    expect(screen.getByLabelText('Schedule Spec status')).toHaveTextContent('This response keeps its Schedule Spec');
     expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
     await act(async () => finish());
-    expect(screen.getByLabelText('Schedule data status')).toHaveTextContent('Sending your next message');
+    expect(screen.getByLabelText('Schedule Spec status')).toHaveTextContent('Sending your next message');
   });
 
   it('preserves chats across New chat and forgets an open chat without saving it again', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'First conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
@@ -375,7 +375,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     const entry = await within(history).findByRole('button', { name: /^Review external-session/ });
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'Unsaved draft');
     const confirmation = vi.spyOn(window, 'confirm').mockReturnValue(false);
     await user.click(entry);
@@ -391,7 +391,7 @@ describe('ExperimentalAiPage', () => {
   it('pastes Markdown over the selection and submits the converted message', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, 'Keep old ending');
     input.setSelectionRange(5, 8);
@@ -404,7 +404,7 @@ describe('ExperimentalAiPage', () => {
   it('submits long messages without a character limit', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     expect(input).not.toHaveAttribute('maxlength');
     input.focus();
@@ -417,7 +417,7 @@ describe('ExperimentalAiPage', () => {
   it('keeps complete formatted and plain text pastes', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' }) as HTMLTextAreaElement;
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     input.focus();
     await user.paste('Literal **Markdown**');
@@ -437,7 +437,7 @@ describe('ExperimentalAiPage', () => {
     }));
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
-      retentionSeconds: 10, messages: [], syncedSchedule: 'description: current schedule\n',
+      retentionSeconds: 10, messages: [], syncedScheduleSpec: 'description: current Schedule Spec\n',
     }));
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(readers).toHaveLength(1));
@@ -464,7 +464,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.upload(await screen.findByLabelText('Attach files'), new File(['workbook'], 'ward.xlsx'));
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the workbook');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the workbook');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const panel = await screen.findByRole('complementary', { name: 'Session files' });
     expect(await within(panel).findByText('ward.xlsx')).toBeInTheDocument();
@@ -482,7 +482,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a downloadable CSV');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a downloadable CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-zip');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
@@ -503,7 +503,7 @@ describe('ExperimentalAiPage', () => {
     }));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(await screen.findByRole('button', { name: 'Remove ZIP' }));
     expect(mockRemoveGeneratedZip).toHaveBeenCalledWith('session-id', 'zip-run', null, '/ai');
@@ -528,7 +528,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Make a CSV');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('The generated ZIP could not be retained.');
@@ -536,14 +536,14 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
-  it('sends a question with the current schedule and renders streamed text', async () => {
+  it('sends a question with the current Schedule Spec and renders streamed text', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
     // Generated export defaults are added only when the optimizer submits the schedule.
     expect(mockGenerateYaml.mock.calls[0][0]).not.toHaveProperty('export');
 
-    expect(screen.getByText('Browser schedule data: 0 people, 0 dates. Sent when you send a message.')).toBeInTheDocument();
+    expect(screen.getByText('Browser Schedule Spec: 0 people, 0 dates. Sent when you send a message.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
     await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.4.3'));
     expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
@@ -554,12 +554,12 @@ describe('ExperimentalAiPage', () => {
       'href',
       'https://github.com/j3soon/nurse-scheduling#ai-beta-access',
     );
-    expect(screen.getByRole('link', { name: 'Privacy details' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute(
       'href',
       'https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md',
     );
-    expect(screen.getByText(/All AI chats are logged and are not currently anonymized/)).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    expect(screen.queryByText(/When a response finishes/)).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     const sendButton = screen.getByRole('button', { name: 'Send' });
     expect(sendButton).toHaveTextContent('');
     expect(sendButton.querySelector('svg')).not.toBeNull();
@@ -572,7 +572,7 @@ describe('ExperimentalAiPage', () => {
     expect(responseTime).toHaveAttribute('title', new Date(responseTime.getAttribute('dateTime')!).toLocaleString());
     const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
     expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
-    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', undefined);
+    expect(mockCreateSession).toHaveBeenCalledWith('description: current Schedule Spec\n', null, '/ai', undefined);
     expect(mockRunEvents).toHaveBeenCalledWith(
       'session-id',
       'Who works Monday?',
@@ -621,13 +621,13 @@ describe('ExperimentalAiPage', () => {
     let finishPreparation!: (url: string) => void;
     mockGetChatExportUrl.mockReturnValue(new Promise<string>(resolve => { finishPreparation = resolve; }));
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
     expect(screen.getByRole('button', { name: 'Preparing export…' })).toBeDisabled();
     expect(document.querySelector('iframe')).toBeNull();
     expect(mockGetChatExportUrl).toHaveBeenCalledWith('session-id', null, '/ai');
-    finishPreparation('/ai/sessions/session-id/export?download=prepared&token=temporary');
+    finishPreparation('/ai/v1/sessions/session-id/export?download=prepared&token=temporary');
     await waitFor(() => expect(document.querySelector('iframe')).not.toBeNull());
     const frame = document.querySelector('iframe')!;
     expect(frame.hidden).toBe(true);
@@ -646,7 +646,7 @@ describe('ExperimentalAiPage', () => {
     mockGetChatExportUrl.mockRejectedValue(new Error('The chat archive could not be created. Try again.'));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
     expect(screen.getByText('The chat archive could not be created. Try again.')).toBeVisible();
@@ -657,7 +657,7 @@ describe('ExperimentalAiPage', () => {
   it('disables chat export when the server has no saved history', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeDisabled();
     expect(mockGetChatExportUrl).not.toHaveBeenCalled();
@@ -666,7 +666,7 @@ describe('ExperimentalAiPage', () => {
   it('explains when the server does not report context usage', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const usage = await screen.findByText('Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('The AI server has not reported context tokens.'));
@@ -682,7 +682,7 @@ describe('ExperimentalAiPage', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ExperimentalAiPage />);
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const usage = await screen.findByText('Context unavailable');
     expect(usage).toHaveAttribute('title', expect.stringContaining('not reported context tokens'));
@@ -700,7 +700,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Done.' });
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const usage = await screen.findByText(maxTokens ? 'Context ~3.3% used' : 'Context unavailable');
@@ -712,7 +712,7 @@ describe('ExperimentalAiPage', () => {
   it('compacts an idle conversation through the session stream without sending a question', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
@@ -726,7 +726,7 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent!({ type: 'compaction_start', runId: 'compact-run', reason: 'manual', tokensBefore: 12000 });
     });
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     expect(composer).toBeEnabled();
     await user.type(composer, 'Draft during compaction');
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled();
@@ -754,11 +754,11 @@ describe('ExperimentalAiPage', () => {
     let accept: ((id: string) => void) | undefined;
     mockCompactSession.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: 'Stop' }));
     const requestId = mockCompactSession.mock.calls[0][1] as string;
     expect(mockStopSession).toHaveBeenLastCalledWith('session-id', null, '/ai', requestId);
@@ -772,13 +772,13 @@ describe('ExperimentalAiPage', () => {
     }
     expect(await screen.findByText('Stopped before completion.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   });
 
   it('keeps compaction busy when an unrelated optimizer review finishes', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
@@ -789,30 +789,30 @@ describe('ExperimentalAiPage', () => {
     });
     expect(screen.getByRole('button', { name: 'Stop' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
     await act(async () => stream.onEvent({ type: 'done', runId: 'compact-run' }));
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   });
 
   it('releases a rejected compaction and leaves the conversation available', async () => {
     const user = userEvent.setup();
     mockCompactSession.mockRejectedValueOnce(new Error('Compaction is unavailable.'));
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Compact context' }));
     expect(await screen.findByText('Compaction is unavailable.')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Compact context' })).toBeEnabled();
   });
 
   it('restores the transcript and live session after navigating away', async () => {
     const user = userEvent.setup();
     const firstRender = render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works Monday?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
     await waitFor(() => expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull());
@@ -830,7 +830,7 @@ describe('ExperimentalAiPage', () => {
     vi.useFakeTimers();
     try {
       const view = render(<ExperimentalAiPage />);
-      const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
       fireEvent.change(composer, { target: { value: 'Who works Monday?' } });
       await act(async () => {
         fireEvent.submit(composer.closest('form')!);
@@ -857,7 +857,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'First question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'First question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const firstExpiration = new Date(now + 172800 * 1000).toISOString();
@@ -869,7 +869,7 @@ describe('ExperimentalAiPage', () => {
 
     const oneHourLater = now + 60 * 60 * 1000;
     dateNow.mockReturnValue(oneHourLater);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Second question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Second question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const renewedExpiration = new Date(oneHourLater + 172800 * 1000).toISOString();
@@ -883,7 +883,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() - 1,
       retentionSeconds: 172800,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
-      syncedSchedule: 'description: old schedule\n',
+      syncedScheduleSpec: 'description: old schedule\n',
       backgroundAssistantId: 'optimizer-turn',
     }));
 
@@ -902,14 +902,14 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() - 1,
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
-      syncedSchedule: 'description: old schedule\n',
+      syncedScheduleSpec: 'description: old schedule\n',
     }));
 
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText('Old question')).toBeInTheDocument();
     expect(screen.getByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     expect(composer).toBeEnabled();
     await user.type(composer, 'Draft for a new chat');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
@@ -930,7 +930,7 @@ describe('ExperimentalAiPage', () => {
       window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
         sessionId: 'long-session', endpoint: '/ai', expiresAt: now + 2592000 * 1000,
         retentionSeconds: 2592000, messages: [{ id: 'user-1', role: 'user', content: 'Keep this chat' }],
-        syncedSchedule: 'description: old schedule\n',
+        syncedScheduleSpec: 'description: old schedule\n',
       }));
       render(<ExperimentalAiPage />);
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -964,7 +964,7 @@ describe('ExperimentalAiPage', () => {
         { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending',
           activity: [{ kind: 'response', text: 'Partial' }], modelSelection, costSummary, providerCalls },
       ],
-      syncedSchedule: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
+      syncedScheduleSpec: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
     }));
     mockRunEvents.mockImplementation(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'delta', text: ' and finished.' });
@@ -1006,7 +1006,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     const view = render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain coverage.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain coverage.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Original answer.');
     await act(async () => {
@@ -1089,7 +1089,7 @@ describe('ExperimentalAiPage', () => {
         { id: 'question', role: 'user', content: pendingRequest.question },
         { id: 'answer', role: 'assistant', content: '', status: 'pending' },
       ],
-      syncedSchedule: 'description: original schedule\n', pendingRequest,
+      syncedScheduleSpec: 'description: original schedule\n', pendingRequest,
     }));
     render(<ExperimentalAiPage />);
 
@@ -1113,7 +1113,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.upload(await screen.findByLabelText('Attach files'), new File(['a,b'], 'ward.csv', { type: 'text/csv' }));
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the file');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the file');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(mockUploadFiles).toHaveBeenCalled());
     await user.click(screen.getByRole('button', { name: 'Stop' }));
@@ -1129,7 +1129,7 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementation(() => new Promise<void>(() => {}));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
     // The server keeps the accepted run, and the restored page reattaches to it.
@@ -1147,7 +1147,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(connectionChange).toBeDefined());
 
@@ -1164,7 +1164,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() - 1,
       retentionSeconds: 3600,
       messages: [{ id: 'user-1', role: 'user', content: 'Old question' }],
-      syncedSchedule: 'description: old schedule\n',
+      syncedScheduleSpec: 'description: old schedule\n',
     }));
 
     render(<ExperimentalAiPage />);
@@ -1183,18 +1183,18 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() + 60_000,
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Preserve this transcript' }],
-      syncedSchedule: 'description: old schedule\n',
+      syncedScheduleSpec: 'description: old schedule\n',
     }));
 
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
     expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
   });
 
@@ -1212,7 +1212,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() + 60_000,
       retentionSeconds: 172800,
       messages: [{ id: 'user-1', role: 'user', content: 'Stored question' }],
-      syncedSchedule: 'description: old schedule\n',
+      syncedScheduleSpec: 'description: old schedule\n',
     }));
     const user = userEvent.setup();
 
@@ -1242,7 +1242,7 @@ describe('ExperimentalAiPage', () => {
       });
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(emit).toBeDefined());
     const writeConversation = vi.spyOn(Storage.prototype, 'setItem');
@@ -1275,7 +1275,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -1311,7 +1311,7 @@ describe('ExperimentalAiPage', () => {
     });
     const firstRender = render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
@@ -1397,7 +1397,7 @@ describe('ExperimentalAiPage', () => {
     const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimizer-result');
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-    await user.click(screen.getByRole('button', { name: 'Download result' }));
+    await user.click(screen.getByRole('button', { name: 'Download schedule' }));
     await waitFor(() => expect(mockDownloadOptimization).toHaveBeenCalledWith(
       'session-id',
       'opt-result-1',
@@ -1415,7 +1415,7 @@ describe('ExperimentalAiPage', () => {
       null,
       '/ai',
     );
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Thanks');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Thanks');
     expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
     await waitFor(() => {
       const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
@@ -1426,7 +1426,7 @@ describe('ExperimentalAiPage', () => {
     firstRender.unmount();
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
     render(<ExperimentalAiPage />);
-    expect(await screen.findByRole('button', { name: 'Download result' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Download schedule' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
     expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
   });
@@ -1438,7 +1438,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(resolve => { finishStream = resolve; });
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(finishStream).toBeDefined());
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
@@ -1466,7 +1466,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     mockCancelOptimization.mockRejectedValueOnce(new Error('Optimizer unavailable.'));
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
@@ -1491,7 +1491,7 @@ describe('ExperimentalAiPage', () => {
       .mockImplementation(() => new Promise(() => undefined));
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     // Reconnection continues in the background, so the disconnect is not reported as an error.
@@ -1513,7 +1513,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
@@ -1539,17 +1539,17 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
     act(() => {
       backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' });
       backgroundCallbacks?.onEvent({ type: 'delta', text: 'Obsolete partial answer.' });
-      backgroundCallbacks?.onEvent({ type: 'stale', message: 'The schedule changed while this response was generated.' });
+      backgroundCallbacks?.onEvent({ type: 'stale', message: 'The Schedule Spec changed while this response was generated.' });
     });
 
-    expect(screen.getByRole('alert')).toHaveTextContent('The schedule changed while this response was generated.');
+    expect(screen.getByRole('alert')).toHaveTextContent('The Schedule Spec changed while this response was generated.');
     expect(screen.queryByText('Obsolete partial answer.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
@@ -1569,7 +1569,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() + 60_000,
       retentionSeconds: 172800,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Completed answer.', status: 'pending' }],
-      syncedSchedule: 'description: current schedule\n',
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
       sessionEventId: 4,
     }));
 
@@ -1590,14 +1590,6 @@ describe('ExperimentalAiPage', () => {
     expect(stored.messages[0].status).toBe(event === 'done' ? undefined : 'stopped');
   });
 
-  it('warns that the chat is stored unencrypted in this browser', async () => {
-    render(<ExperimentalAiPage />);
-
-    expect(await screen.findByText(
-      /Recent chats are stored unencrypted on this device for seven days after their last activity\./,
-    )).toBeInTheDocument();
-  });
-
   it('warns once the assistant stops receiving the oldest messages', async () => {
     const user = userEvent.setup();
     let backgroundCallbacks: SessionStreamOptions | undefined;
@@ -1610,7 +1602,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     expect(screen.queryByText(/no longer sent to the assistant/)).not.toBeInTheDocument();
@@ -1629,7 +1621,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() + 60_000,
       retentionSeconds: 172800,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
-      syncedSchedule: 'description: current schedule\n',
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
       sessionEventId: 9,
       trimmedHistoryCount: 3,
     }));
@@ -1652,7 +1644,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() - 1_000,
       retentionSeconds: 172800,
       messages: [{ id: 'answer-1', role: 'assistant', content: 'Earlier answer.' }],
-      syncedSchedule: 'description: current schedule\n',
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
       sessionEventId: 9,
       trimmedHistoryCount: 3,
     }));
@@ -1676,7 +1668,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
 
@@ -1718,7 +1710,7 @@ describe('ExperimentalAiPage', () => {
       expiresAt: Date.now() + 60_000,
       retentionSeconds: 172800,
       messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
-      syncedSchedule: 'description: current schedule\n',
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
       sessionEventId: 4,
       backgroundAssistantId: 'optimizer-turn',
     }));
@@ -1744,7 +1736,7 @@ describe('ExperimentalAiPage', () => {
     mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
     mockStopSession.mockResolvedValue(undefined);
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Wait');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(accept).toBeDefined());
     await user.click(screen.getByRole('button', { name: 'Stop' }));
@@ -1765,7 +1757,7 @@ describe('ExperimentalAiPage', () => {
     mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(resolve => { disconnect = resolve; }));
     mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Wait');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(accept).toBeDefined());
     const stream = mockStreamSessionEvents.mock.calls[0][1] as SessionStreamOptions;
@@ -1802,7 +1794,7 @@ describe('ExperimentalAiPage', () => {
       return 'accepted';
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Fast answer.')).toBeInTheDocument();
     expect(screen.getByText('Previous review.')).toBeInTheDocument();
@@ -1819,7 +1811,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Partial');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
@@ -1847,7 +1839,7 @@ describe('ExperimentalAiPage', () => {
     }
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Explain');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     if (!active) await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -1881,7 +1873,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(resolve => { finishForeground = resolve; });
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(finishForeground).toBeDefined());
     act(() => background?.onEvent({ type: 'done', runId: 'previous-turn' }));
@@ -1899,7 +1891,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
     render(<ExperimentalAiPage />);
-    const input = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -1913,7 +1905,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockRunEvents.mock.calls[1][1]).toBe('Explain the result');
   });
 
-  it('ignores output and schedule changes from the previous conversation stream', async () => {
+  it('ignores output and Schedule Spec changes from the previous conversation stream', async () => {
     const user = userEvent.setup();
     let background: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
@@ -1922,20 +1914,20 @@ describe('ExperimentalAiPage', () => {
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
     act(() => {
       background?.onEvent({ type: 'run_start', runId: 'old', trigger: 'optimizer' });
       background?.onEvent({ type: 'delta', text: 'Leaked old answer' });
-      background?.onEvent({ type: 'schedule_applied', applied: {
-        runId: 'old', scheduleYaml: 'description: old\n', diff: 'Old change', replacedQueuedSchedule: false,
+      background?.onEvent({ type: 'schedule_spec_applied', applied: {
+        runId: 'old', scheduleSpecYaml: 'description: old\n', diff: 'Old change', replacedQueuedScheduleSpec: false,
       } });
       background?.onEventId?.(900);
     });
     expect(screen.queryByText('Leaked old answer')).not.toBeInTheDocument();
-    expect(screen.queryByText('Applied to your schedule')).not.toBeInTheDocument();
+    expect(screen.queryByText('Applied to your Schedule Spec')).not.toBeInTheDocument();
     expect(mockLoadFromYaml).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
@@ -1951,7 +1943,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(resolve => { finish = resolve; });
     });
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Build a schedule.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Build a schedule.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('The provider timed out. Retrying in 2 s (attempt 2 of 5).')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
@@ -1970,7 +1962,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     render(<ExperimentalAiPage />);
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(composer, 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -2004,7 +1996,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
@@ -2032,7 +2024,7 @@ describe('ExperimentalAiPage', () => {
       });
       render(<ExperimentalAiPage />);
 
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await screen.findByText('Alice works Monday.');
       act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
@@ -2070,7 +2062,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Optimize it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
     act(() => backgroundCallbacks?.onEvent({ type: 'run_start', runId: 'optimizer-turn', trigger: 'optimizer' }));
@@ -2085,7 +2077,7 @@ describe('ExperimentalAiPage', () => {
   it('starts with a single-line composer and grows with the draft', async () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     expect(composer).toHaveAttribute('rows', '1');
     expect(composer).toHaveStyle({ height: '24px', overflowY: 'hidden' });
@@ -2110,11 +2102,11 @@ describe('ExperimentalAiPage', () => {
       'http://localhost:8001',
     ));
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockCreateSession).toHaveBeenCalledWith(
-      'description: current schedule\n',
+      'description: current Schedule Spec\n',
       null,
       'http://localhost:8001',
       undefined,
@@ -2174,7 +2166,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+      const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
       await user.type(draft, 'Please');
       const languageSelect = await screen.findByRole('combobox', { name: 'Dictation language' });
       expect(languageSelect).toHaveValue('');
@@ -2295,7 +2287,7 @@ describe('ExperimentalAiPage', () => {
       });
     });
     render(<ExperimentalAiPage />);
-    const draft = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(draft, 'Inspect P1.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -2360,7 +2352,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
       await waitFor(() => expect(scrollTo).toHaveBeenCalled());
@@ -2405,7 +2397,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
       await waitFor(() => expect(scrollTo).toHaveBeenCalled());
@@ -2451,7 +2443,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
       await waitFor(() => expect(scrollTo).toHaveBeenCalled());
@@ -2502,7 +2494,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Stream details.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
 
@@ -2559,7 +2551,7 @@ describe('ExperimentalAiPage', () => {
 
     try {
       render(<ExperimentalAiPage />);
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the schedule.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check the schedule.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(startTool).toBeDefined());
 
@@ -2605,7 +2597,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Work in stages.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Work in stages.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const activity = await screen.findByLabelText('Assistant activity');
@@ -2640,7 +2632,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read both.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await screen.findByText('contents of b');
@@ -2669,7 +2661,7 @@ describe('ExperimentalAiPage', () => {
     });
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Keep working.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Partial answer.');
     await user.click(await screen.findByRole('button', { name: 'Stop' }));
@@ -2706,7 +2698,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
     await waitFor(() => expect(screen.getByLabelText('AI model')).toHaveValue('fast'));
     await user.selectOptions(screen.getByLabelText('AI model'), 'deep');
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(composer, 'First question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('The first model is streaming.');
@@ -2721,7 +2713,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
     await act(async () => finishSave({ selection: current, locked: true }));
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
-    expect(mockCreateSession).toHaveBeenCalledWith('description: current schedule\n', null, '/ai', original);
+    expect(mockCreateSession).toHaveBeenCalledWith('description: current Schedule Spec\n', null, '/ai', original);
     expect(mockSendMessage.mock.calls[0][5].selection).toEqual(original);
     expect(mockSendMessage.mock.calls[1][5].selection).toEqual(current);
     expect(screen.getByText('deep · high')).toBeInTheDocument();
@@ -2736,7 +2728,7 @@ describe('ExperimentalAiPage', () => {
       });
     });
     render(<ExperimentalAiPage />);
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First question.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -2771,7 +2763,7 @@ describe('ExperimentalAiPage', () => {
       });
     });
     render(<ExperimentalAiPage />);
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First question.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -2796,7 +2788,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     const tokenButton = await screen.findByRole('button', { name: 'Enter token for AI assistant' });
-    const composer = screen.getByRole('textbox', { name: 'Ask about the current schedule' });
+    const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     expect(composer).toBeEnabled();
     await user.type(composer, 'Who works?');
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
@@ -2812,7 +2804,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(
-      'description: current schedule\n',
+      'description: current Schedule Spec\n',
       'ai-session-token',
       '/ai',
       undefined,
@@ -2855,11 +2847,11 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText('Token saved on this device')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(mockCreateSession).toHaveBeenCalledWith(
-      'description: current schedule\n',
+      'description: current Schedule Spec\n',
       'remembered-ai-token',
       '/ai',
       undefined,
@@ -2878,7 +2870,7 @@ describe('ExperimentalAiPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
     await user.type(screen.getByLabelText('Token for AI assistant'), 'stale-ai-token');
     await user.click(screen.getByRole('button', { name: 'Save token for AI assistant' }));
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Who works?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -2899,7 +2891,7 @@ describe('ExperimentalAiPage', () => {
     expect(input.closest('label')?.querySelector('svg')).not.toBeNull();
     await user.upload(input, image);
     expect(screen.getByAltText('Preview of ward.png')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'What is shown?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'What is shown?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockUploadFiles).toHaveBeenCalledWith(
@@ -2951,7 +2943,7 @@ describe('ExperimentalAiPage', () => {
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 4 }]);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -2972,7 +2964,7 @@ describe('ExperimentalAiPage', () => {
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 123_456_788 }]);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -2988,7 +2980,7 @@ describe('ExperimentalAiPage', () => {
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 3 }]);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current schedule' }), 'Hello');
+    await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -2998,7 +2990,7 @@ describe('ExperimentalAiPage', () => {
     });
     const files = ['one.txt', 'two.txt', 'three.txt'].map(name => new File(['abc'], name));
     await user.upload(screen.getByLabelText('Attach files'), files);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the files.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(2));
     expect(mockUploadFile.mock.calls.map(call => (call[1] as File).name)).toEqual(['one.txt', 'two.txt', 'three.txt']);
@@ -3015,7 +3007,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     await user.upload(await screen.findByLabelText('Attach files'), [new File(['abc'], 'one.txt'), new File(['def'], 'two.txt')]);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read the files.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Later batch failed.');
     expect(within(screen.getByLabelText('Session files')).getByText('one.txt')).toBeInTheDocument();
@@ -3041,7 +3033,7 @@ describe('ExperimentalAiPage', () => {
     expect(input).not.toHaveAttribute('accept');
     await user.upload(input, document);
     expect(screen.getByText('custom')).toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check the file.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check the file.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockUploadFiles).toHaveBeenCalledWith(
@@ -3070,7 +3062,7 @@ describe('ExperimentalAiPage', () => {
 
     const input = await screen.findByLabelText('Attach files');
     await user.upload(input, [pdf, workbook]);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Read both files.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read both files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(mockUploadFiles).toHaveBeenNthCalledWith(
@@ -3100,7 +3092,7 @@ describe('ExperimentalAiPage', () => {
       'Could not load AI capabilities from /ai. Check that the AI backend is reachable from this browser.',
     );
     expect(screen.queryByLabelText('Attach files')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   });
 
   it('animates the thinking indicator while awaiting the first response token', async () => {
@@ -3111,7 +3103,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Think about this.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Think about this.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const thinking = await screen.findByRole('status', { name: 'Thinking' });
@@ -3134,7 +3126,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Can you help?');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Can you help?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     const alert = await screen.findByRole('alert');
@@ -3145,7 +3137,7 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Provisional response.').closest('article')).toHaveTextContent(providerError);
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Continue');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Continue');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
@@ -3162,20 +3154,20 @@ describe('ExperimentalAiPage', () => {
       _message: string,
       callbacks: SessionStreamOptions,
     ) => {
-      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: obsolete proposal' });
+      callbacks.onEvent({ type: 'schedule_spec_change', scheduleSpecYaml: 'description: obsolete proposal' });
       callbacks.onEvent({ type: 'delta', text: 'Obsolete response.' });
-      throw new MockAiStaleRunError('The schedule changed.');
+      throw new MockAiStaleRunError('The Schedule Spec changed.');
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Change it.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
-    expect(screen.getByText('The schedule changed.')).toBeInTheDocument();
+    expect(screen.getByText('The Schedule Spec changed.')).toBeInTheDocument();
     expect(screen.queryByText('Obsolete response.')).not.toBeInTheDocument();
-    expect(screen.queryByText('schedule edit')).not.toBeInTheDocument();
+    expect(screen.queryByText('Schedule Spec edit')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -3190,7 +3182,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     await user.upload(await screen.findByLabelText('Attach files'), image);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check this image.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach ward.png again, then send the question.'))
@@ -3208,7 +3200,7 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     await user.upload(await screen.findByLabelText('Attach files'), new File(['png'], 'ward.png', { type: 'image/png' }));
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Check this image.');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check this image.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
@@ -3216,27 +3208,27 @@ describe('ExperimentalAiPage', () => {
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 
-  describe('applied schedule changes', () => {
-    const check = 'Trusted schedule check after this command:\nThe candidate passed trusted server-side validation.';
-    const changingStream = (replacedQueuedSchedule = false) => async (
+  describe('applied Schedule Spec changes', () => {
+    const check = 'Trusted Schedule Spec check after this command:\nThe candidate passed trusted server-side validation.';
+    const changingStream = (replacedQueuedScheduleSpec = false) => async (
       _sessionId: string,
       _message: string,
       callbacks: SessionStreamOptions,
     ) => {
       callbacks.onEvent({ type: 'tool', activity: {
         name: 'bash', arguments: '{"command":"edit"}', result: `exit_code: 0\n\n${check}`, ok: true,
-        scheduleCheck: { ok: true, text: check },
+        scheduleSpecCheck: { ok: true, text: check },
       } });
-      callbacks.onEvent({ type: 'schedule_change', scheduleYaml: 'description: Head\n' });
+      callbacks.onEvent({ type: 'schedule_spec_change', scheduleSpecYaml: 'description: Head\n' });
       callbacks.onEvent({ type: 'delta', text: 'I set the description.' });
-      callbacks.onEvent({ type: 'schedule_applied', applied: {
-        runId: 'change-run', scheduleYaml: 'description: Head\n',
-        diff: '- description: "current schedule" -> "Head"', replacedQueuedSchedule,
+      callbacks.onEvent({ type: 'schedule_spec_applied', applied: {
+        runId: 'change-run', scheduleSpecYaml: 'description: Head\n',
+        diff: '- description: "current Schedule Spec" -> "Head"', replacedQueuedScheduleSpec,
       } });
     };
 
     const ask = async (user: ReturnType<typeof userEvent.setup>) => {
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Set the description.');
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Set the description.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
     };
 
@@ -3249,8 +3241,8 @@ describe('ExperimentalAiPage', () => {
       await waitFor(() => expect(mockLoadFromYaml).toHaveBeenCalledTimes(1));
       expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'Head' });
       expect(screen.queryByText(/replaced changes made during this response/)).not.toBeInTheDocument();
-      expect(screen.getByText('Schedule check passed')).toBeInTheDocument();
-      expect(screen.getByText('Applied to your schedule')).toBeInTheDocument();
+      expect(screen.getByText('Schedule Spec check passed')).toBeInTheDocument();
+      expect(screen.getByText('Applied to your Schedule Spec')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
     });
 
@@ -3260,7 +3252,7 @@ describe('ExperimentalAiPage', () => {
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      expect(await screen.findByText('Applied to your schedule')).toBeInTheDocument();
+      expect(await screen.findByText('Applied to your Schedule Spec')).toBeInTheDocument();
       expect(mockLoadFromYaml).toHaveBeenCalledWith({ description: 'Head' });
       expect(screen.getByText(/replaced changes made during this response/)).toBeVisible();
       expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
@@ -3300,23 +3292,23 @@ describe('ExperimentalAiPage', () => {
       mockRunEvents.mockImplementationOnce(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
         callbacks.onEvent({ type: 'tool', activity: {
           name: 'bash', arguments: '{"command":"break"}', result: 'Broken.', ok: false,
-          scheduleCheck: { ok: false, text: 'schedule.yaml introduces problems and cannot be applied.' },
+          scheduleSpecCheck: { ok: false, text: 'schedule.yaml introduces problems and cannot be applied.' },
         } });
       });
       const user = userEvent.setup();
       render(<ExperimentalAiPage />);
       await ask(user);
 
-      await screen.findByText('Schedule check failed');
+      await screen.findByText('Schedule Spec check failed');
       expect(screen.getByText('schedule.yaml introduces problems and cannot be applied.')).toBeVisible();
     });
 
     it('restores application receipts so replay preserves Undo after a reload', async () => {
       window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
         sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
-        retentionSeconds: 300, messages: [], syncedSchedule: 'description: Head\n',
-        syncedBrowserSchedule: 'description: Head\n',
-        appliedScheduleRuns: { 'change-run': null },
+        retentionSeconds: 300, messages: [], syncedScheduleSpec: 'description: Head\n',
+        syncedBrowserScheduleSpec: 'description: Head\n',
+        appliedScheduleSpecRuns: { 'change-run': null },
       }));
       mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
       render(<ExperimentalAiPage />);
@@ -3353,7 +3345,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     for (const question of ['Q1', 'Q2']) {
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), question);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), question);
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await screen.findByText(`Answer to ${question}`);
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -3379,7 +3371,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     for (const question of ['Q1', 'Q2']) {
-      await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), question);
+      await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), question);
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await screen.findByText(`Answer to ${question}`);
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
@@ -3415,7 +3407,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current schedule' }), 'Cost question');
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Cost question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Turn details · ~$0.1000 · Speed unavailable · 1 call');
     const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;

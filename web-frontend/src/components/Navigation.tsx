@@ -23,7 +23,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight, FiRotateCcw, FiRotateCw } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
 interface NavTab {
@@ -57,7 +57,7 @@ export default function Navigation() {
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
   const { hasTabSwitchWarningActive } = useUnsavedEditingState();
-  const { exportData, undo, redo, canUndo, canRedo } = useSchedulingData();
+  const { exportData, undo, redo, canUndo, canRedo } = useScheduleSpec();
   const hasCustomExportLayout = exportData !== undefined;
 
   const navigateToTab = useCallback((index: number) => {

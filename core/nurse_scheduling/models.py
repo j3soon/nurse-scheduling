@@ -467,8 +467,8 @@ class CompiledExport:
 
 
 @dataclass(frozen=True)
-class CompiledSchedule:
-    """Validated, index-based schedule data shared by downstream phases."""
+class CompiledScheduleSpec:
+    """Validated, index-based Schedule Spec shared by downstream phases."""
 
     dates: tuple[datetime.date, ...]
     map_sid_s: Mapping[str, tuple[int, ...]]
@@ -483,9 +483,9 @@ class CompiledSchedule:
         return self
 
 
-class NurseSchedulingData(BaseModel):
+class ScheduleSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    _compiled_schedule: CompiledSchedule = PrivateAttr()
+    _compiled_schedule_spec: CompiledScheduleSpec = PrivateAttr()
 
     appVersion: str | None = None
     apiVersion: str
@@ -582,13 +582,13 @@ class NurseSchedulingData(BaseModel):
                 raise ValueError(f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D")
             date_group_ids.add(group.id)
 
-        self._compiled_schedule = _validate_and_compile_schedule(self)
+        self._compiled_schedule_spec = _validate_and_compile_schedule_spec(self)
         return self
 
     @property
-    def compiled_schedule(self) -> CompiledSchedule:
+    def compiled_schedule_spec(self) -> CompiledScheduleSpec:
         """Return the compiled snapshot of the values seen during validation."""
-        return self._compiled_schedule
+        return self._compiled_schedule_spec
 
 
 def _build_reference_index(item_ids, groups, reserved, reference_name):
@@ -610,7 +610,7 @@ def _build_reference_index(item_ids, groups, reserved, reference_name):
     return reference_map
 
 
-def _build_date_index(data: NurseSchedulingData):
+def _build_date_index(data: ScheduleSpec):
     """Generate dates and expand every supported date selector.
 
     Concrete YYYY-MM-DD values map to date indices. Keywords and weekdays are
@@ -895,7 +895,7 @@ def _compile_preference(data, preference, people_map, shift_map, date_map, dates
 
 
 def _compile_export(data, people_map, shift_map, date_map):
-    """Validate and resolve export references against the validated schedule."""
+    """Validate and resolve export references against the validated Schedule Spec."""
     formatting = []
     for rule in data.export.formatting:
         people = ()
@@ -953,8 +953,8 @@ def _compile_export(data, people_map, shift_map, date_map):
     return CompiledExport(tuple(formatting), tuple(extra_columns), extra_rows)
 
 
-def _validate_and_compile_schedule(data: NurseSchedulingData) -> CompiledSchedule:
-    """Validate backend schedule semantics and compile reusable index-based data."""
+def _validate_and_compile_schedule_spec(data: ScheduleSpec) -> CompiledScheduleSpec:
+    """Validate backend Schedule Spec semantics and compile reusable index-based data."""
     if data.apiVersion != "alpha":
         raise ValueError(f"Unsupported API version: {data.apiVersion}")
 
@@ -985,7 +985,7 @@ def _validate_and_compile_schedule(data: NurseSchedulingData) -> CompiledSchedul
         _compile_preference(data, preference, people_map, shift_map, date_map, dates) for preference in data.preferences
     )
     compiled_export = _compile_export(data, people_map, shift_map, date_map)
-    return CompiledSchedule(
+    return CompiledScheduleSpec(
         dates=dates,
         map_sid_s=_FrozenMapping(shift_map),
         map_pid_p=_FrozenMapping(people_map),

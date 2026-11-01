@@ -160,9 +160,13 @@ class SessionRecovery:
                 if self._store.get(session_id) is None:
                     return True
                 for outcome in tuple(self._unsaved_outcomes.get(session_id, ())):
-                    arguments, schedule_change = outcome[:-1], outcome[-1]
+                    arguments, schedule_spec_change = outcome[:-1], outcome[-1]
                     if not await self._write_with_entries(
-                        session_id, "finish_run", *arguments, session_id=session_id, schedule_change=schedule_change
+                        session_id,
+                        "finish_run",
+                        *arguments,
+                        session_id=session_id,
+                        schedule_spec_change=schedule_spec_change,
                     ):
                         return self._record(session_id, False)
                     self._unsaved_outcomes[session_id].remove(outcome)
@@ -274,7 +278,7 @@ class SessionRecovery:
             "application/json",
             json.dumps(status, ensure_ascii=False).encode(),
         )
-        add("optimizer-schedule", "schedule.yaml", "application/yaml", job.schedule_yaml.encode())
+        add("optimizer-schedule", "schedule-spec.yaml", "application/yaml", job.schedule_spec_yaml.encode())
         add("optimizer-input", "backend-input.yaml", "application/yaml", job.submitted_yaml.encode())
         if artifact is not None:
             add("optimizer-workbook", artifact.filename, artifact.media_type, artifact.content)
@@ -354,18 +358,18 @@ class SessionRecovery:
         usage: TokenUsage | None,
         committed: bool,
         *,
-        schedule_change: dict[str, Any] | None = None,
+        schedule_spec_change: dict[str, Any] | None = None,
     ) -> bool:
         """Save the outcome with the resulting state. A failed write is retried by the next save."""
         if self.history is None:
             return True
         outcome = (run_id, status, error_code, usage, committed)
         if await self._write_state(
-            session_id, "finish_run", *outcome, session_id=session_id, schedule_change=schedule_change
+            session_id, "finish_run", *outcome, session_id=session_id, schedule_spec_change=schedule_spec_change
         ):
             return True
         if self._store.get(session_id) is not None:
-            self._unsaved_outcomes.setdefault(session_id, []).append((*outcome, schedule_change))
+            self._unsaved_outcomes.setdefault(session_id, []).append((*outcome, schedule_spec_change))
         return False
 
     async def stop_message(self, session_id: str, message_id: str) -> None:
@@ -464,7 +468,7 @@ class SessionRecovery:
                     if run["terminal_type"] is not None:
                         continue
                     await self._end_unfinished_run(
-                        session, run["id"], run["kind"], run["status"], run.get("schedule_change")
+                        session, run["id"], run["kind"], run["status"], run.get("schedule_spec_change")
                     )
             finally:
                 release()
@@ -475,7 +479,7 @@ class SessionRecovery:
         run_id: str,
         kind: str,
         status: str,
-        schedule_change: dict[str, Any] | None = None,
+        schedule_spec_change: dict[str, Any] | None = None,
     ) -> None:
         """Publish the terminal event a stored run lacks. A running run was interrupted by the restart."""
         terminal: AgentSessionTerminalEvent
@@ -485,8 +489,8 @@ class SessionRecovery:
             terminal = {"type": "error", "message": message}
             await self.finish_run(session.id, run_id, "failed", "service_restart", None, False)
         elif status == "completed":
-            if schedule_change is not None:
-                session.publish(schedule_change)
+            if schedule_spec_change is not None:
+                session.publish(schedule_spec_change)
             terminal = {"type": "done"}
         elif status == "cancelled":
             terminal = {"type": "stopped"}

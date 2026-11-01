@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
+import { seedScheduleSpecState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('save-load YAML preview reflects uploaded state after a page refresh', async ({ page }) => {
   /*
@@ -35,7 +35,7 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'preview refresh seed',
     dates: {
@@ -61,8 +61,8 @@ test('save-load YAML preview reflects uploaded state after a page refresh', asyn
   expect(yamlText).toContain('Team Alpha');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/save-and-load');
   await expect(page.locator('pre')).not.toContainText('Team Alpha');

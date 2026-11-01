@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalScheduleSpecState, setDateRange } from './helpers';
 
 test('a repeated optimize run after upstream edits submits updated YAML', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('a repeated optimize run after upstream edits submits updated YAML', async 
    * 4. Confirm the second request body reflects the edit and differs from the first.
    */
   await disableModalDialogs(page);
-  await seedMinimalSchedulingState(page);
+  await seedMinimalScheduleSpecState(page);
   await setDateRange(page);
 
   const bodies: string[] = [];

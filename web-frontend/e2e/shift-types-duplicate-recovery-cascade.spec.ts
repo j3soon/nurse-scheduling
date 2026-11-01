@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shift-type duplicate-ID recovery cascades the final corrected names downstream', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('shift-type duplicate-ID recovery cascades the final corrected names downst
    * 4. Revisit downstream pages and verify only the corrected IDs remain.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift-type duplicate recovery cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

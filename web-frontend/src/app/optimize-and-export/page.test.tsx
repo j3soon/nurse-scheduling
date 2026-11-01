@@ -35,14 +35,14 @@ import {
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 const mockGenerateYamlFromState = vi.hoisted(() => vi.fn());
 const mockRestorePeopleIdsInXlsx = vi.hoisted(() => vi.fn());
 const mockCurrentAppVersion = vi.hoisted(() => ({ value: 'frontend-test' }));
 const mockSendFeedback = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 vi.mock('@/utils/yamlGenerator', () => ({
@@ -96,7 +96,7 @@ class MockEventSource {
   }
 }
 
-const createSchedulingData = (overrides = {}) => ({
+const createScheduleSpec = (overrides = {}) => ({
   apiVersionData: 'alpha',
   descriptionData: 'baseline',
   dateData: {
@@ -375,7 +375,7 @@ describe('OptimizeAndExportPage error handling', () => {
     mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
     mockSendFeedback.mockReset();
     mockSendFeedback.mockResolvedValue(undefined);
-    mockUseSchedulingData.mockReturnValue(createSchedulingData());
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec());
     mockCurrentAppVersion.value = 'frontend-test';
     vi.stubGlobal('fetch', vi.fn());
     vi.stubGlobal('EventSource', undefined);
@@ -497,19 +497,15 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText('Activity unavailable')).toHaveLength(2);
   });
 
-  it('uses backward-compatible defaults when a healthy backend has no optimization options endpoint', async () => {
+  it('uses default options and reports an unavailable current submission route without a legacy retry', async () => {
     const user = userEvent.setup();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementation((url: string) => {
       if (url.endsWith('/optimize/options')) {
         return Promise.resolve({ ok: false, status: 404 });
       }
-      if (url.endsWith('/optimize')) {
-        return Promise.resolve({
-          ok: false,
-          status: 422,
-          text: vi.fn().mockResolvedValue('legacy request reached backend'),
-        });
+      if (url.endsWith('/schedule_spec/optimize')) {
+        return Promise.resolve({ ok: false, status: 404, text: vi.fn().mockResolvedValue('Not Found') });
       }
       return Promise.resolve(healthyResponse());
     });
@@ -527,14 +523,17 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `${LOCAL_API_URL}/optimize`,
+      `${LOCAL_API_URL}/schedule_spec/optimize`,
       expect.objectContaining({ method: 'POST' })
     ));
-    const optimizeRequest = fetchMock.mock.calls.find(([url]) => url === `${LOCAL_API_URL}/optimize`);
+    const optimizeRequest = fetchMock.mock.calls.find(([url]) => url === `${LOCAL_API_URL}/schedule_spec/optimize`);
     const requestBody = optimizeRequest?.[1]?.body as FormData;
+    expect(requestBody.get('schedule_spec_file')).toBeInstanceOf(File);
+    expect(requestBody.get('file')).toBeNull();
     expect(requestBody.get('solver')).toBe('ortools/cp-sat');
     expect(requestBody.get('timeout')).toBe('300');
     expect(requestBody.get('prettify')).toBe('true');
+    expect(fetchMock.mock.calls.some(([url]) => url === `${LOCAL_API_URL}/optimize`)).toBe(false);
   });
 
   it('preserves existing options when an options refresh temporarily fails', async () => {
@@ -651,7 +650,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await screen.findByText('Server error (503): temporary failure');
 
     const createCall = fetchMock.mock.calls.find(
-      ([url, options]) => url === `${LOCAL_API_URL}/optimize` && options?.method === 'POST'
+      ([url, options]) => url === `${LOCAL_API_URL}/schedule_spec/optimize` && options?.method === 'POST'
     );
     const formData = createCall?.[1].body as FormData;
     expect(formData.get('solver')).toBe('ortools/cp-sat');
@@ -773,7 +772,7 @@ describe('OptimizeAndExportPage error handling', () => {
           solverChoices,
         }));
       }
-      if (url === `${secondaryEndpoint}/optimize` && options?.method === 'POST') {
+      if (url === `${secondaryEndpoint}/schedule_spec/optimize` && options?.method === 'POST') {
         return new Promise(resolve => {
           resolveCreateJob = resolve;
         });
@@ -798,7 +797,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `${secondaryEndpoint}/optimize`,
+      `${secondaryEndpoint}/schedule_spec/optimize`,
       expect.objectContaining({ method: 'POST' })
     ));
 
@@ -1527,7 +1526,7 @@ describe('OptimizeAndExportPage error handling', () => {
     await user.click(screen.getByRole('button', { name: 'Optimize Anyway and Download' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `${LOCAL_API_URL}/optimize`,
+      `${LOCAL_API_URL}/schedule_spec/optimize`,
       expect.objectContaining({ method: 'POST' })
     ));
     await expect(screen.findByText('Server error (422): request rejected by old API')).resolves.toBeInTheDocument();
@@ -1601,15 +1600,15 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getByText('42,000')).toBeInTheDocument();
     expect(screen.getByText('OPTIMAL')).toBeInTheDocument();
 
-    expect(fetch).toHaveBeenCalledWith('http://localhost:8000/optimize', expect.objectContaining({ method: 'POST' }));
+    expect(fetch).toHaveBeenCalledWith('http://localhost:8000/schedule_spec/optimize', expect.objectContaining({ method: 'POST' }));
     const optimizeRequest = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.find(
-      ([url, init]) => url === 'http://localhost:8000/optimize' && (init as RequestInit | undefined)?.method === 'POST'
+      ([url, init]) => url === 'http://localhost:8000/schedule_spec/optimize' && (init as RequestInit | undefined)?.method === 'POST'
     );
     const optimizeBody = optimizeRequest?.[1]?.body as FormData;
     expect(optimizeBody).toBeInstanceOf(FormData);
-    expect(optimizeBody.get('yaml_content')).toBeNull();
-    expect(optimizeBody.get('file')).toBeInstanceOf(File);
-    expect((optimizeBody.get('file') as File).name).toBe('schedule.yaml');
+    expect(optimizeBody.get('schedule_spec_yaml')).toBeNull();
+    expect(optimizeBody.get('schedule_spec_file')).toBeInstanceOf(File);
+    expect((optimizeBody.get('schedule_spec_file') as File).name).toBe('schedule-spec.yaml');
     expect(optimizeBody.get('prettify')).toBe('true');
     expect(optimizeBody.get('timeout')).toBe('300');
     expect(optimizeBody.get('solver')).toBe('ortools/cp-sat');
@@ -1635,10 +1634,10 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(removeChildSpy).toHaveBeenCalledTimes(removeCallCount + 1);
   });
 
-  it('anonymizes schedule data by default and restores people IDs in the XLSX', async () => {
+  it('anonymizes Schedule Spec by default and restores people IDs in the XLSX', async () => {
     const user = userEvent.setup();
     const xlsxBlob = new Blob(['xlsx']);
-    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec({
       descriptionData: 'sensitive schedule',
       peopleData: { items: [{ id: 'Alice', description: 'sensitive person', history: [] }], groups: [], history: [] },
     }));
@@ -1658,7 +1657,7 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValueOnce({ ok: true });
 
     render(<OptimizeAndExportPage />);
-    expect(screen.getByRole('checkbox', { name: /anonymize schedule data/i })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /anonymize Schedule Spec/i })).toBeChecked();
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await screen.findByText('Schedule optimized and downloaded successfully!');
 
@@ -1678,7 +1677,7 @@ describe('OptimizeAndExportPage error handling', () => {
   it('sends and downloads original people IDs when anonymization is disabled', async () => {
     const user = userEvent.setup();
     const xlsxBlob = new Blob(['xlsx']);
-    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec({
       descriptionData: 'sensitive schedule',
       peopleData: { items: [{ id: 'Alice', description: 'sensitive person', history: [] }], groups: [], history: [] },
     }));
@@ -1698,7 +1697,7 @@ describe('OptimizeAndExportPage error handling', () => {
       .mockResolvedValueOnce({ ok: true });
 
     render(<OptimizeAndExportPage />);
-    await user.click(screen.getByRole('checkbox', { name: /anonymize schedule data/i }));
+    await user.click(screen.getByRole('checkbox', { name: /anonymize Schedule Spec/i }));
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await screen.findByText('Schedule optimized and downloaded successfully!');
 
@@ -2026,7 +2025,7 @@ describe('OptimizeAndExportPage error handling', () => {
 
   it('forbids sending and instructs users to set dates when date data is empty', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec({
       dateData: { range: { startDate: undefined, endDate: undefined }, items: [], groups: [] },
     }));
 
@@ -2039,12 +2038,12 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(optimizeButton).toBeDisabled();
     await user.click(optimizeButton);
 
-    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/optimize', expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/schedule_spec/optimize', expect.anything());
   });
 
   it('forbids sending and instructs users to set people when people data is empty', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec({
       peopleData: { items: [], groups: [], history: [] },
     }));
 
@@ -2057,12 +2056,12 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(optimizeButton).toBeDisabled();
     await user.click(optimizeButton);
 
-    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/optimize', expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/schedule_spec/optimize', expect.anything());
   });
 
   it('forbids sending and instructs users to set shift types when shift type data is empty', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue(createSchedulingData({
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec({
       shiftTypeData: { items: [], groups: [] },
     }));
 
@@ -2075,7 +2074,7 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(optimizeButton).toBeDisabled();
     await user.click(optimizeButton);
 
-    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/optimize', expect.anything());
+    expect(fetch).not.toHaveBeenCalledWith('http://localhost:8000/schedule_spec/optimize', expect.anything());
   });
 });
 
@@ -2118,7 +2117,7 @@ describe('OptimizeAndExportPage backend authentication', () => {
     mockGenerateYamlFromState.mockReturnValue('apiVersion: alpha\ndescription: baseline\n');
     mockRestorePeopleIdsInXlsx.mockClear();
     mockRestorePeopleIdsInXlsx.mockImplementation(async blob => blob);
-    mockUseSchedulingData.mockReturnValue(createSchedulingData());
+    mockUseScheduleSpec.mockReturnValue(createScheduleSpec());
     mockCurrentAppVersion.value = 'frontend-test';
     vi.stubGlobal('fetch', vi.fn());
     vi.stubGlobal('EventSource', undefined);
@@ -2204,8 +2203,8 @@ describe('OptimizeAndExportPage backend authentication', () => {
     await screen.findByText('Server: Online');
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/optimize'))).toBe(true));
-    const createCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/optimize'));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/schedule_spec/optimize'))).toBe(true));
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/schedule_spec/optimize'));
     expect((createCall?.[1] as RequestInit).headers).toMatchObject({
       Authorization: `Bearer ${BACKEND_TOKEN}`,
     });

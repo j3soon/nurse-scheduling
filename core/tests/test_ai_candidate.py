@@ -26,29 +26,29 @@ from io import StringIO
 import pytest
 from ruamel.yaml import YAML
 
-from nurse_scheduling.ai.candidate import review_schedule_candidate
+from nurse_scheduling.ai.candidate import review_schedule_spec_candidate
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_spec_yaml
 
 
 def test_unchanged_candidate_creates_no_proposal():
-    schedule = schedule_yaml()
+    schedule = schedule_spec_yaml()
 
-    review = review_schedule_candidate(schedule, schedule, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule, schedule, SCHEDULE_BYTE_LIMIT)
 
     assert review.outcome.ok
     assert review.proposal is None
 
 
 def test_valid_candidate_creates_structural_proposal():
-    base = schedule_yaml()
+    base = schedule_spec_yaml()
     candidate = base.replace(
         "  - id: P1\n    description: ''",
         "  - id: P1\n    description: Head",
         1,
     )
 
-    review = review_schedule_candidate(base, candidate, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(base, candidate, SCHEDULE_BYTE_LIMIT)
 
     assert review.outcome.ok
     assert review.proposal is not None
@@ -60,23 +60,23 @@ def test_reset_to_empty_preserves_rule_and_allows_later_people_edits():
     from tests.ai.schema import FIXTURES
 
     empty = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
-    review = review_schedule_candidate(schedule_yaml(), empty, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), empty, SCHEDULE_BYTE_LIMIT)
     assert review.outcome.ok
     assert review.proposal.text == empty
     without_rule = empty.replace("preferences:\n  - type: at most one shift per day", "preferences: []")
-    restored = review_schedule_candidate(schedule_yaml(), without_rule, SCHEDULE_BYTE_LIMIT)
+    restored = review_schedule_spec_candidate(schedule_spec_yaml(), without_rule, SCHEDULE_BYTE_LIMIT)
     assert restored.outcome.ok
     assert YAML(typ="safe").load(restored.proposal.text) == YAML(typ="safe").load(empty)
     edited = empty.replace("people:\n  items: []", "people:\n  items: [{id: Alice, description: ''}]")
-    added = review_schedule_candidate(empty, edited, SCHEDULE_BYTE_LIMIT)
+    added = review_schedule_spec_candidate(empty, edited, SCHEDULE_BYTE_LIMIT)
     assert added.outcome.ok
     assert added.proposal.text == edited
 
 
 def test_candidate_with_new_validation_problem_is_rejected():
-    base = schedule_yaml()
+    base = schedule_spec_yaml()
 
-    review = review_schedule_candidate(base, "not: [valid", SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(base, "not: [valid", SCHEDULE_BYTE_LIMIT)
 
     assert not review.outcome.ok
     assert "cannot be applied" in review.outcome.text
@@ -93,9 +93,9 @@ def test_rebuilt_candidate_restores_only_the_required_rule():
     payload["description"] = "Rebuilt schedule"
     payload["people"]["items"][0]["history"] = ["OFF"]
     payload["preferences"] = payload["preferences"][1:]
-    candidate = schedule_yaml(payload)
+    candidate = schedule_spec_yaml(payload)
 
-    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
 
     assert review.outcome.ok
     assert review.proposal is not None
@@ -126,12 +126,12 @@ def test_required_rule_restoration_keeps_the_rest_of_the_text(layout):
     payload["preferences"] = payload["preferences"][1:]
     if layout == "flow":
         rest = {key: value for key, value in payload.items() if key != "preferences"}
-        body = schedule_yaml(rest) + f"preferences: {json.dumps(payload['preferences'])}\n"
+        body = schedule_spec_yaml(rest) + f"preferences: {json.dumps(payload['preferences'])}\n"
     else:
-        body = schedule_yaml(payload) if layout == "block" else _browser_style_yaml(payload)
+        body = schedule_spec_yaml(payload) if layout == "block" else _browser_style_yaml(payload)
     candidate = "# Ward roster kept by the model\n" + body
 
-    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
 
     assert review.outcome.ok
     assert review.proposal is not None
@@ -157,7 +157,7 @@ def test_required_rule_restoration_does_not_hide_other_errors():
     payload["preferences"] = payload["preferences"][1:]
     payload["preferences"][0]["person"] = ["unknown-person"]
 
-    review = review_schedule_candidate(schedule_yaml(), schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert not review.outcome.ok
     assert review.proposal is None
@@ -169,9 +169,9 @@ def test_existing_required_rule_is_not_replaced_or_duplicated():
     payload = base_schedule_payload()
     payload["description"] = "Updated"
     payload["preferences"][0]["description"] = "Original required rule"
-    candidate = schedule_yaml(payload)
+    candidate = schedule_spec_yaml(payload)
 
-    review = review_schedule_candidate(schedule_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), candidate, SCHEDULE_BYTE_LIMIT)
 
     assert review.outcome.ok
     assert review.proposal.text == candidate
@@ -183,9 +183,9 @@ def test_required_rule_restoration_respects_the_output_size_limit():
 
     payload = base_schedule_payload()
     payload["preferences"] = payload["preferences"][1:]
-    candidate = schedule_yaml(payload)
+    candidate = schedule_spec_yaml(payload)
 
-    review = review_schedule_candidate(schedule_yaml(), candidate, len(candidate.encode()))
+    review = review_schedule_spec_candidate(schedule_spec_yaml(), candidate, len(candidate.encode()))
 
     assert not review.outcome.ok
     assert review.proposal is None

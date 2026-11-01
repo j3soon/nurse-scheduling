@@ -34,7 +34,7 @@ OPTIMIZER_RUNNING_MESSAGE = (
 def optimizer_start_message(job_id: str, source_sha256: str) -> str:
     """Render the startup acknowledgement shared by production and controlled evaluations."""
     return (
-        f"Started optimizer job {job_id} in the background for schedule SHA-256 {source_sha256}. "
+        f"Started optimizer job {job_id} in the background for Schedule Spec SHA-256 {source_sha256}. "
         "The assistant will be woken when it finishes. The user can keep chatting meanwhile."
     )
 
@@ -42,7 +42,7 @@ def optimizer_start_message(job_id: str, source_sha256: str) -> str:
 async def execute_optimizer_tool(
     optimizer: SessionOptimizer,
     session_id: str,
-    schedule_yaml: str,
+    schedule_spec_yaml: str,
     arguments: str,
     client_address: str | None = None,
     model_selection: dict[str, str] | None = None,
@@ -60,7 +60,7 @@ async def execute_optimizer_tool(
             timeout = raw.get("timeout_seconds")
             if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
                 return AgentToolOutcome("timeout_seconds must be a positive integer.", False)
-            job = await optimizer.start(session_id, schedule_yaml, timeout, client_address, model_selection)
+            job = await optimizer.start(session_id, schedule_spec_yaml, timeout, client_address, model_selection)
             return AgentToolOutcome(optimizer_start_message(job.id, job.source_sha256), True)
         if action == "status":
             return AgentToolOutcome(_job_summary(optimizer.status(session_id)), True)
@@ -86,7 +86,7 @@ def optimizer_tool_definition(default_timeout_seconds: int = 300) -> dict[str, A
             "description": (
                 "Start the scheduling optimizer on the current working YAML, inspect its background status, or ask "
                 "a running optimizer to finish with its best available solution. Start returns immediately. "
-                "When asked only to optimize the current schedule, call start without preliminary schedule or reference reads. "
+                "When asked only to optimize the current Schedule Spec, call start without preliminary Schedule Spec or reference reads. "
                 f"A completed workbook is available at {WORKSPACE_OPTIMIZER_RESULT} in the next assistant turn. "
                 "Omit timeout_seconds to use the configured default."
             ),

@@ -1,4 +1,4 @@
-"""Compact schedule context for AI prompts."""
+"""Compact Schedule Spec context for AI prompts."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -19,9 +19,9 @@
 
 # This code is mostly AI generated.
 
-from .candidate import SCHEDULE_FILENAME
+from .candidate import SCHEDULE_SPEC_FILENAME
 
 
-def describe_schedule(_schedule_text: str) -> str:
-    """Point to the working schedule without disclosing facts the agent should read."""
-    return f"{SCHEDULE_FILENAME} is available at /workspace/{SCHEDULE_FILENAME}. Read it for schedule facts."
+def describe_schedule_spec(_schedule_text: str) -> str:
+    """Point to the working Schedule Spec without disclosing facts the agent should read."""
+    return f"{SCHEDULE_SPEC_FILENAME} is available at /workspace/{SCHEDULE_SPEC_FILENAME}. Read it for Schedule Spec facts."

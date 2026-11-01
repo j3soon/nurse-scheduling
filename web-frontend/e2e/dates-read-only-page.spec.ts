@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('dates page keeps generated date items read-only while group controls remain available', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('dates page keeps generated date items read-only while group controls remai
    * 3. Confirm group-level controls still exist on the same page.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'dates read only seed',
     dates: {
@@ -69,7 +69,7 @@ test('dates page keeps generated date items read-only while group controls remai
 
 test('dates page edits full-month date-group members with a calendar', async ({ page }) => {
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'date group calendar seed',
     dates: {

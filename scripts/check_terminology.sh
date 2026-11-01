@@ -20,7 +20,7 @@
 # This file is mostly AI generated.
 
 # Reject vague jargon that hides which property a name refers to. Name the
-# property instead, such as current schedule, normalized selector, or compiled
+# property instead, such as current Schedule Spec, normalized selector, or compiled
 # selector. Tracked and untracked files are checked, and ignored files are not.
 set -euo pipefail
 

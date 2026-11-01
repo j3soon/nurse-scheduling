@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('cross-year date ranges use full YYYY-MM-DD IDs and still support downstream quick-add', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('cross-year date ranges use full YYYY-MM-DD IDs and still support downstrea
    * 4. Apply one quick-add request on the generated date and confirm the summary updates.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'cross year dates seed',
     dates: { range: {}, groups: [] },

@@ -25,7 +25,7 @@ from datetime import timedelta
 from typing import Any
 
 from nurse_scheduling.constants import OFF
-from nurse_scheduling.loader import load_data
+from nurse_scheduling.loader import load_schedule_spec
 
 ASSIGNMENT_FIXTURE_SCHEMA_VERSION = 1
 
@@ -36,7 +36,7 @@ def serialize_assignment_fixture(
     score: int,
 ) -> dict[str, Any]:
     """Return a portable fixture for a complete indexed scheduler solution."""
-    scenario = load_data(file_content)
+    scenario = load_schedule_spec(file_content)
     start_date = scenario.dates.range.startDate
     n_days = (scenario.dates.range.endDate - start_date).days + 1
     n_shift_types = len(scenario.shiftTypes.items)
@@ -91,7 +91,7 @@ def deserialize_assignment_fixture(
     if fixture.get("scenarioSha256") != scenario_sha256:
         raise ValueError("Assignment fixture does not match the scenario content.")
 
-    scenario = load_data(file_content)
+    scenario = load_schedule_spec(file_content)
     start_date = scenario.dates.range.startDate
     n_days = (scenario.dates.range.endDate - start_date).days + 1
     expected_dates = [str(start_date + timedelta(days=day)) for day in range(n_days)]

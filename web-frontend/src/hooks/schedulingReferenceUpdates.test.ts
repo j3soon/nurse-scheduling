@@ -30,10 +30,10 @@ import {
   ShiftTypeRequirementsPreference,
   ShiftTypeSuccessionsPreference,
 } from '@/types/scheduling';
-import { SchedulingState } from './schedulingState';
+import { ScheduleSpecState } from './scheduleSpecState';
 import { applyReferencesForIdChange, applyReferencesForIdDeletion } from './schedulingReferenceUpdates';
 
-function createState(): SchedulingState {
+function createState(): ScheduleSpecState {
   return {
     apiVersion: 'test',
     description: '',

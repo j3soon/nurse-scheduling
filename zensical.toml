@@ -41,6 +41,7 @@ nav = [
   {
     "Developer Guide" = [
       { "Overview" = "developer-guide/index.md" },
+      { "Compatibility" = "developer-guide/compatibility.md" },
       { "Reproduce" = [
         { "Setup and run" = "developer-guide/reproduce/setup.md" },
         { "Core" = "developer-guide/reproduce/core.md" },

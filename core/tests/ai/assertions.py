@@ -1,4 +1,4 @@
-"""Check turn events and exact schedule changes."""
+"""Check turn events and exact Schedule Spec changes."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -166,6 +166,6 @@ def check_schedule(steps: list[Step], before: str, after: str) -> None:
         message = (
             f"schedule does not equal fixture {expected}"
             if expected
-            else "unexpected schedule changes beyond declared additions (unchanged is the default)"
+            else "unexpected Schedule Spec changes beyond declared additions (unchanged is the default)"
         )
         raise AssertionError(f"{message}:\n{diff}")

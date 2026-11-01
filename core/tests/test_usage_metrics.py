@@ -43,7 +43,7 @@ from nurse_scheduling.server.jobs.models import (
 from nurse_scheduling.server.usage_metrics import (
     REPORT_LOCK_SECONDS,
     RedisUsageMetrics,
-    schedule_basics_for,
+    schedule_spec_basics_for,
     week_bounds,
     week_id_for,
 )
@@ -246,7 +246,7 @@ def test_malformed_schedule_omits_basics_without_dropping_job_telemetry(redis_cl
         report_timezone=timezone.utc,
     )
     submitted = _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc))
-    basics = schedule_basics_for(b"not: [valid")
+    basics = schedule_spec_basics_for(b"not: [valid")
 
     assert basics == {}
     _stage(metrics, lambda transaction: metrics.stage_job_created(transaction, submitted, basics))
@@ -276,14 +276,14 @@ def test_submitted_schedule_is_parsed_once_even_when_the_transaction_retries(mon
         usage_metrics_retention_days=30,
     )
     parses = 0
-    parse_schedule_basics = redis_store.schedule_basics_for
+    parse_schedule_basics = redis_store.schedule_spec_basics_for
 
     def counted_schedule_basics(input_bytes: bytes):
         nonlocal parses
         parses += 1
         return parse_schedule_basics(input_bytes)
 
-    monkeypatch.setattr(redis_store, "schedule_basics_for", counted_schedule_basics)
+    monkeypatch.setattr(redis_store, "schedule_spec_basics_for", counted_schedule_basics)
     _raise_watch_error_once(store, monkeypatch)
     created = store.create(
         _job(_at(2026, 8, 24, 12, tzinfo=timezone.utc)),

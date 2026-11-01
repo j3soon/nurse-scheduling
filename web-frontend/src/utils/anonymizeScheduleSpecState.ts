@@ -26,7 +26,7 @@ import {
   SHIFT_TYPE_SUCCESSIONS
 } from '@/types/scheduling';
 import type { Preference } from '@/types/scheduling';
-import type { SchedulingState } from '@/hooks/useSchedulingData';
+import type { ScheduleSpecState } from '@/hooks/useScheduleSpec';
 import { mapReferenceIdTree, ReferenceIdTree } from '@/utils/referenceIds';
 
 export interface SchedulingAnonymizationOptions {
@@ -36,7 +36,7 @@ export interface SchedulingAnonymizationOptions {
 }
 
 export interface SchedulingAnonymizationResult {
-  state: SchedulingState;
+  state: ScheduleSpecState;
   originalIdByAnonymizedId: Map<string, string>;
 }
 
@@ -90,8 +90,8 @@ export function removeDescriptionFields<T>(value: T): T {
   ) as T;
 }
 
-export function anonymizeSchedulingStateWithMapping(
-  state: SchedulingState,
+export function anonymizeScheduleSpecStateWithMapping(
+  state: ScheduleSpecState,
   options: SchedulingAnonymizationOptions
 ): SchedulingAnonymizationResult {
   const retainedIds = new Set<string>();
@@ -148,9 +148,9 @@ export function anonymizeSchedulingStateWithMapping(
   };
 }
 
-export function anonymizeSchedulingState(
-  state: SchedulingState,
+export function anonymizeScheduleSpecState(
+  state: ScheduleSpecState,
   options: SchedulingAnonymizationOptions
-): SchedulingState {
-  return anonymizeSchedulingStateWithMapping(state, options).state;
+): ScheduleSpecState {
+  return anonymizeScheduleSpecStateWithMapping(state, options).state;
 }

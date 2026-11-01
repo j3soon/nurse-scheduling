@@ -50,5 +50,5 @@ SELECT session_id, sequence, sequence, turn_id,
 FROM chat_recovery_entries ORDER BY sequence;
 DROP TABLE chat_recovery_entries;
 
--- ChatHistory.initialize converts both legacy text histories and typed snapshots
--- to ordered entries in this transaction, then removes the redundant question column.
+-- Service initialization removes the redundant question column after this migration.
+-- Older AI conversation contents have no upgrade compatibility guarantee.

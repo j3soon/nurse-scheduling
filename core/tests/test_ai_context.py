@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 from nurse_scheduling.ai.context import (
     ABORTED_RESPONSE_HISTORY,
-    SCHEDULE_CHANGED_EVENT,
+    SCHEDULE_SPEC_CHANGED_EVENT,
     build_provider_messages,
     cap_transcript,
     entries_from_legacy_history,
@@ -48,18 +48,18 @@ from nurse_scheduling.ai.transcript import (
     entry_record,
 )
 
-from .test_ai_basic import make_settings, schedule_yaml
+from .test_ai_basic import make_settings, schedule_spec_yaml
 
 
 def test_new_requests_do_not_inject_workspace_status_or_clock_values():
-    messages = build_provider_messages([], schedule_yaml(), "Today?")
+    messages = build_provider_messages([], schedule_spec_yaml(), "Today?")
     assert messages[-1] == {"role": "user", "content": "Today?"}
     assert "[Current status]" not in str(messages)
     assert "Current date and time:" not in str(messages)
 
 
 def test_tool_followup_preserves_the_entire_existing_prefix():
-    messages = build_provider_messages([], schedule_yaml(), "Today?")
+    messages = build_provider_messages([], schedule_spec_yaml(), "Today?")
     entries = [AssistantMessage("Checking."), UserMessage("Continue.")]
     request = prepare_provider_request(messages, entries, _preserve_native=True)
     assert request[: len(messages)] == messages
@@ -68,7 +68,7 @@ def test_tool_followup_preserves_the_entire_existing_prefix():
 
 def test_frontend_timezone_is_reserved_with_the_run_and_restored_with_the_session():
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     session.frontend_timezone = "Asia/Taipei"
     snapshot = store.begin(session.id, "owner")
     session.frontend_timezone = "America/Los_Angeles"
@@ -85,7 +85,7 @@ def test_historical_status_is_unchanged_and_no_new_status_is_appended():
         {"role": "user", "content": "[Current status]\nWorkspace timezone: Asia/Taipei."},
         {"role": "user", "content": "[Current status]\nWorkspace timezone: America/Los_Angeles."},
     ]
-    messages = build_provider_messages(history, schedule_yaml(), "Today?")
+    messages = build_provider_messages(history, schedule_spec_yaml(), "Today?")
     assert messages[1:-1] == history
     assert messages[-1] == {"role": "user", "content": "Today?"}
 
@@ -183,7 +183,7 @@ def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
     entries = [
         UserMessage("old"),
         AssistantMessage("old answer"),
-        AppEventEntry(SCHEDULE_CHANGED_EVENT),
+        AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT),
         UserMessage("新問題"),
     ]
     expected = projected_history(entries[2:])
@@ -196,24 +196,29 @@ def test_history_budget_starts_at_an_app_event_and_counts_serialized_unicode():
 
 def test_retention_keeps_the_whole_newest_run_including_steering():
     newest = [UserMessage("edit"), AssistantMessage("first"), UserMessage("steer"), AssistantMessage("last")]
-    transcript = [UserMessage("old"), AssistantMessage("old answer"), AppEventEntry(SCHEDULE_CHANGED_EVENT), *newest]
+    transcript = [
+        UserMessage("old"),
+        AssistantMessage("old answer"),
+        AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT),
+        *newest,
+    ]
     assert cap_transcript(transcript, 2, 1, len(newest)) == 3
     assert transcript == newest
 
 
 def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_and_failure():
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     snapshot = store.begin(session.id, "owner")
     entries = [
         UserMessage("Change it"),
         AssistantMessage("Changed"),
-        AppEventEntry(SCHEDULE_CHANGED_EVENT),
+        AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT),
         UserMessage("Next"),
         AssistantMessage("Provisional", "error"),
     ]
     store.finish(session.id, entries, snapshot=snapshot)
-    expected = build_provider_messages(project_history(session.transcript), session.schedule_yaml, "Retry")
+    expected = build_provider_messages(project_history(session.transcript), session.schedule_spec_yaml, "Retry")
     owner, expires, state = store.recovery_state(session.id)
     assert set(state) == {
         "model_selection",
@@ -224,8 +229,8 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
         "pending_provider_calls",
         "downloads",
         "uploads",
-        "schedule_yaml",
-        "queued_schedule",
+        "schedule_spec_yaml",
+        "queued_schedule_spec",
         "dropped_history_messages",
         "dropped_entries",
         "frontend_version",
@@ -233,7 +238,7 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
         "export_metadata",
     }
     records = [entry_record(entry) for entry in session.transcript]
-    assert ("app_event", {"text": SCHEDULE_CHANGED_EVENT}) in records
+    assert ("app_event", {"text": SCHEDULE_SPEC_CHANGED_EVENT}) in records
     recovered = SessionStore(make_settings())
     recovered.restore(
         session.id,
@@ -244,18 +249,20 @@ def test_legacy_recovery_preserves_the_next_provider_request_after_app_events_an
         next_entry_seq=session.next_entry_seq,
     )
     restored = recovered._sessions[session.id]
-    assert build_provider_messages(project_history(restored.transcript), restored.schedule_yaml, "Retry") == expected
+    assert (
+        build_provider_messages(project_history(restored.transcript), restored.schedule_spec_yaml, "Retry") == expected
+    )
     assert entries == restored.transcript
 
 
 @pytest.mark.parametrize(
     "question",
-    [SCHEDULE_CHANGED_EVENT, "Ordinary question"],
+    [SCHEDULE_SPEC_CHANGED_EVENT, "Ordinary question"],
     ids=["app-event-text", "ordinary"],
 )
 def test_typed_recovery_preserves_user_origin_and_interrupted_output(question):
     store = SessionStore(make_settings())
-    session = store.create("owner", schedule_yaml())
+    session = store.create("owner", schedule_spec_yaml())
     snapshot = store.begin(session.id, "owner")
     entries = [UserMessage(question), AssistantMessage("Discarded edit claim", "error")]
     store.finish(session.id, entries, snapshot=snapshot)
@@ -278,7 +285,7 @@ def test_typed_recovery_preserves_user_origin_and_interrupted_output(question):
 def test_typed_entry_storage_preserves_tool_calls_and_excludes_image_bytes():
     import json
 
-    call = ToolCall("read-1", "read", '{"path":"schedule.yaml"}')
+    call = ToolCall("read-1", "read", '{"path":"schedule-spec.yaml"}')
     entries = [
         UserMessage("Question"),
         AssistantMessage("Checking", "tool_use", "Reasoning", (call,)),
@@ -292,11 +299,6 @@ def test_typed_entry_storage_preserves_tool_calls_and_excludes_image_bytes():
         ToolResultMessage(call.id, call.name, "Result", True),
         *entries[3:],
     ]
-    # Earlier versions stored the user's approval. It restores as the app event the model received.
-    legacy = entry_from_record("proposal_decision", {"decision": "approved"})
-    assert legacy == AppEventEntry(
-        "[App event] The user approved the previous schedule proposal. Its changes are now part of the current schedule."
-    )
 
 
 def test_legacy_text_history_converts_to_typed_entries():

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('people bulk upload updates downstream routes and can be undone and redone', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('people bulk upload updates downstream routes and can be undone and redone'
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people downstream upload undo redo seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

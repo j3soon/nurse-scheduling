@@ -21,7 +21,7 @@ group is retained in the example but is not selected by a current rule.
 ## Add working shifts
 
 1. Select **Add Shift Type** for each working shift you need.
-2. If editing a loaded schedule, remove working shifts your workplace does not use.
+2. If editing a loaded Schedule Spec, remove working shifts your workplace does not use.
 
 Optional: drag rows into the preferred workbook order.
 

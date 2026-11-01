@@ -23,7 +23,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { FiDownload, FiSave, FiX, FiCopy, FiCheck, FiAlertCircle, FiUpload } from 'react-icons/fi';
 import yaml from 'js-yaml';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import ToggleButton from '@/components/ToggleButton';
 import UploadButton from '@/components/UploadButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
@@ -31,7 +31,7 @@ import StarRepoNudge from '@/components/StarRepoNudge';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { generateYamlFromState } from '@/utils/yamlGenerator';
-import { anonymizeSchedulingState } from '@/utils/anonymizeSchedulingState';
+import { anonymizeScheduleSpecState } from '@/utils/anonymizeScheduleSpecState';
 import { getMissingPreferredScatterDateGroups, randomizeConcreteDateShiftRequests } from '@/utils/randomizeShiftRequests';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
@@ -55,16 +55,16 @@ function formatCount(count: number, singular: string, plural = `${singular}s`): 
 
 function summarizeYamlImport(data: unknown, filename: string, versionWarning: string | null): YamlImportSummary {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('The YAML must contain a schedule object.');
+    throw new Error('The YAML must contain a Schedule Spec object.');
   }
-  const schedule = data as Record<string, unknown>;
+  const spec = data as Record<string, unknown>;
   for (const key of ['dates', 'people', 'shiftTypes']) {
-    const section = schedule[key];
+    const section = spec[key];
     if (section !== undefined && (!section || typeof section !== 'object' || Array.isArray(section))) {
       throw new Error(`The ${key} section must be an object.`);
     }
   }
-  if (schedule.preferences !== undefined && !Array.isArray(schedule.preferences)) {
+  if (spec.preferences !== undefined && !Array.isArray(spec.preferences)) {
     throw new Error('The preferences section must be a list.');
   }
   const itemCount = (section: unknown): number => {
@@ -73,10 +73,10 @@ function summarizeYamlImport(data: unknown, filename: string, versionWarning: st
     return Array.isArray(items) ? items.length : 0;
   };
   const dateCount = (): number => {
-    const explicitCount = itemCount(schedule.dates);
+    const explicitCount = itemCount(spec.dates);
     if (explicitCount > 0) return explicitCount;
-    if (!schedule.dates || typeof schedule.dates !== 'object' || Array.isArray(schedule.dates)) return 0;
-    const range = (schedule.dates as Record<string, unknown>).range;
+    if (!spec.dates || typeof spec.dates !== 'object' || Array.isArray(spec.dates)) return 0;
+    const range = (spec.dates as Record<string, unknown>).range;
     if (!range || typeof range !== 'object' || Array.isArray(range)) return 0;
     const { startDate, endDate } = range as Record<string, unknown>;
     const timestamp = (value: unknown): number => value instanceof Date
@@ -90,12 +90,12 @@ function summarizeYamlImport(data: unknown, filename: string, versionWarning: st
   };
   const counts = {
     dates: dateCount(),
-    people: itemCount(schedule.people),
-    shiftTypes: itemCount(schedule.shiftTypes),
-    preferences: Array.isArray(schedule.preferences) ? schedule.preferences.length : 0,
+    people: itemCount(spec.people),
+    shiftTypes: itemCount(spec.shiftTypes),
+    preferences: Array.isArray(spec.preferences) ? spec.preferences.length : 0,
   };
   const missingSections = (['dates', 'people', 'shiftTypes', 'preferences'] as const)
-    .filter(key => !schedule[key])
+    .filter(key => !spec[key])
     .map(key => key === 'shiftTypes' ? 'shift types' : key);
   const warnings = missingSections.length > 0
     ? [`Missing sections: ${missingSections.join(', ')}.`]
@@ -130,7 +130,7 @@ export default function SaveAndLoadPage() {
     dateData,
     loadFromYaml,
     savedState: filteredState,
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedYaml, setEditedYaml] = useState('');
@@ -179,7 +179,7 @@ export default function SaveAndLoadPage() {
       const exportState = scatterShiftRequests
         ? randomizeConcreteDateShiftRequests(filteredState, dateData.items, dateData.groups)
         : filteredState;
-      const anonymizedState = anonymizeSchedulingState(exportState, {
+      const anonymizedState = anonymizeScheduleSpecState(exportState, {
         anonymizePeopleItems,
         anonymizePeopleGroups
       });
@@ -293,7 +293,7 @@ export default function SaveAndLoadPage() {
 
         const summary = summarizeYamlImport(parsedData, file.name, getVersionWarning(parsedData, true));
         const versionWarning = getVersionWarning(parsedData);
-        if (versionWarning && !confirm(`${versionWarning}\n\nDo you want to continue replacing the current schedule?`)) {
+        if (versionWarning && !confirm(`${versionWarning}\n\nDo you want to continue replacing the current Schedule Spec?`)) {
           return;
         }
         loadFromYaml(parsedData);
@@ -333,7 +333,7 @@ export default function SaveAndLoadPage() {
             onFileUpload={processYamlFile}
             acceptedFileTypes={['.yaml', '.yml']}
             buttonText="Upload"
-            tooltipText="Upload a YAML file to load configuration. You can click to select a file or drag and drop a file here."
+            tooltipText="Upload Schedule Spec YAML. Click to select a file or drag and drop it here."
             className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
             icon={<FiUpload className="h-4 w-4" />}
           />
@@ -367,7 +367,7 @@ export default function SaveAndLoadPage() {
       {importSummary && (
         <section role="status" aria-label="YAML import summary" className="mb-6 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
           <p className="text-green-900">
-            <strong>Schedule uploaded:</strong> {importSummary.filename}.{' '}
+            <strong>Schedule Spec uploaded:</strong> {importSummary.filename}.{' '}
             {formatCount(importSummary.counts.dates, 'date')},{' '}
             {formatCount(importSummary.counts.people, 'person', 'people')},{' '}
             {formatCount(importSummary.counts.shiftTypes, 'shift type')},{' '}
@@ -404,7 +404,7 @@ export default function SaveAndLoadPage() {
         </summary>
         <div className="mt-4 space-y-3">
           <p className="text-sm text-gray-600">
-            Download a temporary YAML snapshot with selected people identifiers replaced. Your current schedule is not modified.
+            Download a temporary YAML snapshot with selected people identifiers replaced. Your current Schedule Spec is not modified.
             Free-text descriptions are not changed.
           </p>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -460,7 +460,7 @@ export default function SaveAndLoadPage() {
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
           <h3 className="text-lg font-semibold text-gray-800">
-            {isEditing ? 'Edit YAML Configuration' : 'Current State YAML'}
+            {isEditing ? 'Edit Schedule Spec YAML' : 'Current Schedule Spec YAML'}
           </h3>
           {isEditing && (
             <div className="flex gap-2">
@@ -494,7 +494,7 @@ export default function SaveAndLoadPage() {
                 }}
                 className="w-full h-96 p-4 font-mono text-sm border-none resize-none focus:outline-none focus:ring-0"
                 style={{ fontFamily: 'ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace' }}
-                placeholder="Enter YAML configuration..."
+                placeholder="Enter Schedule Spec YAML..."
               />
               {yamlError && (
                 <div className="px-4 py-2 bg-red-50 border-t border-red-200 text-red-700 text-sm">

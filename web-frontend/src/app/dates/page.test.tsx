@@ -25,12 +25,12 @@ import DatePage from '@/app/dates/page';
 import Navigation from '@/components/Navigation';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 const mockPush = vi.hoisted(() => vi.fn());
 const mockUsePathname = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -73,7 +73,7 @@ describe('DatePage', () => {
     mockUsePathname.mockReturnValue('/dates');
     updateDateRange.mockReset();
     vi.stubGlobal('confirm', vi.fn(() => true));
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -351,7 +351,7 @@ describe('DatePage', () => {
   it('still requests Taiwan holiday import when editable holiday groups already exist', async () => {
     const user = userEvent.setup();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

@@ -34,6 +34,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import SentryClientAddressMiddleware, capture_invalid_request, init_sentry
 from ..service_logging import configure_service_logging
+from .api.compat import router as compat_router
 from .api.optimize import events_router as optimize_events_router
 from .api.optimize import router as optimize_router
 from .api.sse import EventStreamLimiter
@@ -292,8 +293,8 @@ def create_app(
     @app.exception_handler(StarletteHTTPException)
     async def starlette_http_error_handler(request: Request, exc: StarletteHTTPException):
         """Capture client HTTP errors and normalize multipart size failures."""
-        if request.url.path == "/optimize" and _is_form_parser_size_error(exc):
-            exc = StarletteHTTPException(status_code=413, detail="Scheduling YAML is too large")
+        if request.url.path in {"/optimize", "/schedule_spec/optimize"} and _is_form_parser_size_error(exc):
+            exc = StarletteHTTPException(status_code=413, detail="Schedule Spec YAML is too large")
         if 400 <= exc.status_code < 500:
             await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
         return await http_exception_handler(request, exc)
@@ -314,6 +315,7 @@ def create_app(
         allow_credentials=True,
         expose_headers=["Content-Disposition", "Location", "Retry-After"],
     )
+    app.include_router(compat_router, dependencies=[Depends(require_auth)])
     app.include_router(optimize_router, dependencies=[Depends(require_auth)])
     app.include_router(optimize_events_router, dependencies=[Depends(require_stream_auth)])
 

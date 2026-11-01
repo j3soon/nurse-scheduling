@@ -64,7 +64,7 @@ node /path/to/screenshot-webpage/scripts/capture-webpage.mjs \
   --storage-state /path/to/playwright-state.json \
   --viewport 1440x900 \
   --ready 'main' \
-  --expect-text 'New Schedule' \
+  --expect-text 'New Schedule Spec' \
   --expect-text 'Continue'
 ```
 

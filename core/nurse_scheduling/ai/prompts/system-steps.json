@@ -82,7 +82,7 @@
     "cases": [
       "pref-count-coefficients-small"
     ],
-    "hypothesis": "Consults the relevant schema to construct a valid schedule edit.",
+    "hypothesis": "Consults the relevant schema to construct a valid Schedule Spec edit.",
     "sha256": "dbe538986f6d8df64e8cbeb95b09f370d45e0953d0bf85ccaf241861a338c388",
     "evidence": [
       {
@@ -187,7 +187,7 @@
       "combined-edit-exact-requests",
       "people-description-small"
     ],
-    "hypothesis": "Applies schedule descriptions to the global field and preserves person descriptions.",
+    "hypothesis": "Applies Schedule Spec descriptions to the global field and preserves person descriptions.",
     "sha256": "ac5e78f35a66eb0217d37fa02443c9c27b11b99c881779e87026f9e2554d92fa",
     "evidence": [
       {
@@ -345,7 +345,7 @@
       "heldout-exact-people-group",
       "heldout-clarify-similar-groups"
     ],
-    "hypothesis": "Clarifies informal group descriptions before schedule edits, while using explicitly identified IDs directly.",
+    "hypothesis": "Clarifies informal group descriptions before Schedule Spec edits, while using explicitly identified IDs directly.",
     "sha256": "155b17e1b77c4a785e83f1a8326c7d4105974a22ee8cbf41b74dc4114c4089e9",
     "evidence": [
       {
@@ -694,7 +694,7 @@
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation with the wording for automatically applied schedules. The complete uploaded schedule stays intact. Mean total tokens fall 70%, and no attempt reads the whole file. Partial updates preserve the current schedule. One partial-update attempt with the clause ran extra verification commands, which raised that control's mean tokens."
+        "note": "Full-prompt ablation with the wording for automatically applied schedules. The complete uploaded schedule stays intact. Mean total tokens fall 70%, and no attempt reads the whole file. Partial updates preserve the current Schedule Spec. One partial-update attempt with the clause ran extra verification commands, which raised that control's mean tokens."
       }
     ],
     "comparison_mode": "ablation"
@@ -821,7 +821,7 @@
       }
     ],
     "reviewed_cases": [
-      "basics/02_schedule-data-optimize.yaml"
+      "basics/02_schedule-spec-optimize.yaml"
     ]
   },
   {
@@ -893,7 +893,7 @@
     "file": "steps/qualification-overlap.md",
     "cases": [],
     "reviewed_cases": [
-      "basics/02_schedule-data-optimize.yaml"
+      "basics/02_schedule-spec-optimize.yaml"
     ],
     "hypothesis": "Diagnoses head nurses and deputy head nurses omitted from senior staffing eligibility and asks for confirmation before optimizing.",
     "sha256": "2bde9795d7d7d6934377f5a03ce84aa66d1f38c37a4bafc134e9ccdc1beea83d",
@@ -930,7 +930,7 @@
     ],
     "comparison_mode": "ablation",
     "reviewed_cases": [
-      "basics/02_schedule-data-optimize.yaml"
+      "basics/02_schedule-spec-optimize.yaml"
     ]
   },
   {
@@ -938,7 +938,7 @@
     "file": "steps/new-roster-shift-stability.md",
     "cases": [],
     "reviewed_cases": [
-      "basics/02_schedule-data-optimize.yaml"
+      "basics/02_schedule-spec-optimize.yaml"
     ],
     "hypothesis": "Clarifies optional same-category succession rewards independently of monthly primary shifts and workload balance.",
     "sha256": "610bfda32b9481ac2effbf00df4e9c44deda207a423b61b9b1c5a86b3e6de76b",
@@ -1008,7 +1008,7 @@
             "after": "3/3"
           }
         ],
-        "note": "Full-prompt ablation of the complete primary-shift step, three repetitions per version. The step restores monthly primary-shift questions and optional group offers. Qualified-slot explanations and declined-policy drafts pass in both versions. These legacy controls start from an incomplete initial fixture. All resulting draft proposals pass frontend validation. Separately, the reviewed new-schedule information case uses the frontend empty schedule fixture and passed 32/32 with primary shifts mentioned. This does not isolate the incremental benefit of the intake sentence."
+        "note": "Full-prompt ablation of the complete primary-shift step, three repetitions per version. The step restores monthly primary-shift questions and optional group offers. Qualified-slot explanations and declined-policy drafts pass in both versions. These legacy controls start from an incomplete initial fixture. All resulting draft proposals pass frontend validation. Separately, the reviewed new-schedule information case uses the frontend empty Schedule Spec fixture and passed 32/32 with primary shifts mentioned. This does not isolate the incremental benefit of the intake sentence."
       }
     ],
     "comparison_mode": "ablation",
@@ -1020,12 +1020,12 @@
     "id": "autonomous-roster-validation",
     "file": "steps/autonomous-roster-validation.md",
     "cases": [],
-    "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit schedule data. Optimization-loop coverage awaits optimizer support in the new tester.",
+    "hypothesis": "Provides helpful guidance about unresolved schedule rules and follows explicit requests to edit Schedule Spec. Optimization-loop coverage awaits optimizer support in the new tester.",
     "sha256": "ff6c09b010a751b1d2bd444aeab7498898c4f6af27c044bc9b1189dbbcef80ee",
     "evidence": [],
     "comparison_mode": "ablation",
     "reviewed_cases": [
-      "basics/02_schedule-data-guidance.yaml",
+      "basics/02_schedule-spec-guidance.yaml",
       "basics/02_explicit-people-edit.yaml",
       "basics/02_edit-only-without-optimization.yaml"
     ]
@@ -1176,7 +1176,7 @@
             "after": "3/3"
           }
         ],
-        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers do not ask for a saved or editable schedule source. After answers pass 3/3. The unavailable-source, inspection-only and confirmed-policy controls pass 3/3 in both versions. No cost improvement is claimed, because the witness has no matched passing baseline runs."
+        "note": "Adjacent prefixes after the XLSX summary, comment and roster statistics inspector changes, with live provider and E2B, three repetitions and four jobs. Before answers do not ask for a saved or editable Schedule Spec source. After answers pass 3/3. The unavailable-source, inspection-only and confirmed-policy controls pass 3/3 in both versions. No cost improvement is claimed, because the witness has no matched passing baseline runs."
       }
     ]
   },

@@ -222,15 +222,15 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
     async def exercise() -> tuple[FakeE2BSandbox, object]:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
-        assert await e2b_backend.read_file("/workspace/schedule.yaml") == b"schedule"
-        result = await e2b_backend.run("rg P1 schedule.yaml")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
+        assert await e2b_backend.read_file("/workspace/schedule-spec.yaml") == b"schedule"
+        result = await e2b_backend.run("rg P1 schedule-spec.yaml")
         await e2b_backend.close()
         return sandbox, result
 
     sandbox, result = asyncio.run(exercise())
-    sandbox.files.write.assert_awaited_once_with("/workspace/schedule.yaml", b"schedule", user="user")
-    sandbox.files.read.assert_awaited_once_with("/workspace/schedule.yaml", format="stream", user="user")
+    sandbox.files.write.assert_awaited_once_with("/workspace/schedule-spec.yaml", b"schedule", user="user")
+    sandbox.files.read.assert_awaited_once_with("/workspace/schedule-spec.yaml", format="stream", user="user")
     sandbox.commands.run.assert_awaited_once_with(
         ANY,
         background=True,
@@ -242,7 +242,7 @@ def test_backend_reads_writes_and_runs_in_the_workspace_as_user():
         on_stderr=ANY,
     )
     launched = sandbox.commands.run.call_args.args[0]
-    assert "rg P1 schedule.yaml" in launched
+    assert "rg P1 schedule-spec.yaml" in launched
     assert launched.startswith("exec python3 -c ")
     assert result.stdout == "ok\n"
     assert result.exit_code == 0
@@ -341,7 +341,7 @@ def test_retries_a_replay_safe_file_request_with_logged_backoff(
             command_timeout_seconds=3,
             retry_backoff_seconds=0.25,
         )
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await e2b_backend.close()
         return sandbox
 
@@ -368,7 +368,7 @@ def test_does_not_retry_an_optional_pause_failure(caplog: pytest.LogCaptureFixtu
 
         sandbox.pause.side_effect = fail_pause
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await attempted.wait()
         await asyncio.sleep(0)
         await e2b_backend.close()
@@ -396,10 +396,10 @@ def test_pause_deadline_reconciles_before_the_next_operation(caplog: pytest.LogC
 
         sandbox.pause.side_effect = pause_forever
         e2b_backend = make_backend(sandbox, pause_request_timeout_seconds=0.01)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSE_UNKNOWN)
         started = asyncio.get_running_loop().time()
-        await e2b_backend.read_file("/workspace/schedule.yaml")
+        await e2b_backend.read_file("/workspace/schedule-spec.yaml")
         elapsed = asyncio.get_running_loop().time() - started
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
         await e2b_backend.close()
@@ -421,7 +421,7 @@ def test_retries_a_bounded_resume_probe_before_failing():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend, float]:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox, control_request_timeout_seconds=0.01)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
 
         async def exists_forever(*_args, **_kwargs):
@@ -430,7 +430,7 @@ def test_retries_a_bounded_resume_probe_before_failing():
         sandbox.files.exists.side_effect = exists_forever
         started = asyncio.get_running_loop().time()
         with pytest.raises(SandboxError, match="could not resume"):
-            await e2b_backend.read_file("/workspace/schedule.yaml")
+            await e2b_backend.read_file("/workspace/schedule-spec.yaml")
         elapsed = asyncio.get_running_loop().time() - started
         await e2b_backend.close()
         return sandbox, e2b_backend, elapsed
@@ -446,10 +446,10 @@ def test_retries_auto_resume_before_the_next_operation(caplog: pytest.LogCapture
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
         sandbox.files.exists.side_effect = [SandboxException("500: temporary failure"), True]
-        await e2b_backend.read_file("/workspace/schedule.yaml")
+        await e2b_backend.read_file("/workspace/schedule-spec.yaml")
         await e2b_backend.close()
         return sandbox, e2b_backend
 
@@ -556,7 +556,7 @@ def test_backend_explicitly_pauses_with_warm_memory_after_an_operation(
         nonlocal performance_time
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
         performance_time = 1.0
         await e2b_backend.close()
@@ -573,8 +573,8 @@ def test_immediate_activity_cancels_a_pending_pause():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
-        await e2b_backend.read_file("/workspace/schedule.yaml")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
+        await e2b_backend.read_file("/workspace/schedule-spec.yaml")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
         await e2b_backend.close()
         return sandbox, e2b_backend
@@ -589,9 +589,9 @@ def test_activity_batch_defers_pause_until_all_operations_finish():
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
         async with e2b_backend.activity_batch():
-            await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+            await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
             await asyncio.sleep(0)
-            await e2b_backend.read_file("/workspace/schedule.yaml")
+            await e2b_backend.read_file("/workspace/schedule-spec.yaml")
             await asyncio.sleep(0)
             assert e2b_backend.lifecycle_state is E2BSandboxState.RUNNING
             sandbox.pause.assert_not_awaited()
@@ -618,8 +618,8 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
             if self.turns == 1:
                 yield ToolCallRequest(
                     (
-                        ToolCall("call-1", "read", '{"path":"schedule.yaml"}'),
-                        ToolCall("call-2", "read", '{"path":"schedule.yaml"}'),
+                        ToolCall("call-1", "read", '{"path":"schedule-spec.yaml"}'),
+                        ToolCall("call-2", "read", '{"path":"schedule-spec.yaml"}'),
                     )
                 )
             else:
@@ -630,7 +630,7 @@ def test_agent_multi_tool_batch_pauses_once_after_both_calls():
         e2b_backend = make_backend(sandbox)
 
         async def execute(_name: str, _arguments: str) -> AgentToolOutcome:
-            await e2b_backend.read_file("/workspace/schedule.yaml")
+            await e2b_backend.read_file("/workspace/schedule-spec.yaml")
             return AgentToolOutcome("schedule", True)
 
         async for event in agent_loop(
@@ -703,9 +703,9 @@ def test_mutation_waits_for_active_reads():
 
         async def write():
             write_started.set()
-            await e2b_backend.write_file("/workspace/schedule.yaml", b"changed")
+            await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"changed")
 
-        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
+        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule-spec.yaml"))
         await asyncio.wait_for(read_started.wait(), timeout=1)
         write_task = asyncio.create_task(write())
         try:
@@ -741,7 +741,7 @@ def test_close_waits_for_active_reads_before_destroying():
             close_started.set()
             await e2b_backend.close()
 
-        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
+        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule-spec.yaml"))
         await asyncio.wait_for(read_started.wait(), timeout=1)
         close_task = asyncio.create_task(close())
         try:
@@ -775,14 +775,14 @@ def test_activity_cancels_an_in_progress_pause_before_running():
 
         sandbox.pause.side_effect = pause
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await entered.wait()
         assert e2b_backend.lifecycle_state is E2BSandboxState.PAUSING
 
         started = asyncio.get_running_loop().time()
         await asyncio.gather(
             e2b_backend.run("echo ready"),
-            e2b_backend.read_file("/workspace/schedule.yaml"),
+            e2b_backend.read_file("/workspace/schedule-spec.yaml"),
         )
         elapsed = asyncio.get_running_loop().time() - started
         await cancelled.wait()
@@ -803,11 +803,11 @@ def test_next_operation_resumes_the_same_sandbox_once_before_running():
     async def exercise() -> tuple[FakeE2BSandbox, E2BSandboxBackend]:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
         await asyncio.gather(
-            e2b_backend.run("rg P1 schedule.yaml"),
-            e2b_backend.read_file("/workspace/schedule.yaml"),
+            e2b_backend.run("rg P1 schedule-spec.yaml"),
+            e2b_backend.read_file("/workspace/schedule-spec.yaml"),
         )
         await e2b_backend.close()
         return sandbox, e2b_backend
@@ -830,7 +830,7 @@ def test_nonzero_command_exit_is_returned_instead_of_raised(exit_code):
             stderr="", stdout=output_report("not found\n"), exit_code=exit_code, error=None
         )
         e2b_backend = make_backend(sandbox)
-        result = await e2b_backend.run("rg missing schedule.yaml")
+        result = await e2b_backend.run("rg missing schedule-spec.yaml")
         await e2b_backend.close()
         return result
 
@@ -873,7 +873,7 @@ def test_command_timeout_preserves_the_sandbox_only_after_confirmed_cleanup(clea
         backend = make_backend(sandbox, control_request_timeout_seconds=0.05)
         result = await backend.run("sleep 99", timeout_seconds=0.01)
         if cleanup == "ok":
-            assert await backend.read_file("/workspace/schedule.yaml") == b"schedule"
+            assert await backend.read_file("/workspace/schedule-spec.yaml") == b"schedule"
             assert backend.lifecycle_state is not E2BSandboxState.CLOSED
             sandbox.kill.assert_not_awaited()
         else:
@@ -959,7 +959,7 @@ def test_slow_timeout_snapshot_keeps_the_stopped_sandbox():
         backend = make_backend(sandbox)
         try:
             result = await backend.run("yes", timeout_seconds=0.001)
-            assert await backend.read_file("/workspace/schedule.yaml") == b"schedule"
+            assert await backend.read_file("/workspace/schedule-spec.yaml") == b"schedule"
             sandbox.kill.assert_not_awaited()
         finally:
             await backend.close()
@@ -1003,7 +1003,7 @@ def test_close_is_idempotent():
     async def exercise() -> FakeE2BSandbox:
         sandbox = FakeE2BSandbox()
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await e2b_backend.close()
         await e2b_backend.close()
         await asyncio.sleep(0.02)
@@ -1020,7 +1020,7 @@ def test_managed_cleanup_cancels_a_terminal_pause_before_it_starts():
         e2b_backend = make_backend(sandbox)
         factory = SimpleNamespace(create=AsyncMock(return_value=e2b_backend))
         async with managed_sandbox(factory):
-            await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+            await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await asyncio.sleep(0)
         return sandbox
 
@@ -1070,7 +1070,7 @@ def test_close_cancels_an_in_progress_pause_then_kills():
 
         sandbox.pause.side_effect = pause
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await entered.wait()
         assert e2b_backend.lifecycle_state is E2BSandboxState.PAUSING
         close_task = asyncio.create_task(e2b_backend.close())
@@ -1098,9 +1098,9 @@ def test_close_waits_for_an_in_progress_auto_resume_then_destroys():
 
         sandbox.files.exists.side_effect = exists
         e2b_backend = make_backend(sandbox)
-        await e2b_backend.write_file("/workspace/schedule.yaml", b"schedule")
+        await e2b_backend.write_file("/workspace/schedule-spec.yaml", b"schedule")
         await wait_for_state(e2b_backend, E2BSandboxState.PAUSED)
-        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule.yaml"))
+        read_task = asyncio.create_task(e2b_backend.read_file("/workspace/schedule-spec.yaml"))
         await entered.wait()
         assert e2b_backend.lifecycle_state is E2BSandboxState.RESUMING
         close_task = asyncio.create_task(e2b_backend.close())

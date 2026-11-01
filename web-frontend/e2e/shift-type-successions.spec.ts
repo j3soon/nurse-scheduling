@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('adds a shift type succession through the real form flow', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('adds a shift type succession through the real form flow', async ({ page })
    * 3. Confirm the saved card shows the expected person and pattern.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'succession seed',
     dates: {

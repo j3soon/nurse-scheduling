@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('renaming people and groups updates downstream references across pages', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('renaming people and groups updates downstream references across pages', as
    * 3. Revisit downstream pages and confirm only the new IDs remain.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'rename cascade seed',
     dates: {

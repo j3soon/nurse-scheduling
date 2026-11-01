@@ -35,7 +35,7 @@ from fastapi import HTTPException
 from nurse_scheduling.ai.agent_session import DOWNLOAD_RETENTION_WARNING, RECOVERY_SAVE_WARNING
 from nurse_scheduling.ai.chat_archive import create_chat_archive
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD
-from nurse_scheduling.ai.history import ChatHistory, _migrate_legacy_transcripts
+from nurse_scheduling.ai.history import ChatHistory
 from nurse_scheduling.ai.optimizer import OptimizerArtifact, OptimizerJobPayload, SessionOptimization
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
 from nurse_scheduling.ai.sandbox import CommandResult
@@ -110,18 +110,18 @@ def test_generated_download_survives_restart_and_removal(postgres_history):
     app = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=factory)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Create files"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Create files"})
         download_id = next(data["download_id"] for kind, data in basic.parse_sse(response.text) if kind == "download")
         assert app.state.session_store.get(session).downloads[download_id] is None
-        assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
+        assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").content == content
         cookies = dict(client.cookies)
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted) as client:
-        assert client.get(f"/sessions/{session}/downloads/{download_id}").status_code == 404
+        assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").status_code == 404
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
-        assert client.delete(f"/sessions/{session}/downloads/{download_id}").status_code == 204
-        assert client.get(f"/sessions/{session}/downloads/{download_id}").status_code == 404
+        assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").content == content
+        assert client.delete(f"/v1/sessions/{session}/downloads/{download_id}").status_code == 204
+        assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").status_code == 404
         # The removed ZIP still counts toward the per-session stored file limit after a restart.
         assert restarted.state.session_store.get(session).archive_bytes == len(content)
         owner = cookies[basic.OWNER_COOKIE]
@@ -159,17 +159,17 @@ def test_generated_download_is_announced_when_its_recovery_save_fails(postgres_h
         session = basic.create_session(client)
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, "save_session", fail_download_save)
-            response = client.post(f"/sessions/{session}/messages", json={"message": "Create files"})
+            response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Create files"})
             events = basic.parse_sse(response.text)
             download_id = next(data["download_id"] for kind, data in events if kind == "download")
             assert any(kind == "warning" and data["message"] == RECOVERY_SAVE_WARNING for kind, data in events)
             assert DOWNLOAD_RETENTION_WARNING not in response.text
             assert events[-1][0] == "done"
             assert not app.state.recovery.evictable(session)
-            assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
+            assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").content == content
         assert client.portal.call(app.state.recovery.save, session)
         assert app.state.session_store.get(session).downloads[download_id] is None
-        assert client.get(f"/sessions/{session}/downloads/{download_id}").content == content
+        assert client.get(f"/v1/sessions/{session}/downloads/{download_id}").content == content
 
 
 @pytest.mark.parametrize("kind", ["upload", "download"])
@@ -187,7 +187,7 @@ def test_removing_an_unsaved_file_keeps_its_archive_bytes(postgres_history, monk
             if kind == "upload":
                 assert (
                     client.post(
-                        f"/sessions/{session}/uploads", files={"files": ("notes.txt", content, "text/plain")}
+                        f"/v1/sessions/{session}/uploads", files={"files": ("notes.txt", content, "text/plain")}
                     ).status_code
                     == 503
                 )
@@ -196,7 +196,7 @@ def test_removing_an_unsaved_file_keeps_its_archive_bytes(postgres_history, monk
                 source_id = "generated-run"
                 assert store.save_download(session, source_id, content)
                 assert not client.portal.call(app.state.recovery.save, session)
-            path = f"/sessions/{session}/{kind}s/{source_id}"
+            path = f"/v1/sessions/{session}/{kind}s/{source_id}"
             for _ in range(2):
                 assert client.delete(path).status_code == 503
             assert next(iter(live.pending_archive_files.values()))["data"] == content
@@ -225,14 +225,14 @@ def test_removed_upload_paths_cannot_be_reused(postgres_history, monkeypatch, sa
     upload_id = str(uuid4())
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        route = f"/sessions/{session}/uploads?upload_id={upload_id}"
+        route = f"/v1/sessions/{session}/uploads?upload_id={upload_id}"
         with monkeypatch.context() as patch:
             if not saved:
                 patch.setattr(ChatHistory, "save_session", unavailable)
             assert client.post(route, files={"files": (filename, b"draft", "text/csv")}).status_code == (
                 201 if saved else 503
             )
-            assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == (204 if saved else 503)
+            assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == (204 if saved else 503)
             live = app.state.session_store.get(session)
             for content in (b"draft", b"other"):
                 assert client.post(route, files={"files": (reused_filename, content, "text/csv")}).status_code == 409
@@ -245,9 +245,9 @@ def test_removed_upload_paths_cannot_be_reused(postgres_history, monkeypatch, sa
         cookies = dict(client.cookies)
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
-        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == 204
         assert client.post(route, files={"files": (reused_filename, b"other", "text/csv")}).status_code == 409
-        exported = client.get(f"/sessions/{session}/export")
+        exported = client.get(f"/v1/sessions/{session}/export")
         with ZipFile(io.BytesIO(exported.content)) as archive:
             files = json.loads(archive.read("manifest.json"))["files"]
             assert len(files) == 2
@@ -282,10 +282,10 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
     settings = basic.make_settings(history_postgres_url="test", optimizer_poll_interval_seconds=0.001)
     app = basic.create_test_app(settings=settings, provider=provider, optimizer_backend=backend)
     with basic.AuthenticatedTestClient(app) as client:
-        session = basic.create_session(client, basic.schedule_yaml())
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Optimize"}).status_code == 200
+        session = basic.create_session(client, basic.schedule_spec_yaml())
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Optimize"}).status_code == 200
         job = next(iter(app.state.session_optimizer._jobs.values()))
-        original_schedule = job.schedule_yaml
+        original_schedule = job.schedule_spec_yaml
         backend.release.set()
 
         async def finish():
@@ -296,7 +296,7 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
         job = next(iter(app.state.session_optimizer._jobs.values()))
         assert job.artifact is None and job.artifact_saved
         assert app.state.session_optimizer._cached_artifact_bytes == 0
-        response = client.get(f"/sessions/{session}/optimizations/{job.id}/xlsx")
+        response = client.get(f"/v1/sessions/{session}/optimizations/{job.id}/xlsx")
         assert response.status_code == 200
         workbook = response.content
         cookies = dict(client.cookies)
@@ -304,16 +304,16 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
     restarted = basic.create_test_app(
         settings=settings,
         provider=basic.ScriptedToolProvider(
-            [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))],
+            [ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))],
             [TextDelta("Inspected")],
         ),
         sandbox_factory=factory,
     )
     with basic.AuthenticatedTestClient(restarted) as client:
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session}/optimizations/{job.id}/xlsx").content == workbook
+        assert client.get(f"/v1/sessions/{session}/optimizations/{job.id}/xlsx").content == workbook
         assert (
-            client.post(f"/sessions/{session}/messages", json={"message": "Inspect the previous result"}).status_code
+            client.post(f"/v1/sessions/{session}/messages", json={"message": "Inspect the previous result"}).status_code
             == 200
         )
         assert factory.created[0].files["/workspace/optimizer-results/optimized-schedule.xlsx"] == workbook
@@ -339,7 +339,7 @@ def test_optimizer_files_survive_restart_without_cached_workbooks(postgres_histo
                 terminal=True,
                 links={"events": "/optimize/remote-failed/events?token=1.signed"},
             ),
-            schedule_yaml=backend.submitted_yaml,
+            schedule_spec_yaml=backend.submitted_yaml,
         )
         assert client.portal.call(restarted.state.recovery.save_optimizer_result, failed, None) is None
         assert client.portal.call(restarted.state.session_optimizer.latest_result_artifact, session) is None
@@ -370,7 +370,7 @@ def test_failed_optimizer_file_write_is_retained_and_retried(postgres_history, m
             payload=OptimizerJobPayload(id="remote", state="completed"),
             original_id_by_anonymized_id={},
             people_count=0,
-            schedule_yaml="description: original",
+            schedule_spec_yaml="description: original",
             submitted_yaml="description: submitted",
             request={"solver": "test"},
         )
@@ -407,7 +407,7 @@ def test_archive_limit_does_not_restore_an_older_optimizer_workbook(postgres_his
             payload=OptimizerJobPayload(id="remote", state="completed", terminal=True),
             original_id_by_anonymized_id={},
             people_count=0,
-            schedule_yaml="description: original",
+            schedule_spec_yaml="description: original",
         )
         artifact = OptimizerArtifact(b"old workbook", "result.xlsx", "application/xlsx", b"{}")
         assert client.portal.call(app.state.recovery.save_optimizer_result, job, artifact) is None
@@ -424,10 +424,10 @@ def test_archive_limit_does_not_restore_an_older_optimizer_workbook(postgres_his
         cookies = dict(client.cookies)
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies=cookies) as client:
-        assert client.get(f"/sessions/{session}/uploads").status_code == 200
+        assert client.get(f"/v1/sessions/{session}/uploads").status_code == 200
         assert client.portal.call(restarted.state.session_optimizer.latest_result_artifact, session) is None
         # The earlier workbook remains available as an explicit historical download.
-        assert client.get(f"/sessions/{session}/optimizations/{job.id}/xlsx").content == artifact.content
+        assert client.get(f"/v1/sessions/{session}/optimizations/{job.id}/xlsx").content == artifact.content
 
 
 @pytest.mark.parametrize("tied_status_file", [False, True], ids=["events-only", "with-status-file"])
@@ -487,7 +487,7 @@ def test_optional_optimizer_read_failure_still_finishes_the_chat(postgres_histor
         )
         monkeypatch.setattr(ChatHistory, operation, unavailable)
         response = client.post(
-            f"/sessions/{session}/messages",
+            f"/v1/sessions/{session}/messages",
             headers={"Accept": "application/json"},
             json={"message": "Continue the chat"},
         )
@@ -503,7 +503,7 @@ def test_optional_optimizer_read_failure_still_finishes_the_chat(postgres_histor
         assert [event.type for event in events if event.type in {"done", "error", "stopped"}] == ["done"]
         assert not live.active
         if operation == "load_file":
-            assert client.get(f"/sessions/{session}/optimizations/job/xlsx").status_code == 503
+            assert client.get(f"/v1/sessions/{session}/optimizations/job/xlsx").status_code == 503
 
 
 def test_upgrade_keeps_existing_upload_bytes_and_metadata(uninitialized_postgres_history):
@@ -511,7 +511,7 @@ def test_upgrade_keeps_existing_upload_bytes_and_metadata(uninitialized_postgres
     migrations = Path(__file__).parents[1] / "nurse_scheduling/ai/migrations"
     session, owner, upload_id = (str(uuid4()) for _ in range(3))
     state = {
-        "schedule_yaml": "description: original",
+        "schedule_spec_yaml": "description: original",
         "dropped_entries": 0,
         "dropped_history_messages": 0,
         "uploads": [
@@ -525,7 +525,7 @@ def test_upgrade_keeps_existing_upload_bytes_and_metadata(uninitialized_postgres
                 break
             connection.execute(migration.read_text(encoding="utf-8"))
             if migration.name.startswith("004"):
-                _migrate_legacy_transcripts(connection)
+                connection.execute("ALTER TABLE chat_runs DROP COLUMN question")
             connection.execute("INSERT INTO ai_history_migrations VALUES (%s)", (migration.name,))
         connection.execute(
             "INSERT INTO chat_sessions (id, owner_hash, expires_at, state) VALUES (%s, %s, to_timestamp(%s), %s)",

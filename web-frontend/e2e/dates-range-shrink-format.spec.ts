@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shrinking a month-spanning range back into one month reverts downstream IDs to DD format', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('shrinking a month-spanning range back into one month reverts downstream ID
    * 4. Revisit Shift Requests and confirm the IDs now use DD format.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'range shrink format seed',
     dates: { range: { startDate: '2026-05-31', endDate: '2026-06-01' }, groups: [] },

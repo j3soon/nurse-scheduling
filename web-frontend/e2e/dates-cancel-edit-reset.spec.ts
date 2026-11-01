@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('canceling date-range edits restores the original persisted values on reopen', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('canceling date-range edits restores the original persisted values on reope
    * 4. Reopen edit mode and confirm the inputs reset to the persisted dates.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'dates cancel seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-03' }, groups: [] },

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('quick-add clear-mode drag clears multiple history cells across one gesture', async ({ page }) => {
   /*
@@ -37,7 +37,7 @@ test('quick-add clear-mode drag clears multiple history cells across one gesture
    * event path.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'history clear drag seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -80,7 +80,7 @@ test('quick-add clear-mode drag respects padded history columns on shorter rows'
    * 3. Confirm only the shorter row's actual history entry is cleared.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'history clear padded row seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

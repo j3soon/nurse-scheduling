@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('quick-add clear mode clears one history cell with a single click', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('quick-add clear mode clears one history cell with a single click', async (
    * 4. Confirm the history summary returns to the empty state.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'history clear click seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

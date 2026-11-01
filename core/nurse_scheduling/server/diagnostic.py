@@ -633,8 +633,8 @@ class PublicDiagnostic:
             scenario = self.config.scenario_path.read_bytes()
             with self._new_client() as client:
                 response = client.post(
-                    "/optimize",
-                    files={"file": (input_name, scenario, "application/yaml")},
+                    "/schedule_spec/optimize",
+                    files={"schedule_spec_file": (input_name, scenario, "application/yaml")},
                     data={
                         "solver": "ortools/cp-sat",
                         "prettify": "false",
@@ -643,7 +643,7 @@ class PublicDiagnostic:
                     headers={"Connection": "close"},
                 )
         except (OSError, httpx.HTTPError) as error:
-            self._record_request_error("POST /optimize", error)
+            self._record_request_error("POST /schedule_spec/optimize", error)
             self._mark_inconclusive("job_submission_error", "A diagnostic job could not be submitted.")
             return None
         if response.status_code == 429:
@@ -663,7 +663,9 @@ class PublicDiagnostic:
             )
             return None
         if response.status_code != 202:
-            self._record_request_error("POST /optimize", f"HTTP {response.status_code}: {response.text[:300]}")
+            self._record_request_error(
+                "POST /schedule_spec/optimize", f"HTTP {response.status_code}: {response.text[:300]}"
+            )
             self._mark_inconclusive(
                 "job_submission_error", "A diagnostic job submission returned an unexpected response."
             )

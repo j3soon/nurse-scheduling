@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('uploading people reorders and adds rows that then appear in save-load YAML', async ({ page }) => {
   /*
@@ -35,7 +35,7 @@ test('uploading people reorders and adds rows that then appear in save-load YAML
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people upload seed',
     dates: { range: {}, groups: [] },

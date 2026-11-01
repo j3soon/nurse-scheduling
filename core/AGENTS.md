@@ -146,12 +146,22 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
+## Compatibility
+
+Follow the root [compatibility policy](../docs/content/developer-guide/compatibility.md).
+Keep tagged frontend optimizer contracts behind isolated adapters. Development
+services upgrade together. Older AI APIs, sessions, histories, Python imports,
+and sandbox paths do not require compatibility. Keep database schema upgrades
+and current session recovery working.
+
 ## Experimental AI
 - AI test migration: follow the root `AGENTS.md` transition policy. Use only
   focused, human-reviewed cases in `tests/ai/` for new behavior checks.
-  Default pytest runs deselect the legacy checks that bind shipped prompts to
-  old evaluation evidence and removed prompt steps. Remove these temporary
-  `pyproject.toml` exclusions in the dedicated legacy-removal branch.
+  Default pytest discovery excludes legacy evaluation modules before import.
+  `tests/collection.py` shares that temporary selection policy with affected
+  checks, including explicit test paths. Remove it with the legacy suite in the
+  dedicated legacy-removal branch. Current unit tests must read fixture data
+  without importing the legacy evaluation runner.
   `tests/ai_eval/` and its ladder and receipt workflows below are legacy and
   are not maintenance requirements for this branch. Remove the legacy tests,
   references, and these transition instructions in the dedicated removal
@@ -168,7 +178,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
   instead of duplicating it in compaction prompts.
   Verify Pi alignment against the pinned source across the affected execution
   path. Document each necessary difference and its reason in the limits page.
-- `AgentSession` owns conversation changes, steering, applied schedules, and
+- `AgentSession` owns conversation changes, steering, applied Schedule Specs, and
   the shared foreground and optimizer-review execution path. `SessionStore`
   owns access, expiry, and retained-byte budgets. `SessionRecovery` owns ordered
   recovery writes and eviction pins. `SessionEventStream` owns bounded replay.
@@ -235,7 +245,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - `SessionRuns` owns admission, execution, cancellation, and cleanup. Keep the
   owner until recovery writes finish. Stop requests cancel once, and shutdown
   joins owners before closing the sandbox factory and optimizer transport.
-  Commit and abort through the owning `RunSnapshot`. Queue a schedule update
+  Commit and abort through the owning `RunSnapshot`. Queue a Schedule Spec update
   received during a run and apply it after the run's entries, so a browser
   update never discards the run.
 - Include delayed model discovery in admission and cancellation tests. Injecting
@@ -268,7 +278,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
   missing speed measurements separate from missing prices.
 - Keep attachment limits server-configured and report them through
   `/capabilities`. Attachments and the optimizer tool are always offered.
-  Keep schedules and attachments separate from model instructions.
+  Keep Schedule Specs and attachments separate from model instructions.
 - Put shared AI test data under `tests/ai_fixtures/`, so affected checks select
   AI suites without running unrelated scheduling tests.
 - Keep browser and command chat exports on the shared Python ZIP writer. Read
@@ -299,9 +309,11 @@ stderr. Do not replace an explicitly selected file with a fallback.
   outcome persistence finish. Queue completed model entries for storage before tools.
   Recover unfinished status even when a terminal publication was saved. Retry failed
   final outcome writes during shutdown while recovery storage is still available.
-- Append database migrations without renaming previously applied files. Test an
-  upgrade from the deployed schema with saved sessions, message IDs, and Stop
-  requests. Document backup and rollback when the old code cannot read the new schema.
+- Append database migrations without changing previously applied SQL or numeric
+  versions. Migration history uses the numeric filename prefix, so changing a
+  file's description does not run it again. Test upgrades from the deployed
+  schema with saved sessions, message IDs, and Stop requests. Document backup
+  and rollback when the old code cannot read the new schema.
   Do not add code that only preserves edge-case behavior for sessions saved by
   earlier versions, such as their interrupted runs or a missing model lock.
 - Store all session data in PostgreSQL, as Pi stores its session file. Save the
@@ -374,10 +386,10 @@ stderr. Do not replace an explicitly selected file with a fallback.
   and let the agent write a focused sandbox parser when a helper is insufficient.
   Check the helper catalog and `--help` before generating read-only parsing or
   counting code. Add recurring missing operations to a maintained inspector.
-  Keep source inspection separate from schedule construction and policy audits.
+  Keep source inspection separate from Schedule Spec construction and policy audits.
 - Fix repeated representation failures at the data boundary before adding prompt
   exceptions. Use the app's YAML 1.2 semantics for both reading and writing
-  schedule data. Prefer the installed library over custom scalar converters.
+  Schedule Spec. Prefer the installed library over custom scalar converters.
   Keep schema validation in the trusted server instead of asking the model to
   maintain a second validator.
 - When adding a bundled reference, include it in sandbox hydration, production
@@ -400,23 +412,25 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - Sandbox allocation is lazy. Only file tools and optimizer start need a
   sandbox. Optimizer status and finish-now controls must not allocate or resume
   one. Tests that verify attachment hydration must call a sandbox tool.
-- Keep backend schedule format invariants in `NurseSchedulingData`. Implement
+- Keep backend Schedule Spec format invariants in `ScheduleSpec`. Implement
   consumer-specific subsets through explicit Pydantic entry points rather than
   input-controlled or global validation flags.
-- Parse schedules through `loader._load_yaml`, including comparisons of draft
-  schedules. It bounds nesting and alias expansion before constructing data.
+- Parse Schedule Specs through `loader._load_yaml`, including comparisons of draft
+  Schedule Specs. It bounds nesting and alias expansion before constructing data.
   Direct `YAML.load` calls bypass those bounds.
-- Parse, validate, and compile schedules in worker threads, not on the event
-  loop. One large schedule can take most of a second, which stalls every
+- Parse, validate, and compile Schedule Specs in worker threads, not on the event
+  loop. One large Schedule Spec can take most of a second, which stalls every
   session's stream.
-- The assistant is reachable only from the web frontend, so its schedule tools
+- The assistant is reachable only from the web frontend, so its Schedule Spec tools
   target the frontend subset alone. Validate through
-  `ai/validation.py`, and do not expose the full backend schedule format, which
+  `ai/validation.py`, and do not expose the full backend Schedule Spec format, which
   accepts shapes the editor cannot represent.
 - Frontend validation checks normalized frontend state, not raw import
   compatibility. Do not broaden it merely because an import path can convert
   or repair additional input shapes.
-- Keep schedule facts out of the prompt summary in `describe_schedule` and put
+- Describe incomplete Schedule Specs by naming missing entries, fields, or rules.
+  Call a Schedule Spec missing only when the document itself is unavailable.
+- Keep Schedule Spec facts out of the prompt summary in `describe_schedule_spec` and put
   them in a tool result instead. The evaluation asserts that a reading case
   cannot be answered from the summary alone, so listing item IDs or line numbers
   there turns a reading case into a copying case. See
@@ -539,28 +553,28 @@ stderr. Do not replace an explicitly selected file with a fallback.
   status entries and ordinary app events. Test that
   separate provider requests preserve their shared prefix until compaction or trimming.
 - Keep reusable analysis in the single bounded `/workspace/analysis.md` file.
-  Bind it to exact schedule and upload inputs, retain it only through the
+  Bind it to exact Schedule Spec and upload inputs, retain it only through the
   successful run commit, and count it in session memory. Invalidate it when
   sources change. Treat it as untrusted working notes, not user approval.
   Do not retain arbitrary workspace files or execute saved notes automatically.
-- Keep unfinished edits in `/workspace/schedule.yaml`, including rejected drafts.
+- Keep unfinished edits in `/workspace/schedule-spec.yaml`, including rejected drafts.
   Keep authoritative last accepted contents outside the writable sandbox and
-  expose them at `/workspace/last-accepted-schedule.yaml`. Refresh that copy
+  expose them at `/workspace/last-accepted-schedule-spec.yaml`. Refresh that copy
   after mutating tool calls, even if only the backup changed. Keep validation
   feedback visible to the model and user. Require the current draft to pass
   trusted review before optimization or successful completion. A nonzero command
-  exit alone must not undo an accepted schedule change. Pair deterministic
+  exit alone must not undo an accepted Schedule Spec change. Pair deterministic
   recovery checks with focused live cases for the model's response to validation
-  feedback. Grade the required recovery action as well as the final schedule.
+  feedback. Grade the required recovery action as well as the final Schedule Spec.
   Keep those cases with the implementation commit.
 - Restore only the mandatory one-shift-per-day rule during trusted candidate
-  review, and only when the restored schedule data passes the existing frontend
+  review, and only when the restored Schedule Spec passes the existing frontend
   validator. Insert the rule as text so the rest of the model's text, including
   comments and key order, stays unchanged. Report the restoration to the model
   and user. Keep the workspace, inspection context, preview and optimizer input
   on the same validated text. Do not auto-repair optional staffing, rest,
   eligibility or preference rules. Test edits after a reset when changing
-  validation. Empty editor schedule data must not require optimization dates.
+  validation. Empty editor Schedule Spec must not require optimization dates.
 - Show known provider reasons and trusted validation details in both foreground
   and background chat errors. Keep raw provider bodies and private SDK errors
   in server logs. Test that failed validation still discards the turn's edits.
@@ -593,7 +607,7 @@ stderr. Do not replace an explicitly selected file with a fallback.
   exact-text replacements, and `write` only for a complete file rewrite. Put
   domain guidance in task-sized reference documents that return related schema
   shapes together instead of adding model-specific tools or fine-grained lookup
-  turns. Keep trusted validation after every possible schedule change and the
+  turns. Keep trusted validation after every possible Schedule Spec change and the
   structural diff at review, since those catch a dropped entry that still
   parses. Emit an intermediate working-copy preview only after that trusted
   validation.
@@ -690,9 +704,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - For streamed multipart limits, raise `MultiPartException` so Starlette closes
   temporary files, then translate the rejection to HTTP 413. Check file closure
   as well as the response and consumed bytes.
-- Bound submitted scheduling data by its alias expansion and nesting depth as
+- Bound submitted Schedule Spec by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
-  parse events without building the structure, and both the API and `load_data`
+  parse events without building the structure, and both the API and `load_schedule_spec`
   refuse past either bound. Read untrusted data off the event loop.
 
 ## Testing
@@ -709,9 +723,9 @@ stderr. Do not replace an explicitly selected file with a fallback.
   a reason the assertion does not name. `tests/test_usage_metrics.py` shifts its
   whole timeline onto the current reporting week for this reason.
 - Resolve input selectors and input-derived invariants in
-  `NurseSchedulingData.compiled_schedule`. Scheduler, preference, and export
+  `ScheduleSpec.compiled_schedule_spec`. Scheduler, preference, and export
   phases should consume that representation instead of reparsing YAML fields.
-- Treat a validated schedule and its compiled representation as one snapshot.
+- Treat a validated Schedule Spec and its compiled representation as one snapshot.
   Revalidate changed input instead of mutating a validated model and reusing
   stale compiled data.
 - Keep server-facing solver traits in

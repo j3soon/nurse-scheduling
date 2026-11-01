@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 import yaml from 'js-yaml';
 
 test('upload can replace the current renamed save-load preview with an older saved YAML', async ({ page }) => {
@@ -32,7 +32,7 @@ test('upload can replace the current renamed save-load preview with an older sav
    * 4. Confirm the original name returns in the preview and the renamed preview is gone.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'replace renamed upload seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

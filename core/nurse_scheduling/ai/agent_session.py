@@ -36,7 +36,7 @@ from .agent_types import AgentCompaction, AgentCompactionEnd, AgentContextUsage
 from .compaction import ContextCompactor
 from .config import AiSettings
 from .context import (
-    SCHEDULE_CHANGED_EVENT,
+    SCHEDULE_SPEC_CHANGED_EVENT,
     QuestionKind,
     build_provider_messages,
     context_usage,
@@ -85,8 +85,8 @@ from .workspace import (
 from .workspace_tools import run_workspace
 
 CANDIDATE_VALIDATION_ERROR = (
-    "The candidate schedule failed trusted validation. All schedule changes made during this agent run were "
-    "discarded. The current schedule was not changed."
+    "The candidate Schedule Spec failed trusted validation. All Schedule Spec changes made during this agent run were "
+    "discarded. The current Schedule Spec was not changed."
 )
 PROVIDER_ERROR = "The AI provider failed. Please try again."
 SANDBOX_COMMAND_TIMEOUT_ERROR = (
@@ -96,49 +96,49 @@ DOWNLOAD_RETENTION_WARNING = (
     "The generated ZIP could not be retained because a chat or service storage limit was reached."
 )
 SANDBOX_RUN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
-STALE_RUN_ERROR = "The schedule changed while this response was generated, so the response was discarded."
+STALE_RUN_ERROR = "The Schedule Spec changed while this response was generated, so the response was discarded."
 BACKGROUND_RECOVERY_ERROR = "AI message recovery is unavailable, so the optimizer result was not reviewed."
 RECOVERY_SAVE_WARNING = "This response could not be saved for recovery after a service restart."
 logger = logging.getLogger("nurse_scheduling.ai")
 _Result = TypeVar("_Result")
 
 
-def schedule_revision(schedule_yaml: str) -> str:
-    """Identify one exact schedule snapshot, so the browser applies a run's schedule only over its base."""
-    return hashlib.sha256(schedule_yaml.encode("utf-8")).hexdigest()
+def schedule_spec_revision(schedule_spec_yaml: str) -> str:
+    """Identify one exact Schedule Spec snapshot, so the browser applies a run's Schedule Spec only over its base."""
+    return hashlib.sha256(schedule_spec_yaml.encode("utf-8")).hexdigest()
 
 
-def _schedule_data(schedule_yaml: str) -> object:
-    """Parse a schedule for comparison, so a formatting-only change is not reported as an edit."""
+def _schedule_spec(schedule_spec_yaml: str) -> object:
+    """Parse a Schedule Spec for comparison, so a formatting-only change is not reported as an edit."""
     try:
-        return _load_yaml(schedule_yaml.encode(), reject_aliases=True)
+        return _load_yaml(schedule_spec_yaml.encode(), reject_aliases=True)
     except (ValueError, YAMLError):
-        return schedule_yaml
+        return schedule_spec_yaml
 
 
-def schedule_data_changed(before: str, after: str) -> bool:
-    """Report whether a schedule change is more than formatting. Callers may run it off the event loop."""
-    return before != after and _schedule_data(before) != _schedule_data(after)
+def schedule_spec_changed(before: str, after: str) -> bool:
+    """Report whether a Schedule Spec change is more than formatting. Callers may run it off the event loop."""
+    return before != after and _schedule_spec(before) != _schedule_spec(after)
 
 
 @dataclass(frozen=True)
 class RunCompletion:
-    """Whether a completed run and its optional schedule change were retained."""
+    """Whether a completed run and its optional Schedule Spec change were retained."""
 
     run_saved: bool
-    schedule_applied: bool
+    schedule_spec_applied: bool
     history_trimmed_count: int = 0
     context_used_chars: int = 0
-    # The run's schedule replaced a browser update queued during the run.
-    replaced_queued_schedule: bool = False
+    # The run's Schedule Spec replaced a browser update queued during the run.
+    replaced_queued_schedule_spec: bool = False
 
 
 @dataclass(frozen=True)
-class QueuedSchedule:
-    """The latest browser schedule received during a run, applied after the run ends."""
+class QueuedScheduleSpec:
+    """The latest browser Schedule Spec received during a run, applied after the run ends."""
 
-    schedule_yaml: str
-    # Whether its data differs from the session schedule, when the update request compared them.
+    schedule_spec_yaml: str
+    # Whether its data differs from the session Schedule Spec, when the update request compared them.
     data_changed: bool | None
 
 
@@ -187,14 +187,14 @@ class SessionPersistence(Protocol):
         self,
         session_id: str,
         entries: Sequence[AgentMessage],
-        schedule_yaml: str | None = None,
+        schedule_spec_yaml: str | None = None,
         *,
         snapshot: RunSnapshot,
     ) -> RunCompletion: ...
 
     def abort(self, session_id: str, snapshot: RunSnapshot) -> None: ...
 
-    def apply_queued_schedule(self, session_id: str) -> None: ...
+    def apply_queued_schedule_spec(self, session_id: str) -> None: ...
 
     def save_download(self, session_id: str, download_id: str, content: bytes) -> bool: ...
 
@@ -240,7 +240,7 @@ class RunRecorder(Protocol):
         usage: TokenUsage | None,
         committed: bool,
         *,
-        schedule_change: dict[str, Any] | None = None,
+        schedule_spec_change: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -278,7 +278,7 @@ class AgentSession:
     id: str
     owner_token: str
     expires_at: float
-    schedule_yaml: str
+    schedule_spec_yaml: str
     revision: str
     transcript: list[AgentMessage] = field(default_factory=list)
     dropped_history_messages: int = 0
@@ -288,7 +288,7 @@ class AgentSession:
     next_entry_seq: int = 0
     version: int = 0
     snapshot: RunSnapshot | None = None
-    queued_schedule: QueuedSchedule | None = None
+    queued_schedule_spec: QueuedScheduleSpec | None = None
     agent: Agent = field(default_factory=Agent)
     # Retained source files keyed by upload ID, in upload order, and generated ZIPs keyed by run ID.
     uploads: dict[str, SandboxAttachment] = field(default_factory=dict)
@@ -351,13 +351,13 @@ class AgentSession:
         return projected_history(self.transcript)
 
     def recovery_state(self) -> dict[str, Any]:
-        """Return the schedule and retention counts that a restored session continues.
+        """Return the Schedule Spec and retention counts that a restored session continues.
 
         The conversation itself is rebuilt from saved entries.
         """
         return {
-            "schedule_yaml": self.schedule_yaml,
-            "queued_schedule": asdict(self.queued_schedule) if self.queued_schedule else None,
+            "schedule_spec_yaml": self.schedule_spec_yaml,
+            "queued_schedule_spec": asdict(self.queued_schedule_spec) if self.queued_schedule_spec else None,
             "model_selection": self.model_selection,
             "locked_model": self.locked_model,
             "provider_credential_id": self.provider_credential_id,
@@ -414,9 +414,11 @@ class AgentSession:
             id=session_id,
             owner_token=owner_token,
             expires_at=expires_at,
-            schedule_yaml=state["schedule_yaml"],
-            revision=schedule_revision(state["schedule_yaml"]),
-            queued_schedule=QueuedSchedule(**state["queued_schedule"]) if state.get("queued_schedule") else None,
+            schedule_spec_yaml=state["schedule_spec_yaml"],
+            revision=schedule_spec_revision(state["schedule_spec_yaml"]),
+            queued_schedule_spec=QueuedScheduleSpec(**state["queued_schedule_spec"])
+            if state.get("queued_schedule_spec")
+            else None,
             model_selection=state.get("model_selection"),
             locked_model=state.get("locked_model"),
             provider_credential_id=state.get("provider_credential_id"),
@@ -656,7 +658,7 @@ class AgentSession:
         self._saved_run_messages = []
         self.snapshot = RunSnapshot(
             list(self.transcript),
-            self.schedule_yaml,
+            self.schedule_spec_yaml,
             self.version,
             previously_dropped=self.dropped_history_messages,
             run_id=run_id,
@@ -671,11 +673,11 @@ class AgentSession:
         self,
         snapshot: RunSnapshot,
         entries: Sequence[AgentMessage],
-        schedule_yaml: str | None,
+        schedule_spec_yaml: str | None,
     ) -> RunCompletion:
         """Commit only the current reservation, releasing it even when its version is stale.
 
-        A committed run's validated schedule becomes the current schedule.
+        A committed run's validated Schedule Spec becomes the current Schedule Spec.
         """
         if not self.abort_run(snapshot):
             return RunCompletion(False, False)
@@ -683,15 +685,17 @@ class AgentSession:
             return RunCompletion(False, False)
         self.transcript.extend(entries)
         self.analysis = snapshot.analysis if snapshot.analysis and snapshot.analysis.content else None
-        replaced_queued_schedule = False
-        if schedule_yaml is not None:
-            # The run's schedule replaces an update queued during the run, as it replaces newer browser work.
-            replaced_queued_schedule = self.queued_schedule is not None
-            self.queued_schedule = None
+        replaced_queued_schedule_spec = False
+        if schedule_spec_yaml is not None:
+            # The run's Schedule Spec replaces an update queued during the run, as it replaces newer browser work.
+            replaced_queued_schedule_spec = self.queued_schedule_spec is not None
+            self.queued_schedule_spec = None
             self.analysis = None
-            self.schedule_yaml = schedule_yaml
-            self.revision = schedule_revision(schedule_yaml)
-        return RunCompletion(True, schedule_yaml is not None, replaced_queued_schedule=replaced_queued_schedule)
+            self.schedule_spec_yaml = schedule_spec_yaml
+            self.revision = schedule_spec_revision(schedule_spec_yaml)
+        return RunCompletion(
+            True, schedule_spec_yaml is not None, replaced_queued_schedule_spec=replaced_queued_schedule_spec
+        )
 
     def abort_run(self, snapshot: RunSnapshot) -> bool:
         """Only the owner of a reservation may release it."""
@@ -723,39 +727,39 @@ class AgentSession:
     def queued_steering(self) -> tuple[str, ...]:
         return self.agent.queued_steering if self.active else ()
 
-    def update_schedule(self, schedule_yaml: str, compared: tuple[str, bool] | None = None) -> None:
-        """Replace the session schedule, invalidate in-flight results, and record the change.
+    def update_schedule_spec(self, schedule_spec_yaml: str, compared: tuple[str, bool] | None = None) -> None:
+        """Replace the session Schedule Spec, invalidate in-flight results, and record the change.
 
-        `compared` holds a base schedule and its `schedule_data_changed` result. It is reused
-        only while that base is still the session schedule. During a run, keep only the latest
+        `compared` holds a base Schedule Spec and its `schedule_spec_changed` result. It is reused
+        only while that base is still the session Schedule Spec. During a run, keep only the latest
         update until the run ends, so a browser update never discards the run.
         """
-        known_change = compared[1] if compared is not None and compared[0] == self.schedule_yaml else None
+        known_change = compared[1] if compared is not None and compared[0] == self.schedule_spec_yaml else None
         if self.active:
-            changed = schedule_yaml != self.schedule_yaml
-            self.queued_schedule = QueuedSchedule(schedule_yaml, known_change) if changed else None
+            changed = schedule_spec_yaml != self.schedule_spec_yaml
+            self.queued_schedule_spec = QueuedScheduleSpec(schedule_spec_yaml, known_change) if changed else None
             return
-        if self.schedule_yaml == schedule_yaml:
+        if self.schedule_spec_yaml == schedule_spec_yaml:
             return
         if known_change is not None:
             data_changed = known_change
         else:
-            data_changed = schedule_data_changed(self.schedule_yaml, schedule_yaml)
+            data_changed = schedule_spec_changed(self.schedule_spec_yaml, schedule_spec_yaml)
         self.version += 1
         self.analysis = None
-        self.schedule_yaml = schedule_yaml
-        self.revision = schedule_revision(schedule_yaml)
+        self.schedule_spec_yaml = schedule_spec_yaml
+        self.revision = schedule_spec_revision(schedule_spec_yaml)
         if data_changed:
-            self._add_entry(AppEventEntry(SCHEDULE_CHANGED_EVENT))
+            self._add_entry(AppEventEntry(SCHEDULE_SPEC_CHANGED_EVENT))
 
-    def apply_queued_schedule(self) -> bool:
-        """Apply the schedule update received during the last run. Return whether one was applied."""
-        queued = self.queued_schedule
+    def apply_queued_schedule_spec(self) -> bool:
+        """Apply the Schedule Spec update received during the last run. Return whether one was applied."""
+        queued = self.queued_schedule_spec
         if queued is None or self.active:
             return False
-        self.queued_schedule = None
-        compared = None if queued.data_changed is None else (self.schedule_yaml, queued.data_changed)
-        self.update_schedule(queued.schedule_yaml, compared)
+        self.queued_schedule_spec = None
+        compared = None if queued.data_changed is None else (self.schedule_spec_yaml, queued.data_changed)
+        self.update_schedule_spec(queued.schedule_spec_yaml, compared)
         return True
 
     def require_idle(self, action: str) -> None:
@@ -794,14 +798,14 @@ class AgentSession:
         dropped_history = snapshot.previously_dropped + history.dropped_messages
         messages = build_provider_messages(
             history,
-            snapshot.schedule_yaml,
+            snapshot.schedule_spec_yaml,
             question,
             max_download_bytes=settings.max_download_bytes,
         )
         events.emit(
             {
                 "type": "model_input",
-                "schedule_yaml": snapshot.schedule_yaml,
+                "schedule_spec_yaml": snapshot.schedule_spec_yaml,
                 **model_input(
                     messages,
                     [snapshot.transcript_offset + index for index in history.source_indices],
@@ -885,7 +889,7 @@ class AgentSession:
         settings = runtime.settings
         history = project_history(snapshot.transcript, None)
         messages = build_provider_messages(
-            history, snapshot.schedule_yaml, "", max_download_bytes=settings.max_download_bytes
+            history, snapshot.schedule_spec_yaml, "", max_download_bytes=settings.max_download_bytes
         )[:-1]
         skipped = False
         try:
@@ -960,7 +964,7 @@ class AgentSession:
                 agent_events = run_workspace(
                     runtime.provider,
                     runtime.sandbox_factory,
-                    snapshot.schedule_yaml,
+                    snapshot.schedule_spec_yaml,
                     messages,
                     WorkspaceLimits.from_settings(runtime.settings),
                     take_steering=lambda close: runtime.store.take_steering(self.id, close),
@@ -1045,7 +1049,7 @@ class AgentSession:
     async def _publish_completion(
         self,
         run: AgentRun,
-        schedule_change: dict[str, Any] | None,
+        schedule_spec_change: dict[str, Any] | None,
         completion: RunCompletion,
         output: RunOutput,
         events: RunEvents,
@@ -1060,8 +1064,8 @@ class AgentSession:
             return
         if completion.history_trimmed_count and completion.history_trimmed_count != dropped_history:
             events.emit({"type": "history_trimmed", "dropped": completion.history_trimmed_count})
-        if schedule_change is not None:
-            events.emit(schedule_change)
+        if schedule_spec_change is not None:
+            events.emit(schedule_spec_change)
         if output.download is not None:
             # A ZIP that does not fit the session memory budget leaves the answer intact.
             if runtime.store.save_download(self.id, run.id, output.download.content):
@@ -1148,8 +1152,8 @@ class AgentSession:
         if history_started:
             # Messages the run loop has not saved yet, including an interrupted response.
             self._save_run_messages(run.id, entries if compact_only else entries[1:])
-        # A schedule update received during the run is recorded after the run's own entries.
-        runtime.store.apply_queued_schedule(self.id)
+        # A Schedule Spec update received during the run is recorded after the run's own entries.
+        runtime.store.apply_queued_schedule_spec(self.id)
         if stopped and run.shutdown:
             # The run stays running in recovery storage, so the restarted service reports
             # a restart instead of a user Stop.
@@ -1164,14 +1168,18 @@ class AgentSession:
             events.emit(outcome.terminal)
         try:
             history_saved = None
-            schedule_change = None
-            if outcome.completion is not None and outcome.completion.schedule_applied and output.proposal is not None:
-                schedule_change = {
-                    "type": "schedule_applied",
+            schedule_spec_change = None
+            if (
+                outcome.completion is not None
+                and outcome.completion.schedule_spec_applied
+                and output.proposal is not None
+            ):
+                schedule_spec_change = {
+                    "type": "schedule_spec_applied",
                     "run_id": run.id,
-                    "schedule_yaml": output.proposal.text,
+                    "schedule_spec_yaml": output.proposal.text,
                     "diff": output.proposal.diff,
-                    "replaced_queued_schedule": outcome.completion.replaced_queued_schedule,
+                    "replaced_queued_schedule_spec": outcome.completion.replaced_queued_schedule_spec,
                 }
             if history_started:
                 history_saved = await _complete(
@@ -1182,7 +1190,7 @@ class AgentSession:
                         outcome.error_code,
                         output.usage,
                         committed,
-                        schedule_change=schedule_change,
+                        schedule_spec_change=schedule_spec_change,
                     )
                 )
                 if not history_saved:
@@ -1190,7 +1198,7 @@ class AgentSession:
             if outcome.completion is not None:
                 await self._publish_completion(
                     run,
-                    schedule_change,
+                    schedule_spec_change,
                     outcome.completion,
                     output,
                     events,

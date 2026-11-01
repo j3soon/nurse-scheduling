@@ -55,9 +55,9 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         self.assertEqual(result["inventory"]["tool_calls"], 0)
 
     def test_audience_labels_do_not_change_activity_outputs_or_message_status(self):
-        exported = message("assistant", '<div class="activity-entry model-input"><details class="activity-details" open><summary>Schedule check failed</summary><p class="activity-status">Validation result sent to AI.</p><div class="activity-body"><pre class="activity-output">schedule.yaml introduces problems.</pre></div></details></div>')
+        exported = message("assistant", '<div class="activity-entry model-input"><details class="activity-details" open><summary>Schedule Spec check failed</summary><p class="activity-status">Validation result sent to AI.</p><div class="activity-body"><pre class="activity-output">schedule.yaml introduces problems.</pre></div></details></div>')
         result = extract_export(exported)["messages"][0]
-        self.assertEqual(result["activity"], [{"index": 0, "kind": "schedule-check", "ok": False, "outputs": ["schedule.yaml introduces problems."]}])
+        self.assertEqual(result["activity"], [{"index": 0, "kind": "schedule-spec-check", "ok": False, "outputs": ["schedule.yaml introduces problems."]}])
         self.assertEqual(result["status"], [])
 
     def test_collapsed_app_and_status_text_is_content_not_system_policy(self):
@@ -121,7 +121,7 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         activity += (
             '<div class="activity-entry"><div class="content">Reply.</div></div>'
         )
-        activity += '<div class="activity-entry"><details class="activity-details"><summary>schedule edit</summary><pre class="schedule-diff">+ change</pre></details></div>'
+        activity += '<div class="activity-entry"><details class="activity-details"><summary>Schedule Spec edit</summary><pre class="schedule-diff">+ change</pre></details></div>'
         source = message("assistant", activity)
         report = extract_export(source)
         self.assertEqual(report["inventory"]["tool_calls"], 0)
@@ -143,12 +143,13 @@ class ExtractHtmlTracesTests(unittest.TestCase):
         self.assertEqual(report["inventory"]["failed_tool_calls"], 0)
         self.assertEqual(report["messages"][0]["activity"][0]["outputs"], [old_chat])
 
-    def test_schedule_checks_and_applied_changes_keep_exported_details(self):
+
+    def test_schedule_spec_checks_and_applied_changes_keep_exported_details(self):
         entries = [
-            ("Schedule check failed", "schedule.yaml introduces <problems>.\n"),
-            ("Schedule check passed", "  Schedule is valid.\n"),
+            ("Schedule Spec check failed", "schedule.yaml introduces <problems>.\n"),
+            ("Schedule Spec check passed", "  Schedule is valid.\n"),
             (
-                "Applied to your schedule",
+                "Applied to your Schedule Spec",
                 'Undo restores <previous work>.\n\n- description: "" -> "April"',
             ),
         ]
@@ -168,17 +169,17 @@ class ExtractHtmlTracesTests(unittest.TestCase):
             [
                 {
                     "index": 0,
-                    "kind": "schedule-check",
+                    "kind": "schedule-spec-check",
                     "ok": False,
                     "outputs": [entries[0][1]],
                 },
                 {
                     "index": 1,
-                    "kind": "schedule-check",
+                    "kind": "schedule-spec-check",
                     "ok": True,
                     "outputs": [entries[1][1]],
                 },
-                {"index": 2, "kind": "schedule-applied", "outputs": [entries[2][1]]},
+                {"index": 2, "kind": "schedule-spec-applied", "outputs": [entries[2][1]]},
             ],
         )
         self.assertEqual(report["inventory"]["tool_calls"], 0)

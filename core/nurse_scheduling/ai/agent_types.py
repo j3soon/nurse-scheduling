@@ -127,7 +127,7 @@ class AgentSteering:
 
 @dataclass(frozen=True)
 class AgentProposal:
-    """The validated schedule the run ended with, which becomes the current schedule."""
+    """The validated Schedule Spec the run ended with, which becomes the current Schedule Spec."""
 
     text: str
     diff: str

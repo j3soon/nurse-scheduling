@@ -358,7 +358,7 @@ def main() -> None:
     parser.add_argument(
         "--source",
         type=Path,
-        help="Statistics history source. Defaults to /workspace/schedule.yaml. Used only when its bytes match source_sha256.",
+        help="Statistics history source. Defaults to /workspace/schedule-spec.yaml. Used only when its bytes match source_sha256.",
     )
     args = parser.parse_args(_weight_arguments(sys.argv[1:]))
     if args.statistics:
@@ -376,7 +376,7 @@ def main() -> None:
                 people=args.person,
                 max_people=100 if args.max_people is None else args.max_people,
                 include_history=args.include_history,
-                source=args.source or Path("/workspace/schedule.yaml"),
+                source=args.source or Path("/workspace/schedule-spec.yaml"),
                 summary_only=args.summary_only,
             )
         else:

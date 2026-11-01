@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('editing YAML applies renamed entities through the real save flow', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('editing YAML applies renamed entities through the real save flow', async (
    * 3. Reopen the people page and confirm only the renamed group remains.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'yaml edit seed',
     dates: {
@@ -95,7 +95,7 @@ test('editing sparse export YAML replaces old formatting and extra layout entrie
    * 3. Confirm the previous export extras are gone from the preview.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'sparse export edit seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('renaming then deleting a person removes the renamed reference from downstream pages', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('renaming then deleting a person removes the renamed reference from downstr
    * 4. Verify downstream pages no longer show either the old or renamed reference.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'rename delete cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

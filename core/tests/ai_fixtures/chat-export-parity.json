@@ -525,22 +525,22 @@
               "ok": false
             },
             {
-              "kind": "schedule-check",
+              "kind": "schedule-spec-check",
               "ok": true,
               "text": "valid"
             },
             {
-              "kind": "schedule-check",
+              "kind": "schedule-spec-check",
               "ok": false,
               "text": "invalid"
             },
             {
-              "kind": "schedule-change",
+              "kind": "schedule-spec-change",
               "before": "a\nb\nc",
               "after": "a\nx\nc"
             },
             {
-              "kind": "schedule-applied",
+              "kind": "schedule-spec-applied",
               "text": "- old\n+ new",
               "notice": "Applied"
             }
@@ -552,40 +552,40 @@
         }
       ],
       "sha256": {
-        "html": "d2cde9e640a6a49ae373d98fb9d1cb2b618c97776d5200b36a4600408d5746a7",
-        "markdown": "f165faf8312df3098a6826fff261787a7efd9df00cc534de0900a836de2fa5bb"
+        "html": "6599d4bb53d88225c8d93363c6ca98242d1fa38ce720a598a703261065e868cc",
+        "markdown": "994e57375ca9b661755ef5222f22a593a37e9726301528218e3dda0d95f1a014"
       }
     },
     {
       "id": "saved-rich",
       "snapshot": "saved-rich",
       "sha256": {
-        "html": "19d72fabeb08a3ab87c0b0c347b05360179533d78e20db0a7019d0990b1edc42",
-        "markdown": "a45390b86b5066a50d323d5fa5787b993771e6f997e35ca11882f5bec4f2a26b"
+        "html": "e97725adbc72f132175c6716533f4aba46880633ba8e210c152713891a84da64",
+        "markdown": "38be583a98a6bab6e2a75429a0b040c35626fba0fcb63e6640f3bdf43334ef45"
       }
     },
     {
       "id": "early-steering",
       "snapshot": "early-steering",
       "sha256": {
-        "html": "92721ebc05537cd63e0475460c6410046a9123ae514445e9966ed43c4bed7e74",
-        "markdown": "04c680e725a7ba16675d280cc762b930e8792ad5c6ec268f5dc48dd3522105e2"
+        "html": "3c70653c94a6a2acc4cac9c7b4a9f96bfeb8917db1ff62ea099312221e89c49e",
+        "markdown": "f37a38c573c15cd5d9efb5ce59c7a27bbdf9b30e5c4da04bfb63e5b9fc374d9d"
       }
     },
     {
       "id": "missing-terminal",
       "snapshot": "missing-terminal",
       "sha256": {
-        "html": "09e69cd6b25b9199a101636a3c2eb19ab957fb41f3c2ed38b937d888efaa4aa1",
-        "markdown": "85bf9fb2ce4ebca92810adcfd48ab8d423782121bdaa407a92a6b3399698c85f"
+        "html": "ff427ec5f2194db2cbd36ade1e356f158f44596571fb241e1b31874ba5d6d662",
+        "markdown": "779aa5c0a4e583e2db567cd7a33e7cc329ad8b87edfbf7f8178f7cd09165130d"
       }
     },
     {
       "id": "changed-system",
       "snapshot": "changed-system",
       "sha256": {
-        "html": "422b53a56c12926f0208ae7700862b436c9f2cca722a5aae14b45ba6718ff322",
-        "markdown": "260c7f81eb6c4c8880550f6ef579ef16a72c705bc3bb387d746cf751944c309b"
+        "html": "c445e8f58df2ad82a56e493513ca910b8755a06c0cf8cbdca672e76851ebfbdf",
+        "markdown": "c0dc3a1d600bcd6cf76d95c5bd75bf846f8a0a8368ab3b38cb94c1507653e4ff"
       }
     },
     {

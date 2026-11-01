@@ -21,7 +21,7 @@
 
 'use client';
 
-import { activitySummary, characterCount, formatCharacterCount as formatCount, scheduleChangeLines } from './chatPresentation';
+import { activitySummary, characterCount, formatCharacterCount as formatCount, scheduleSpecChangeLines } from './chatPresentation';
 
 import AssistantMarkdown from './AssistantMarkdown';
 
@@ -51,22 +51,22 @@ export interface ToolEntry {
   endsRound?: true;
 }
 
-export interface ScheduleChangeEntry {
-  kind: 'schedule-change';
+export interface ScheduleSpecChangeEntry {
+  kind: 'schedule-spec-change';
   before: string;
   after: string;
 }
 
 // The trusted check the model received after a tool changed the working copy.
-export interface ScheduleCheckEntry {
-  kind: 'schedule-check';
+export interface ScheduleSpecCheckEntry {
+  kind: 'schedule-spec-check';
   ok: boolean;
   text: string;
 }
 
-// The validated schedule adopted by the backend, with its differences.
-export interface ScheduleAppliedEntry {
-  kind: 'schedule-applied';
+// The validated Schedule Spec adopted by the backend, with its differences.
+export interface ScheduleSpecAppliedEntry {
+  kind: 'schedule-spec-applied';
   browserApplied?: boolean;
   text: string;
   runId?: string;
@@ -86,7 +86,7 @@ export interface CompactionActivity {
 }
 
 export type ActivityEntry =
-  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleChangeEntry | ScheduleCheckEntry | ScheduleAppliedEntry
+  | { kind: 'notice'; text: string } | ResponseEntry | ReasoningEntry | ToolEntry | ScheduleSpecChangeEntry | ScheduleSpecCheckEntry | ScheduleSpecAppliedEntry
   | CompactionActivity;
 
 // Long output is revealed a chunk at a time, so an expanded row never floods the page.
@@ -140,8 +140,8 @@ function ToolBody({ entry }: { entry: ToolEntry }) {
   );
 }
 
-function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
-  const { removed, added } = scheduleChangeLines(entry.before, entry.after);
+function ScheduleSpecChangePreview({ entry }: { entry: ScheduleSpecChangeEntry }) {
+  const { removed, added } = scheduleSpecChangeLines(entry.before, entry.after);
 
   return (
     <pre className="schedule-diff">
@@ -156,8 +156,8 @@ function ScheduleChangePreview({ entry }: { entry: ScheduleChangeEntry }) {
 }
 
 function activityColor(entry: ActivityEntry): string {
-  if (entry.kind === 'schedule-applied' || (entry.kind === 'schedule-check' && entry.ok)) return 'activity-success';
-  return entry.kind === 'schedule-check' ? 'activity-error' : 'activity-muted';
+  if (entry.kind === 'schedule-spec-applied' || (entry.kind === 'schedule-spec-check' && entry.ok)) return 'activity-success';
+  return entry.kind === 'schedule-spec-check' ? 'activity-error' : 'activity-muted';
 }
 
 export function CompactionSummary({ entry }: { entry: CompactionActivity }) {
@@ -177,8 +177,8 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
   return (
     <div aria-label="Assistant activity">
       {entries.map((entry, index) => (
-        <div key={index} className={`activity-entry${entry.kind === 'schedule-check' ? ' model-input' : entry.kind === 'schedule-applied' || entry.kind === 'notice' ? ' app-notice' : ''}`}>
-          {entry.kind === 'schedule-applied' && entry.notice && (
+        <div key={index} className={`activity-entry${entry.kind === 'schedule-spec-check' ? ' model-input' : entry.kind === 'schedule-spec-applied' || entry.kind === 'notice' ? ' app-notice' : ''}`}>
+          {entry.kind === 'schedule-spec-applied' && entry.notice && (
             <p role="status" className="schedule-notice">
               {entry.notice}
             </p>
@@ -197,10 +197,10 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
               <p className="character-count">{formatCount(characterCount(entry.text))} characters</p>
             </>
           ) : (
-            <details open={entry.kind === 'schedule-check' && !entry.ok ? true : undefined} className={`activity-details ${activityColor(entry)}`}>
+            <details open={entry.kind === 'schedule-spec-check' && !entry.ok ? true : undefined} className={`activity-details ${activityColor(entry)}`}>
               <summary className="activity-summary">{activitySummary(entry)}</summary>
-              {entry.kind === 'schedule-check' && <p>Validation result sent to AI.</p>}
-              {entry.kind === 'schedule-applied' && <p>Not sent to AI.</p>}
+              {entry.kind === 'schedule-spec-check' && <p>Validation result sent to AI.</p>}
+              {entry.kind === 'schedule-spec-applied' && <p>Not sent to AI.</p>}
               <div className="activity-body">
                 {entry.kind === 'tool'
                   ? <ToolBody entry={entry} />
@@ -209,8 +209,8 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
                       <p>{entry.text}</p>
                       {entry.summary !== undefined && <CompactionSummary entry={entry} />}
                     </>
-                  : entry.kind === 'schedule-change'
-                    ? <ScheduleChangePreview entry={entry} />
+                  : entry.kind === 'schedule-spec-change'
+                    ? <ScheduleSpecChangePreview entry={entry} />
                     : <ChunkedText text={entry.text} label={entry.kind === 'reasoning' ? 'reasoning' : 'details'} />}
               </div>
             </details>

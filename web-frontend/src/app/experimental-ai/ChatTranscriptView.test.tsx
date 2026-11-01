@@ -72,7 +72,7 @@ it('shows a rejected schedule check even when tools are hidden', () => {
   renderTranscript([{
     id: 'answer', role: 'assistant', content: '', activity: [
       { kind: 'tool', name: 'write', arguments: '{}', result: 'Private tool details', ok: false },
-      { kind: 'schedule-check', ok: false, text: 'Date group ALL is generated automatically. Remove its explicit definition.' },
+      { kind: 'schedule-spec-check', ok: false, text: 'Date group ALL is generated automatically. Remove its explicit definition.' },
     ],
   }]);
   expect(screen.queryByText('Private tool details')).not.toBeInTheDocument();
@@ -187,7 +187,7 @@ it.each([0, 4])('separates compaction notices, summary, and assistant activity w
     { kind: 'compaction', reason: 'manual', state: 'completed', text: 'The conversation was summarized.',
       summary: 'Keep nights.', keepMessages },
     { kind: 'response', text: 'Continued.' },
-    { kind: 'schedule-applied', text: 'Updated the schedule.' },
+    { kind: 'schedule-spec-applied', text: 'Updated the schedule.' },
   ] };
   const saved = structuredClone(message);
   renderTranscript([message], true);
@@ -196,7 +196,7 @@ it.each([0, 4])('separates compaction notices, summary, and assistant activity w
   expect(screen.getByText('Conversation summarized').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('User · Conversation summary').closest('article')).toHaveClass('ml-auto');
   expect(screen.getByText('Continued.').closest('article')).toHaveClass('mr-auto');
-  expect(screen.getByText('Applied to your schedule').closest('article')).toHaveClass('mx-auto');
+  expect(screen.getByText('Applied to your Schedule Spec').closest('article')).toHaveClass('mx-auto');
   await user.click(screen.getByText('read'));
   expect(screen.getByText('Tool output').closest('article')).toHaveClass('mr-auto');
   await user.click(screen.getByText('Conversation summary', { exact: true }));
@@ -215,7 +215,7 @@ it.each([undefined, 'failed', 'stopped'] as const)('keeps footer details on the 
     downloadId: 'download-one',
     activity: [
       { kind: 'response', text: 'Updated.' },
-      { kind: 'schedule-applied', text: 'The schedule was applied.' },
+      { kind: 'schedule-spec-applied', text: 'The schedule was applied.' },
     ],
   }]);
   const answer = screen.getByText('Updated.').closest('article');

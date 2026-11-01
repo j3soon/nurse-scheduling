@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shrinking the date range persists across navigation and updates downstream pages', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('shrinking the date range persists across navigation and updates downstream
    * 4. Revisit downstream pages and confirm the removed date stays gone.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'dates undo redo seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-03' }, groups: [] },

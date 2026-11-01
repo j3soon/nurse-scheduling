@@ -21,7 +21,7 @@
 
 import { expect, test } from './test';
 import yaml from 'js-yaml';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 const pages = [
   { route: '/', edit: null },
@@ -44,7 +44,7 @@ test.use({ hasTouch: true, isMobile: true, viewport: { width: 360, height: 740 }
 
 test.beforeEach(async ({ page }) => {
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test', description: 'Phone editing schedule',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-31' }, groups: [] },
     people: { items: [
@@ -124,7 +124,7 @@ test('reorders preference cards and edits the saved YAML on a phone', async ({ p
   await page.getByRole('button', { name: 'Move Current Shift Counts item 2 up', exact: true }).tap();
   await page.goto('/save-and-load');
   await page.getByRole('button', { name: 'Edit YAML', exact: true }).tap();
-  const input = page.getByPlaceholder('Enter YAML configuration...');
+  const input = page.getByPlaceholder('Enter Schedule Spec YAML...');
   const original = await input.inputValue();
   expect(original.indexOf('Night count')).toBeLessThan(original.indexOf('Day count'));
   await input.fill(original.replace('Phone editing schedule', 'Edited from phone'));
@@ -141,7 +141,7 @@ test('reorders a succession pattern without dragging', async ({ page }) => {
   await page.getByRole('button', { name: 'Update', exact: true }).tap();
   await page.goto('/save-and-load');
   await page.getByRole('button', { name: 'Edit YAML', exact: true }).tap();
-  const saved = yaml.load(await page.getByPlaceholder('Enter YAML configuration...').inputValue()) as { preferences: { type: string; pattern?: string[] }[] };
+  const saved = yaml.load(await page.getByPlaceholder('Enter Schedule Spec YAML...').inputValue()) as { preferences: { type: string; pattern?: string[] }[] };
   expect(saved.preferences.find(preference => preference.type === 'shift type successions')?.pattern).toEqual(['D', 'N']);
 });
 
@@ -153,10 +153,10 @@ test('fits the home page title and actions to a phone', async ({ page }) => {
   const lineHeight = await title.evaluate(element => parseFloat(getComputedStyle(element).lineHeight));
   expect(titleBox.height).toBeLessThan(lineHeight * 1.5);
   expect(titleBox.y).toBeLessThan(250);
-  const newSchedule = (await page.getByRole('button', { name: 'New Schedule', exact: true }).boundingBox())!;
-  const menu = (await page.getByRole('button', { name: 'Choose new schedule type' }).boundingBox())!;
+  const newScheduleSpec = (await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).boundingBox())!;
+  const menu = (await page.getByRole('button', { name: 'Choose new Schedule Spec type' }).boundingBox())!;
   const continueBox = (await page.getByRole('button', { name: 'Continue', exact: true }).boundingBox())!;
-  expect(Math.abs(newSchedule.width + menu.width - continueBox.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(newScheduleSpec.width + menu.width - continueBox.width)).toBeLessThanOrEqual(2);
   // The build selector follows the actions instead of floating over them.
   const build = (await page.getByRole('button', { name: /^Build:/ }).boundingBox())!;
   expect(build.y).toBeGreaterThan(continueBox.y + continueBox.height);

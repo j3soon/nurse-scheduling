@@ -179,8 +179,8 @@ def _summary(entry):
     kind = entry["kind"]
     if kind == "reasoning":
         return "Reasoning · " + _count(entry["text"]) + " characters"
-    if kind == "schedule-change":
-        return "schedule edit"
+    if kind == "schedule-spec-change":
+        return "Schedule Spec edit"
     if kind == "compaction":
         if entry.get("invalidated"):
             return "Conversation summary discarded"
@@ -196,10 +196,10 @@ def _summary(entry):
                 label += f" · pass {entry['step']}"
             label += f" · {entry['characters']:,} characters"
         return label
-    if kind == "schedule-check":
-        return "Schedule check passed" if entry["ok"] else "Schedule check failed"
-    if kind == "schedule-applied":
-        return "Applied to your schedule"
+    if kind == "schedule-spec-check":
+        return "Schedule Spec check passed" if entry["ok"] else "Schedule Spec check failed"
+    if kind == "schedule-spec-applied":
+        return "Applied to your Schedule Spec"
     if kind == "notice":
         return "App notice"
     state = entry.get("state")
@@ -214,9 +214,9 @@ def _activity_label(entry):
     kind = entry["kind"]
     if kind == "reasoning":
         return _summary(entry)
-    if kind in {"reasoning", "response", "schedule-change"}:
-        return {"reasoning": "Reasoning", "response": "Response", "schedule-change": "Schedule change"}[kind]
-    if kind in {"notice", "schedule-check", "schedule-applied", "compaction"}:
+    if kind in {"reasoning", "response", "schedule-spec-change"}:
+        return {"reasoning": "Reasoning", "response": "Response", "schedule-spec-change": "Schedule Spec change"}[kind]
+    if kind in {"notice", "schedule-spec-check", "schedule-spec-applied", "compaction"}:
         return _summary(entry)
     state = entry.get("state")
     if "argumentsCharacters" in entry:
@@ -244,9 +244,9 @@ def _activity_text(entry):
         return entry["text"] + "\n" + _compaction_summary_text(entry)
     if kind in {"response", "reasoning"} and entry.get("context") == "omitted":
         return "Incomplete response. Omitted from future model context.\n\n" + entry["text"]
-    if kind == "schedule-applied" and entry.get("notice"):
+    if kind == "schedule-spec-applied" and entry.get("notice"):
         return entry["notice"] + "\n\n" + entry["text"]
-    if kind == "schedule-change":
+    if kind == "schedule-spec-change":
         return f"Before:\n{entry['before']}\n\nAfter:\n{entry['after']}"
     if kind == "tool":
         text = "\n\n".join(
@@ -297,9 +297,9 @@ def _activity_html(entry):
         body = "<p>" + escape_html(entry["text"]) + "</p>"
         if "summary" in entry:
             body += _compaction_summary_html(entry)
-    elif kind in {"reasoning", "schedule-check", "schedule-applied"}:
+    elif kind in {"reasoning", "schedule-spec-check", "schedule-spec-applied"}:
         body = _chunked_text(entry["text"], "reasoning" if kind == "reasoning" else "details")
-    elif kind == "schedule-change":
+    elif kind == "schedule-spec-change":
         before, after = entry["before"].split("\n"), entry["after"].split("\n")
         prefix = 0
         while prefix < min(len(before), len(after)) and before[prefix] == after[prefix]:
@@ -340,17 +340,17 @@ def _activity_html(entry):
         body = '<div class="tool-body">' + arguments + result + interrupted + replay + "</div>"
     audience = (
         '<p class="activity-status">Validation result sent to AI.</p>'
-        if kind == "schedule-check"
+        if kind == "schedule-spec-check"
         else '<p class="activity-status">Not sent to AI.</p>'
-        if kind == "schedule-applied"
+        if kind == "schedule-spec-applied"
         else ""
     )
-    opened = " open" if kind == "schedule-check" and not entry["ok"] else ""
+    opened = " open" if kind == "schedule-spec-check" and not entry["ok"] else ""
     color = (
         "activity-success"
-        if kind == "schedule-applied" or (kind == "schedule-check" and entry["ok"])
+        if kind == "schedule-spec-applied" or (kind == "schedule-spec-check" and entry["ok"])
         else "activity-error"
-        if kind == "schedule-check"
+        if kind == "schedule-spec-check"
         else "activity-muted"
     )
     return f"""<details class="activity-details {color}"{opened}>
@@ -433,7 +433,7 @@ def _display_messages(messages):
     for message in messages:
         activity = message.get("activity", [])
         if message["role"] != "assistant" or not any(
-            entry["kind"] in {"notice", "schedule-applied", "compaction"} for entry in activity
+            entry["kind"] in {"notice", "schedule-spec-applied", "compaction"} for entry in activity
         ):
             parts = [dict(message)]
         else:
@@ -478,7 +478,7 @@ def _display_messages(messages):
                     )
                 else:
                     _append_activity_bubble(
-                        parts, base, entry, "notice" if entry["kind"] in {"notice", "schedule-applied"} else None
+                        parts, base, entry, "notice" if entry["kind"] in {"notice", "schedule-spec-applied"} else None
                     )
             if (
                 message.get("status") == "pending"
@@ -936,9 +936,9 @@ def build_html_chat(messages, metadata):
                 # Match the live chat: model inputs align right and app notices center.
                 placement = (
                     " model-input"
-                    if entry["kind"] == "schedule-check"
+                    if entry["kind"] == "schedule-spec-check"
                     else " app-notice"
-                    if entry["kind"] in {"schedule-applied", "notice"}
+                    if entry["kind"] in {"schedule-spec-applied", "notice"}
                     else ""
                 )
                 if entry["kind"] in {"response", "reasoning"} and entry.get("context") == "omitted":
@@ -946,7 +946,7 @@ def build_html_chat(messages, metadata):
                         '<p class="omitted-response">Incomplete response. Omitted from future model context.</p>'
                         + content
                     )
-                if entry["kind"] == "schedule-applied" and entry.get("notice"):
+                if entry["kind"] == "schedule-spec-applied" and entry.get("notice"):
                     content = (
                         '<p role="status" class="schedule-notice">' + escape_html(entry["notice"]) + "</p>" + content
                     )

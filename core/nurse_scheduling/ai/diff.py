@@ -1,4 +1,4 @@
-"""Structural differences between two schedules, for reviewing a schedule change."""
+"""Structural differences between two Schedule Specs, for reviewing a Schedule Spec change."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .validation import format_schedule_location
+from .validation import format_schedule_spec_location
 
 MAX_DIFF_ENTRIES = 50
 MAX_DIFF_VALUE_CHARS = 200
@@ -33,7 +33,7 @@ DiffKind = Literal["added", "removed", "changed"]
 
 @dataclass(frozen=True)
 class DiffEntry:
-    """One rendered difference between two schedules."""
+    """One rendered difference between two Schedule Specs."""
 
     kind: DiffKind
     location: str
@@ -49,8 +49,8 @@ class DiffEntry:
 
 
 @dataclass(frozen=True)
-class ScheduleDiff:
-    """A bounded list of the changes between two schedules."""
+class ScheduleSpecDiff:
+    """A bounded list of the changes between two Schedule Specs."""
 
     entries: tuple[DiffEntry, ...] = ()
     omitted: int = 0
@@ -65,20 +65,20 @@ class ScheduleDiff:
         return "\n".join(lines)
 
 
-def diff_schedules(before: Any, after: Any) -> ScheduleDiff:
-    """Compare two parsed schedules and report what changed.
+def diff_schedule_specs(before: Any, after: Any) -> ScheduleSpecDiff:
+    """Compare two parsed Schedule Specs and report what changed.
 
     Comparing the parsed documents rather than their text keeps the review
     independent of how the candidate was written, and reveals an entry the
-    assistant dropped even though the result is still a valid schedule.
+    assistant dropped even though the result is still a valid Schedule Spec.
     """
     changes = _collect(before, after, ())
     kept = changes[:MAX_DIFF_ENTRIES]
-    return ScheduleDiff(tuple(_render(change) for change in kept), len(changes) - len(kept))
+    return ScheduleSpecDiff(tuple(_render(change) for change in kept), len(changes) - len(kept))
 
 
 def _collect(before: Any, after: Any, location: tuple[object, ...]) -> list[tuple[DiffKind, tuple, Any, Any]]:
-    """Compare two schedule nodes and report the differences depth first."""
+    """Compare two Schedule Spec nodes and report the differences depth first."""
     if before == after:
         return []
     if isinstance(before, dict) and isinstance(after, dict):
@@ -128,7 +128,7 @@ def _render(change: tuple[DiffKind, tuple, Any, Any]) -> DiffEntry:
     kind, location, before, after = change
     return DiffEntry(
         kind=kind,
-        location=format_schedule_location(location),
+        location=format_schedule_spec_location(location),
         before="" if kind == "added" else _render_value(before),
         after="" if kind == "removed" else _render_value(after),
     )

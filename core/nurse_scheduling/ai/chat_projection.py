@@ -53,9 +53,9 @@ def _optimization_text(data: dict) -> str:
     state = data["state"]
     text = (
         (
-            "Optimization finished. Download the optimized schedule to review it."
+            "Optimization finished. Download the schedule to review it."
             if data.get("downloadable")
-            else "Optimization finished, but no result workbook is available to download."
+            else "Optimization finished, but no schedule is available to download."
         )
         if state == "completed"
         else f"Optimization ended with status: {state}."
@@ -111,7 +111,7 @@ def _optimization_text(data: dict) -> str:
 
 def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
     """Reproduce the browser transcript using stored UTC event timestamps."""
-    if snapshot.get("schema_version") != 1:
+    if snapshot.get("schema_version") != 2:
         raise ValueError("Unsupported saved chat snapshot")
     messages, turns = [], {}
     runs = {run["id"]: run for run in snapshot["runs"]}
@@ -128,8 +128,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "tool_start",
         "tool",
         "download",
-        "schedule_change",
-        "schedule_applied",
+        "schedule_spec_change",
+        "schedule_spec_applied",
         "truncated",
         "provider_retry",
         "response_end",
@@ -282,7 +282,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         elif kind == "cost_summary":
             turn["cost_assistant"]["costSummary"] = data["run"]
         elif kind == "model_input":
-            turn["schedule"] = data.get("schedule_yaml", turn["schedule"])
+            turn["schedule"] = data.get("schedule_spec_yaml", turn["schedule"])
             previous_system = next((m for m in reversed(messages) if m["role"] == "system"), None)
             before = (
                 []
@@ -386,8 +386,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 activity.append(entry)
             else:
                 completed = [entry]
-                if check := data.get("schedule_check"):
-                    completed.append({"kind": "schedule-check", **check})
+                if check := data.get("schedule_spec_check"):
+                    completed.append({"kind": "schedule-spec-check", **check})
                 index = next(
                     (
                         i
@@ -407,25 +407,25 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                 else:
                     activity[index : index + 1] = completed
             turn["has_output"] = True
-        elif kind == "schedule_change":
+        elif kind == "schedule_spec_change":
             activity.append(
                 {
-                    "kind": "schedule-change",
+                    "kind": "schedule-spec-change",
                     "before": turn["working"] if turn["working"] is not None else turn["schedule"],
-                    "after": data["schedule_yaml"],
+                    "after": data["schedule_spec_yaml"],
                 }
             )
-            turn["working"] = data["schedule_yaml"]
+            turn["working"] = data["schedule_spec_yaml"]
             turn["has_output"] = True
         elif kind == "provider_retry":
             activity[:] = [item for item in activity if item["kind"] != "tool" or item.get("state") != "preparing"]
             activity.append({"kind": "notice", "text": data["message"]})
-        elif kind == "schedule_applied":
-            activity[:] = [a for a in activity if a["kind"] != "schedule-applied" or a.get("runId") != run_id]
-            entry = {"kind": "schedule-applied", "text": data["diff"], "runId": run_id}
-            if data.get("replaced_queued_schedule"):
+        elif kind == "schedule_spec_applied":
+            activity[:] = [a for a in activity if a["kind"] != "schedule-spec-applied" or a.get("runId") != run_id]
+            entry = {"kind": "schedule-spec-applied", "text": data["diff"], "runId": run_id}
+            if data.get("replaced_queued_schedule_spec"):
                 entry["notice"] = (
-                    "The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule."
+                    "The assistant’s Schedule Spec replaced changes made during this response. Undo to restore your previous Schedule Spec."
                 )
             activity.append(entry)
         elif kind in {"done", "stopped", "error", "stale"}:

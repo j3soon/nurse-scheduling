@@ -60,7 +60,7 @@ class HttpOptimizerBackend:
         self._request_timeout_seconds = request_timeout_seconds
 
     async def submit(
-        self, schedule_yaml: str, timeout_seconds: int | None, client_address: str | None = None
+        self, schedule_spec_yaml: str, timeout_seconds: int | None, client_address: str | None = None
     ) -> OptimizerJobPayload:
         """Submit a job, forwarding the browser address so the optimizer bounds jobs per person.
 
@@ -68,13 +68,13 @@ class HttpOptimizerBackend:
         Docker Compose. Otherwise it limits this service's own address.
         """
         fields: dict[str, tuple[None, str]] = {
-            "yaml_content": (None, schedule_yaml),
+            "schedule_spec_yaml": (None, schedule_spec_yaml),
             "prettify": (None, "true"),
         }
         if timeout_seconds is not None:
             fields["timeout"] = (None, str(timeout_seconds))
         headers = {"X-Forwarded-For": client_address} if client_address else None
-        payload = await self._request_job("POST", "optimize", files=fields, headers=headers)
+        payload = await self._request_job("POST", "schedule_spec/optimize", files=fields, headers=headers)
         payload.backend = self._backend_info(payload.backend)
         return payload
 

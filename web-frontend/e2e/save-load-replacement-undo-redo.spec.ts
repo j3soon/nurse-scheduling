@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
+import { seedScheduleSpecState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('uploading replacement YAML is one undoable state boundary over the prior schedule', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('uploading replacement YAML is one undoable state boundary over the prior s
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'original upload replacement seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

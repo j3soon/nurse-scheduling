@@ -38,14 +38,14 @@ def test_fake_backend_supports_one_complete_lifecycle():
         def command_handler(command: str, timeout: float | None, backend: FakeSandboxBackend) -> CommandResult:
             assert command == "edit schedule"
             assert timeout == 3
-            backend.files["/workspace/schedule.yaml"] = b"people: [P1]\n"
+            backend.files["/workspace/schedule-spec.yaml"] = b"people: [P1]\n"
             return CommandResult("updated\n", "", 0, duration_seconds=0.2)
 
         backend = FakeSandboxBackend("fake-1", command_handler=command_handler)
-        await backend.write_file("/workspace/schedule.yaml", "people: []\n")
+        await backend.write_file("/workspace/schedule-spec.yaml", "people: []\n")
         result = await backend.run("edit schedule", timeout_seconds=3)
         assert result == CommandResult("updated\n", "", 0, duration_seconds=0.2)
-        assert await backend.read_file("/workspace/schedule.yaml") == b"people: [P1]\n"
+        assert await backend.read_file("/workspace/schedule-spec.yaml") == b"people: [P1]\n"
         await backend.close()
         await backend.close()
         return backend

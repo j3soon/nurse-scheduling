@@ -25,10 +25,10 @@ import ExportLayoutPage from '@/app/export-layout/page';
 import { ExportConfig } from '@/types/scheduling';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 const updateExportConfig = vi.fn();
@@ -40,7 +40,7 @@ const duplicateExportExtraColumn = vi.fn();
 const duplicateExportExtraRow = vi.fn();
 
 function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], extraColumns: [], extraRows: [] }) {
-  mockUseSchedulingData.mockReturnValue({
+  mockUseScheduleSpec.mockReturnValue({
     effectiveExportData: exportData,
     updateExportFormatting,
     updateExportExtraColumns,

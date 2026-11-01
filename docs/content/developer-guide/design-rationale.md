@@ -18,15 +18,15 @@ researchers, and other users around the world can try and deploy the system
 without deep integration with an existing hospital information system. The
 system is therefore deliberately decoupled and lightweight.
 
-The current schedule is kept in the browser. The frontend sends
-schedule data to backend services when the user explicitly invokes
+The current Schedule Spec is kept in the browser. The frontend sends
+Schedule Spec to backend services when the user explicitly invokes
 features such as optimization or the experimental AI chat. See the [privacy
 policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for the exact data-handling behavior.
 
 Both the frontend and the backend can be self-hosted. The optimization
 backend is intentionally simple to deploy: the minimal configuration runs
 in memory mode with just a FastAPI server, and requires no Redis, Docker,
-or other infrastructure. Keeping the current schedule in the browser
+or other infrastructure. Keeping the current Schedule Spec in the browser
 substantially lowers the infrastructure and integration requirements.
 
 ## Solver
@@ -48,7 +48,7 @@ comparable formulations have not been investigated in depth.
 
 ## Domain-Specific Language (DSL)
 
-The schedule data is described using a domain-specific language (DSL),
+The Schedule Spec is described using a domain-specific language (DSL),
 serialized as YAML. The YAML file is the serialization format, while the
 schema and semantics defined by the project form the nurse-scheduling DSL.
 In user-facing documentation and normal usage, it is referred to simply as
@@ -58,33 +58,33 @@ Human readability and ease of editing by hand are prioritized over machine
 parsing simplicity. The YAML format uses camelCase field names, following
 the conventions of Kubernetes.
 
-`NurseSchedulingData` validates the backend schedule format. The frontend
-supports a narrower set of values that its editor can represent. AI schedule
+`ScheduleSpec` validates the backend Schedule Spec format. The frontend
+supports a narrower set of values that its editor can represent. AI Schedule Spec
 validation checks that frontend set before the browser imports an applied
-schedule. Keeping YAML readable does not remove the need for typed validation.
+Schedule Spec. Keeping YAML readable does not remove the need for typed validation.
 
-## AI execution and schedule changes
+## AI execution and Schedule Spec changes {#ai-execution-and-schedule-changes}
 
 The assistant uses a temporary workspace to inspect files and edit a working
-schedule. The application keeps credentials and optimizer job ownership outside
+Schedule Spec. The application keeps credentials and optimizer job ownership outside
 that workspace. The backend validates its candidate before the browser applies
 it as one undoable change.
 
 ## Templates and the Entry Barrier
 
-Several real-world schedules have been created from scratch, but so far
-those initial schedules have been created by the main developer together
+Several real-world Schedule Specs have been created from scratch, but so far
+those initial Schedule Specs have been created by the main developer together
 with domain users. Translating a ward's requirements into the DSL for the
 first time is a high initial or bootstrap barrier.
 
-Once an initial schedule exists, it becomes a reusable ward template, and
+Once an initial Schedule Spec exists, it becomes a reusable ward template, and
 subsequent monthly schedules are much easier to prepare, because most
 constraints and structure remain similar. The recurring maintenance barrier
 is much lower than the bootstrap barrier.
 
 Better documentation, GUI support, templates, and the experimental AI chat
 are intended to reduce the bootstrap barrier, so that users do not need the
-main developer to create the initial schedule.
+main developer to create the initial Schedule Spec.
 
 ## INRC
 

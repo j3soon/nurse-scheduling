@@ -24,7 +24,7 @@ import Navigation from "@/components/Navigation";
 import FeedbackWidget from "@/components/FeedbackWidget";
 import Footer from "@/components/Footer";
 import VersionWarningBanner from "@/components/VersionWarningBanner";
-import { SchedulingDataProvider } from "@/hooks/useSchedulingData";
+import { ScheduleSpecProvider } from "@/hooks/useScheduleSpec";
 import { UnsavedEditingStateProvider } from "@/utils/unsavedEditingState";
 import "./globals.css";
 
@@ -63,7 +63,7 @@ export default function RootLayout({
           `}
         </Script>
         <UnsavedEditingStateProvider>
-          <SchedulingDataProvider>
+          <ScheduleSpecProvider>
             <VersionWarningBanner />
             <Navigation />
             <main className="min-w-0 px-2 sm:px-10">
@@ -71,7 +71,7 @@ export default function RootLayout({
             </main>
             <Footer />
             <FeedbackWidget />
-          </SchedulingDataProvider>
+          </ScheduleSpecProvider>
         </UnsavedEditingStateProvider>
       </body>
     </html>

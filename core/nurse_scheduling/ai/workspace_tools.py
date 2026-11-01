@@ -1,4 +1,4 @@
-"""Bind workspace tools and trusted schedule review to the agent loop."""
+"""Bind workspace tools and trusted Schedule Spec review to the agent loop."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -29,7 +29,7 @@ from functools import partial
 
 from .agent import Agent
 from .agent_types import AgentEvent, AgentProposal, AgentTool, AgentToolBatchMetrics, AgentToolOutcome, AgentToolUse
-from .candidate import review_schedule_candidate
+from .candidate import review_schedule_spec_candidate
 from .downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from .optimizer import OPTIMIZER_TOOL
 from .optimizer_tool import OPTIMIZER_RUNNING_MESSAGE, optimizer_tool_definition
@@ -40,10 +40,10 @@ from .sandbox_tools import SandboxPiTools
 from .workspace import (
     MAX_ANALYSIS_BYTES,
     WORKSPACE_ANALYSIS,
-    WORKSPACE_SCHEDULE,
+    WORKSPACE_SCHEDULE_SPEC,
     AgentAnalysis,
     AgentDownload,
-    AgentScheduleChange,
+    AgentScheduleSpecChange,
     AttachmentLoader,
     SandboxAttachment,
     SandboxCandidateError,
@@ -56,7 +56,7 @@ from .workspace import (
     _LazySandboxRun,
     _measured_sandbox_run,
     _read_candidate,
-    _ScheduleCandidateTracker,
+    _ScheduleSpecCandidateTracker,
     analysis_source_sha256,
 )
 
@@ -69,16 +69,16 @@ class WorkspaceTools:
     def __init__(
         self,
         sandbox: _LazySandboxRun,
-        schedule_yaml: str,
+        schedule_spec_yaml: str,
         limits: WorkspaceLimits,
         execute_optimizer: Callable[[str, str], Awaitable[AgentToolOutcome]] | None,
     ) -> None:
         self.sandbox = sandbox
-        self.schedule_yaml = schedule_yaml
+        self.schedule_spec_yaml = schedule_spec_yaml
         self.limits = limits
         self.execute_optimizer = execute_optimizer
         self.sandbox_tools = SandboxPiTools(sandbox, limits.bash_command_timeout_seconds)
-        self.candidate_tracker = _ScheduleCandidateTracker(sandbox, schedule_yaml, limits.max_schedule_bytes)
+        self.candidate_tracker = _ScheduleSpecCandidateTracker(sandbox, schedule_spec_yaml, limits.max_schedule_bytes)
         self.command_timeout: str | None = None
         definitions = list(self.sandbox_tools.definitions)
         if execute_optimizer is not None:
@@ -103,21 +103,24 @@ class WorkspaceTools:
             if self.candidate_tracker.rejection is not None:
                 return AgentToolOutcome(self.candidate_tracker.rejection, False)
             try:
-                current_schedule = (
-                    await self.sandbox.read_file(WORKSPACE_SCHEDULE, max_bytes=self.limits.max_schedule_bytes)
+                current_schedule_spec = (
+                    await self.sandbox.read_file(WORKSPACE_SCHEDULE_SPEC, max_bytes=self.limits.max_schedule_bytes)
                 ).decode("utf-8")
             except (SandboxFileNotFoundError, SandboxFileSizeError, UnicodeDecodeError):
-                return AgentToolOutcome("The current working schedule is unavailable or invalid.", False)
+                return AgentToolOutcome("The current working Schedule Spec is unavailable or invalid.", False)
             review = await asyncio.to_thread(
-                review_schedule_candidate, self.schedule_yaml, current_schedule, self.limits.max_schedule_bytes
+                review_schedule_spec_candidate,
+                self.schedule_spec_yaml,
+                current_schedule_spec,
+                self.limits.max_schedule_bytes,
             )
             if not review.outcome.ok:
-                check = f"Trusted schedule check before optimizer:\n{review.outcome.text}"
-                return AgentToolOutcome(check, False, details={"schedule_check": {"ok": False, "text": check}})
-            if review.proposal is not None and review.proposal.text != current_schedule:
-                current_schedule = review.proposal.text
-                await self.sandbox.write_file(WORKSPACE_SCHEDULE, current_schedule)
-            outcome = await self.execute_optimizer(current_schedule, arguments)
+                check = f"Trusted Schedule Spec check before optimizer:\n{review.outcome.text}"
+                return AgentToolOutcome(check, False, details={"schedule_spec_check": {"ok": False, "text": check}})
+            if review.proposal is not None and review.proposal.text != current_schedule_spec:
+                current_schedule_spec = review.proposal.text
+                await self.sandbox.write_file(WORKSPACE_SCHEDULE_SPEC, current_schedule_spec)
+            outcome = await self.execute_optimizer(current_schedule_spec, arguments)
             if outcome.ok:
                 return replace(outcome, end_turn_message=OPTIMIZER_RUNNING_MESSAGE)
             return outcome
@@ -129,17 +132,17 @@ class WorkspaceTools:
         if candidate_status is None:
             if self.candidate_tracker.rejection is None:
                 return outcome
-            validation, schedule_change = AgentToolOutcome(self.candidate_tracker.rejection, False), None
+            validation, schedule_spec_change = AgentToolOutcome(self.candidate_tracker.rejection, False), None
         else:
-            validation, schedule_change = candidate_status
+            validation, schedule_spec_change = candidate_status
         return replace(
             outcome,
             text=f"{outcome.text}\n\n{validation.text}",
             ok=outcome.ok and (candidate_status is None or validation.ok),
             # The browser shows the check the model received and previews a valid working copy.
             details={
-                "schedule_check": {"ok": validation.ok, "text": validation.text},
-                "schedule_yaml": schedule_change,
+                "schedule_spec_check": {"ok": validation.ok, "text": validation.text},
+                "schedule_spec_yaml": schedule_spec_change,
             },
         )
 
@@ -147,7 +150,7 @@ class WorkspaceTools:
 async def run_workspace(
     provider: ToolCapableChatProvider,
     factory: SandboxFactory,
-    schedule_yaml: str,
+    schedule_spec_yaml: str,
     messages: Sequence[ChatMessage],
     limits: WorkspaceLimits,
     metrics: WorkspaceMetrics | None = None,
@@ -161,7 +164,7 @@ async def run_workspace(
     load_attachment: AttachmentLoader | None = None,
     analysis: AgentAnalysis | None = None,
     timezone: str = "UTC",
-) -> AsyncIterator[AgentEvent | AgentScheduleChange | AgentDownload | AgentAnalysis]:
+) -> AsyncIterator[AgentEvent | AgentScheduleSpecChange | AgentDownload | AgentAnalysis]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
     metrics = metrics or WorkspaceMetrics()
@@ -171,7 +174,7 @@ async def run_workspace(
                 factory,
                 limits.cleanup_timeout_seconds,
                 metrics,
-                schedule_yaml,
+                schedule_spec_yaml,
                 attachments,
                 optimizer_result,
                 optimizer_context,
@@ -179,7 +182,7 @@ async def run_workspace(
                 analysis,
                 timezone,
             ) as sandbox:
-                toolset = WorkspaceTools(sandbox, schedule_yaml, limits, execute_optimizer)
+                toolset = WorkspaceTools(sandbox, schedule_spec_yaml, limits, execute_optimizer)
                 events = agent.prompt(
                     provider,
                     messages,
@@ -197,8 +200,12 @@ async def run_workspace(
                 async with aclosing(events):
                     async for event in events:
                         yield event
-                        if isinstance(event, AgentToolUse) and event.details and event.details.get("schedule_yaml"):
-                            yield AgentScheduleChange(event.details["schedule_yaml"])
+                        if (
+                            isinstance(event, AgentToolUse)
+                            and event.details
+                            and event.details.get("schedule_spec_yaml")
+                        ):
+                            yield AgentScheduleSpecChange(event.details["schedule_spec_yaml"])
 
                 if toolset.command_timeout is not None:
                     raise SandboxCommandTimeoutError(f"{toolset.command_timeout}. The sandbox was terminated.")
@@ -206,12 +213,12 @@ async def run_workspace(
                     return
                 if toolset.candidate_tracker.rejection is not None:
                     raise SandboxCandidateError(
-                        "The sandbox candidate failed trusted schedule validation.",
+                        "The sandbox candidate failed trusted Schedule Spec validation.",
                         user_message=toolset.candidate_tracker.rejection,
                     )
                 candidate = await _read_candidate(sandbox, limits.max_schedule_bytes)
                 review = await asyncio.to_thread(
-                    review_schedule_candidate, schedule_yaml, candidate, limits.max_schedule_bytes
+                    review_schedule_spec_candidate, schedule_spec_yaml, candidate, limits.max_schedule_bytes
                 )
                 logger.info(
                     "sandbox candidate validated sandbox_id=%s valid=%s changed=%s",
@@ -221,7 +228,8 @@ async def run_workspace(
                 )
                 if not review.outcome.ok:
                     raise SandboxCandidateError(
-                        "The sandbox candidate failed trusted schedule validation.", user_message=review.outcome.text
+                        "The sandbox candidate failed trusted Schedule Spec validation.",
+                        user_message=review.outcome.text,
                     )
                 try:
                     download = await sandbox.read_file(WORKSPACE_DOWNLOAD, max_bytes=limits.max_download_bytes)
@@ -246,7 +254,7 @@ async def run_workspace(
                     # Notes are an optional cache. Never fail an otherwise valid run for it.
                     notes = b""
                 if notes or analysis is not None:
-                    yield AgentAnalysis(analysis_source_sha256(schedule_yaml, attachments), notes)
+                    yield AgentAnalysis(analysis_source_sha256(schedule_spec_yaml, attachments), notes)
                 if review.proposal is not None:
                     yield AgentProposal(review.proposal.text, review.proposal.diff.render())
     except TimeoutError as exc:

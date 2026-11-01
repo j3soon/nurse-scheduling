@@ -573,7 +573,7 @@ def test_shift_type_requirements_parse_grouped_and_top_level_shift_types(shift_t
 
 
 def _compiled_requirement_groups(shift_type):
-    data = models.NurseSchedulingData.model_validate(
+    data = models.ScheduleSpec.model_validate(
         {
             "apiVersion": "alpha",
             "dates": {"range": {"startDate": "2025-01-01", "endDate": "2025-01-01"}},
@@ -592,7 +592,7 @@ def _compiled_requirement_groups(shift_type):
             ],
         }
     )
-    compiled = data.compiled_schedule.preferences[1]
+    compiled = data.compiled_schedule_spec.preferences[1]
     assert isinstance(compiled, models.CompiledShiftTypeRequirements)
     return compiled.shift_type_groups
 

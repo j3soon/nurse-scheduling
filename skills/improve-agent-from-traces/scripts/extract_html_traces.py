@@ -149,26 +149,26 @@ def extract_export(html, *, include_reasoning=False):
                     activity.append(
                         {"index": index, "kind": "reasoning", "outputs": outputs}
                     )
-            elif summary in ("Schedule check passed", "Schedule check failed"):
+            elif summary in ("Schedule Spec check passed", "Schedule Spec check failed"):
                 activity.append(
                     {
                         "index": index,
-                        "kind": "schedule-check",
-                        "ok": summary == "Schedule check passed",
+                        "kind": "schedule-spec-check",
+                        "ok": summary == "Schedule Spec check passed",
                         "outputs": outputs,
                     }
                 )
             elif summary == "App notice":
                 activity.append({"index": index, "kind": "notice", "outputs": outputs})
-            elif summary == "Applied to your schedule":
+            elif summary == "Applied to your Schedule Spec":
                 activity.append(
-                    {"index": index, "kind": "schedule-applied", "outputs": outputs}
+                    {"index": index, "kind": "schedule-spec-applied", "outputs": outputs}
                 )
             elif list(details.find("schedule-diff")):
                 activity.append(
                     {
                         "index": index,
-                        "kind": "schedule-change",
+                        "kind": "schedule-spec-change",
                         "diff": texts(details, "schedule-diff", strip=False),
                     }
                 )

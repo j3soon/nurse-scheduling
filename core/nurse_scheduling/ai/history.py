@@ -105,13 +105,15 @@ class ChatHistory:
             connection.execute("SELECT pg_advisory_xact_lock(782341926)")
             connection.execute("CREATE TABLE IF NOT EXISTS ai_history_migrations (version text PRIMARY KEY)")
             for migration in sorted(Path(__file__).with_name("migrations").glob("*.sql")):
+                # The numeric version stays stable when a migration's description is renamed.
                 applied = connection.execute(
-                    "SELECT 1 FROM ai_history_migrations WHERE version = %s", (migration.name,)
+                    "SELECT 1 FROM ai_history_migrations WHERE split_part(version, '_', 1) = %s",
+                    (migration.name.split("_", 1)[0],),
                 ).fetchone()
                 if not applied:
                     connection.execute(migration.read_text(encoding="utf-8"))
                     if migration.name == "004_unified_session_recovery.sql":
-                        _migrate_legacy_transcripts(connection)
+                        connection.execute("ALTER TABLE chat_runs DROP COLUMN question")
                     connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (migration.name,))
         self.prune()
 
@@ -211,7 +213,7 @@ class ChatHistory:
         downloads: dict[str, bytes | None] | None = None,
         files: Sequence[dict] = (),
     ) -> None:
-        """Keep session ownership, expiry, schedule, and new conversation entries."""
+        """Keep session ownership, expiry, Schedule Spec, and new conversation entries."""
         with self._connect() as connection:
             self._save_state(connection, session_id, state, entries, credential_id, uploads, downloads, files)
 
@@ -265,7 +267,7 @@ class ChatHistory:
         session_id: str,
         state: SessionState,
         entries: Sequence[EntryRow] = (),
-        schedule_change: dict[str, Any] | None = None,
+        schedule_spec_change: dict[str, Any] | None = None,
         uploads: Sequence[SandboxAttachment] = (),
         downloads: dict[str, bytes | None] | None = None,
         files: Sequence[dict] = (),
@@ -278,14 +280,14 @@ class ChatHistory:
             self._save_state(connection, session_id, state, entries, uploads=uploads, downloads=downloads, files=files)
             connection.execute(
                 "UPDATE chat_runs SET status = %s, error_code = %s, usage = %s, committed = %s, "
-                "schedule_change = %s, finished_at = now() "
+                "schedule_spec_change = %s, finished_at = now() "
                 "WHERE id = %s AND status = 'running'",
                 (
                     status,
                     error_code,
                     Jsonb(asdict(usage)) if usage else None,
                     committed,
-                    _jsonb(schedule_change) if schedule_change is not None else None,
+                    _jsonb(schedule_spec_change) if schedule_spec_change is not None else None,
                     run_id,
                 ),
             )
@@ -371,7 +373,7 @@ class ChatHistory:
                 "WHERE id = %s AND owner_hash = %s AND expires_at > now()",
                 (session_id, _owner_hash(owner)),
             ).fetchone()
-            if row is None:
+            if row is None or not isinstance(row[0].get("schedule_spec_yaml"), str):
                 return None
             # Saved totals can be newer than a failed call checkpoint. Apply only
             # later publications, replacing calls that were pending in that snapshot.
@@ -399,7 +401,7 @@ class ChatHistory:
             entries = connection.execute(
                 "SELECT e.type, e.payload FROM chat_session_entries e LEFT JOIN chat_runs r ON r.id = e.run_id "
                 "WHERE e.session_id = %s "
-                "AND (e.run_id IS NULL OR e.type IN ('app_event', 'proposal_decision') OR r.committed) ORDER BY e.seq OFFSET %s",
+                "AND (e.run_id IS NULL OR e.type = 'app_event' OR r.committed) ORDER BY e.seq OFFSET %s",
                 (session_id, row[0]["dropped_entries"]),
             ).fetchall()
             (next_entry_seq,) = connection.execute(
@@ -418,7 +420,7 @@ class ChatHistory:
                 (session_id,),
             ).fetchall()
             unfinished = connection.execute(
-                "SELECT r.id, r.kind, r.status, r.schedule_change, (SELECT e.type FROM chat_session_events e "
+                "SELECT r.id, r.kind, r.status, r.schedule_spec_change, (SELECT e.type FROM chat_session_events e "
                 "WHERE e.session_id = r.session_id AND e.run_id = r.id "
                 "AND e.type IN ('done', 'stopped', 'stale', 'error') ORDER BY e.event_id DESC LIMIT 1) "
                 "FROM chat_runs r WHERE r.session_id = %s AND (r.status = 'running' OR NOT EXISTS ("
@@ -445,9 +447,9 @@ class ChatHistory:
                     "kind": kind,
                     "status": status,
                     "terminal_type": terminal,
-                    "schedule_change": schedule_change,
+                    "schedule_spec_change": schedule_spec_change,
                 }
-                for run_id, kind, status, schedule_change, terminal in unfinished
+                for run_id, kind, status, schedule_spec_change, terminal in unfinished
             ],
         }
 
@@ -514,7 +516,7 @@ class ChatHistory:
         session = connection.execute(
             "SELECT state, extract(epoch FROM created_at) FROM chat_sessions WHERE id = %s", (session_id,)
         ).fetchone()
-        if session is None:
+        if session is None or not isinstance(session[0].get("schedule_spec_yaml"), str):
             return None
         runs = connection.execute(
             "SELECT r.id, r.kind, r.status, extract(epoch FROM r.started_at), "
@@ -531,7 +533,7 @@ class ChatHistory:
         state, created_at = session
         milliseconds = lambda timestamp: round(float(timestamp) * 1000)
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "session_id": session_id,
             "snapshot_at": milliseconds(max([created_at, *(row[2] for row in events)])),
             "frontend_version": state.get("frontend_version") or "unknown",
@@ -690,43 +692,3 @@ async def stop_maintenance(task: asyncio.Task) -> None:
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
-
-
-def _migrate_legacy_transcripts(connection) -> None:
-    """Preserve deployed conversation snapshots and idempotent message receipts."""
-    from .context import entries_from_legacy_history
-
-    with connection.cursor(name="ai_transcript_upgrade") as sessions:
-        sessions.itersize = 100
-        sessions.execute("SELECT id, state FROM chat_sessions ORDER BY id")
-        for session_id, state in sessions:
-            entries = (
-                [entry_from_record(row["type"], row["payload"]) for row in state["transcript"]]
-                if "transcript" in state
-                else entries_from_legacy_history(state.get("history", []))
-            )
-            _insert_entries(connection, str(session_id), [(seq, None, entry) for seq, entry in enumerate(entries)])
-            runs = connection.execute(
-                "SELECT id, question FROM chat_runs WHERE session_id = %s ORDER BY sequence", (session_id,)
-            ).fetchall()
-            # Historical prompts support retries of accepted IDs. Their run entries
-            # do not join context again because the snapshot already contains it.
-            _insert_entries(
-                connection,
-                str(session_id),
-                [
-                    (len(entries) + seq, str(run_id), UserMessage(question))
-                    for seq, (run_id, question) in enumerate(runs)
-                ],
-            )
-            proposal = state.get("proposal_yaml")
-            upgraded = {
-                "schedule_yaml": state["schedule_yaml"],
-                "pending_proposal": {"schedule_yaml": proposal, "diff": state.get("proposal_diff", ""), "run_id": None}
-                if proposal
-                else None,
-                "dropped_history_messages": state.get("dropped_history_messages", 0),
-                "dropped_entries": 0,
-            }
-            connection.execute("UPDATE chat_sessions SET state = %s WHERE id = %s", (_jsonb(upgraded), session_id))
-    connection.execute("ALTER TABLE chat_runs DROP COLUMN question")

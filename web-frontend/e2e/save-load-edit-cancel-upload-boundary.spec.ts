@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('canceling YAML edits keeps the draft isolated before a later upload', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('canceling YAML edits keeps the draft isolated before a later upload', asyn
    * 4. Confirm the uploaded state appears and the canceled draft never leaks into the preview.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'original boundary state',
     dates: { range: {}, groups: [] },

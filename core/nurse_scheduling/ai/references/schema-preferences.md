@@ -1,4 +1,4 @@
-# Frontend-editable schedule.yaml
+# Frontend-editable Schedule Spec YAML
 
 ## Preferences
 
@@ -26,7 +26,7 @@ Path: preferences
 Scheduling rules and weighted preferences.
 
 Rules:
-- Every schedule must include `at most one shift per day`.
+- Every Schedule Spec must include `at most one shift per day`.
 - Always write the exact `type` discriminator for every preference.
 - References use flat string lists in the frontend-editable shape.
 - Finite weights are integers. `.inf` and `-.inf` express hard preferences.
@@ -55,7 +55,7 @@ Minimal frontend-compatible YAML:
 preferences:
   - type: at most one shift per day
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences
@@ -89,7 +89,7 @@ preferences:
     shiftType: [D]
     weight: 1
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences
@@ -129,7 +129,7 @@ preferences:
     date: [FIRST]
     weight: -1
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences
@@ -178,7 +178,7 @@ preferences:
     date: [FIRST]
     weight: -1
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences
@@ -223,7 +223,7 @@ preferences:
     target: 4
     weight: -.inf
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences
@@ -262,7 +262,7 @@ preferences:
     shiftTypes: [D]
     weight: 1
 
-This example is validated and authoritative for this shape. Do not search schedule.yaml for another schema example. Read only enough schedule text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
+This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
 Related paths:
 - preferences

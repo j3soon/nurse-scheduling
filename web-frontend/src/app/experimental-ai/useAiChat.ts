@@ -57,7 +57,7 @@ import {
   updateSessionSchedule,
   uploadFile,
 } from './aiClient';
-import type { ScheduleApplied, SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
+import type { ScheduleSpecApplied, SessionReset, ToolStartActivity, OptimizationProgressActivity } from './aiClient';
 import type { SessionEvent } from './sessionEvents';
 import { useSessionEventStream } from './useSessionEventStream';
 import { SessionEventRouter } from './sessionEventRouter';
@@ -76,7 +76,7 @@ import { AI_CONVERSATION_STORAGE_KEY, clearStoredConversation, type StoredChatCo
 import { isAuthenticationError } from './aiClient';
 import { latestCostSummary, replaceCall, type CostSummary, type ProviderCallCost } from './costs';
 
-const KEPT_BROWSER_SCHEDULE_NOTICE = 'These changes belong to the selected chat. Browser schedule data was kept unchanged.';
+const KEPT_BROWSER_SCHEDULE_NOTICE = 'These changes belong to the selected chat. Browser Schedule Spec was kept unchanged.';
 
 interface StreamCallbacks {
   onProviderCall?: (call: ProviderCallCost) => void;
@@ -98,8 +98,8 @@ interface StreamCallbacks {
   onTool?: (activity: ToolActivity) => void;
   onGenerationProgress?: (event: Extract<SessionEvent, { type: 'generation_progress' }>) => void;
   onSteering?: (messageId: string, message: string) => void;
-  onScheduleChange?: (scheduleYaml: string) => void;
-  onScheduleApplied?: (applied: ScheduleApplied) => void;
+  onScheduleSpecChange?: (scheduleSpecYaml: string) => void;
+  onScheduleSpecApplied?: (applied: ScheduleSpecApplied) => void;
   onOptimization?: (activity: OptimizationActivity) => void;
   onOptimizationProgress?: (activity: OptimizationProgressActivity) => void;
   onDone?: (runId?: string) => void;
@@ -134,8 +134,8 @@ function dispatchPageEvent(event: SessionEvent, callbacks: StreamCallbacks, setM
     case 'tool_start': callbacks.onToolStart?.(event.activity); break;
     case 'tool': callbacks.onTool?.(event.activity); break;
     case 'steering': callbacks.onSteering?.(event.messageId, event.message); break;
-    case 'schedule_change': callbacks.onScheduleChange?.(event.scheduleYaml); break;
-    case 'schedule_applied': callbacks.onScheduleApplied?.(event.applied); break;
+    case 'schedule_spec_change': callbacks.onScheduleSpecChange?.(event.scheduleSpecYaml); break;
+    case 'schedule_spec_applied': callbacks.onScheduleSpecApplied?.(event.applied); break;
     case 'download': callbacks.onDownload?.(event.downloadId); break;
     case 'warning': callbacks.onWarning?.(event.message); break;
     case 'model_input': callbacks.onModelInput?.(event.input); break;
@@ -154,10 +154,10 @@ function assistantEventCallbacks(
   apply: (event: AssistantEvent) => void,
   workingSchedule: { current: string | null },
   browserSchedule: { readonly current: string },
-  applySchedule: (applied: ScheduleApplied) => { notice: string | null; browserApplied: boolean },
+  applySchedule: (applied: ScheduleSpecApplied) => { notice: string | null; browserApplied: boolean },
 ): Required<Pick<StreamCallbacks,
-  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleChange'
-  | 'onScheduleApplied' | 'onGenerationProgress'>> {
+  'onDelta' | 'onReasoning' | 'onCompaction' | 'onTruncated' | 'onResponseEnd' | 'onProviderRetry' | 'onToolStart' | 'onTool' | 'onScheduleSpecChange'
+  | 'onScheduleSpecApplied' | 'onGenerationProgress'>> {
   return {
     onProviderRetry: message => apply({ type: 'provider_retry', message }),
     onDelta: text => apply({ type: 'delta', text }),
@@ -168,14 +168,14 @@ function assistantEventCallbacks(
     onResponseEnd: event => apply(event),
     onToolStart: activity => apply({ type: 'tool_start', activity }),
     onTool: activity => apply({ type: 'tool', activity }),
-    onScheduleChange: after => {
+    onScheduleSpecChange: after => {
       const before = workingSchedule.current ?? browserSchedule.current;
       workingSchedule.current = after;
-      apply({ type: 'schedule_change', before, after });
+      apply({ type: 'schedule_spec_change', before, after });
     },
-    onScheduleApplied: applied => {
+    onScheduleSpecApplied: applied => {
       const { notice, browserApplied } = applySchedule(applied);
-      apply({ type: 'schedule_applied', runId: applied.runId, diff: applied.diff, browserApplied, ...(notice ? { notice } : {}) });
+      apply({ type: 'schedule_spec_applied', runId: applied.runId, diff: applied.diff, browserApplied, ...(notice ? { notice } : {}) });
     },
   };
 }
@@ -189,7 +189,7 @@ interface QueuedChatMessage {
 interface AiChatOptions {
   selection?: ModelSelection;
   modelSelectionEnabled?: boolean;
-  scheduleYaml: string;
+  scheduleSpecYaml: string;
   aiEndpoint: string;
   authRequired: boolean;
   authToken: string | null;
@@ -201,11 +201,11 @@ interface AiChatOptions {
   reportRequestError: (error: unknown, fallback: string) => void;
   onSendStart: (kind: 'send' | 'retry' | 'queue') => void;
   onReset: () => void;
-  onApplySchedule: (scheduleYaml: string) => string;
+  onApplySchedule: (scheduleSpecYaml: string) => string;
 }
 
 /** Own chat operations and saved conversation state independently of composer UI. */
-export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, isClientReady,
+export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToken, isClientReady,
   serverStatus, retainsUploads, backendVersion, selection, modelSelectionEnabled = false, setError, reportRequestError, onSendStart, onReset, onApplySchedule,
 }: AiChatOptions) {
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
@@ -214,7 +214,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const observedEventIdRef = useRef(0);
   const historyCreateRef = useRef(false);
   const historyForgottenRef = useRef(false);
-  const preserveBrowserScheduleRef = useRef(false);
+  const preserveBrowserScheduleSpecRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [removingUploadId, setRemovingUploadId] = useState<string | null>(null);
@@ -247,38 +247,38 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   const [activeOptimization, setActiveOptimization] = useState<ActiveOptimization | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const [steeringAssistantId, setSteeringAssistantId] = useState<string | null>(null);
-  // The schedule text the backend holds, as last sent or applied by this browser.
-  const syncedScheduleRef = useRef<string | null>(null);
-  const syncedBrowserScheduleRef = useRef<string | null>(null);
-  const appliedScheduleRunsRef = useRef<Record<string, string | null>>({});
-  const scheduleYamlRef = useRef(scheduleYaml);
-  scheduleYamlRef.current = scheduleYaml;
+  // The Schedule Spec text the backend holds, as last sent or applied by this browser.
+  const syncedScheduleSpecRef = useRef<string | null>(null);
+  const syncedBrowserScheduleSpecRef = useRef<string | null>(null);
+  const appliedScheduleSpecRunsRef = useRef<Record<string, string | null>>({});
+  const scheduleSpecYamlRef = useRef(scheduleSpecYaml);
+  scheduleSpecYamlRef.current = scheduleSpecYaml;
   const onApplyScheduleRef = useRef(onApplySchedule);
   onApplyScheduleRef.current = onApplySchedule;
   // Browser changes do not control server runs. Import each completed run once, even over
   // newer browser work. Preserve the browser's normalized YAML so formatting does not warn.
-  const applyRunSchedule = useCallback((applied: ScheduleApplied) => {
-    if (Object.hasOwn(appliedScheduleRunsRef.current, applied.runId)) {
-      const notice = appliedScheduleRunsRef.current[applied.runId];
+  const applyRunSchedule = useCallback((applied: ScheduleSpecApplied) => {
+    if (Object.hasOwn(appliedScheduleSpecRunsRef.current, applied.runId)) {
+      const notice = appliedScheduleSpecRunsRef.current[applied.runId];
       return { notice, browserApplied: notice !== KEPT_BROWSER_SCHEDULE_NOTICE };
     }
-    if (preserveBrowserScheduleRef.current) {
-      syncedScheduleRef.current = applied.scheduleYaml;
-      syncedBrowserScheduleRef.current = applied.scheduleYaml;
+    if (preserveBrowserScheduleSpecRef.current) {
+      syncedScheduleSpecRef.current = applied.scheduleSpecYaml;
+      syncedBrowserScheduleSpecRef.current = applied.scheduleSpecYaml;
       const notice = KEPT_BROWSER_SCHEDULE_NOTICE;
-      appliedScheduleRunsRef.current[applied.runId] = notice;
+      appliedScheduleSpecRunsRef.current[applied.runId] = notice;
       return { notice, browserApplied: false };
     }
-    const changed = applied.replacedQueuedSchedule || scheduleYamlRef.current !== syncedBrowserScheduleRef.current;
+    const changed = applied.replacedQueuedScheduleSpec || scheduleSpecYamlRef.current !== syncedBrowserScheduleSpecRef.current;
     const notice = changed
-      ? 'The assistant’s schedule replaced changes made during this response. Undo to restore your previous schedule.'
+      ? 'The assistant’s Schedule Spec replaced changes made during this response. Undo to restore your previous Schedule Spec.'
       : null;
     // One import is one history entry, so undo reverts the whole change.
-    const browserYaml = onApplyScheduleRef.current(applied.scheduleYaml);
-    scheduleYamlRef.current = browserYaml;
-    syncedBrowserScheduleRef.current = browserYaml;
-    syncedScheduleRef.current = applied.scheduleYaml;
-    appliedScheduleRunsRef.current[applied.runId] = notice;
+    const browserYaml = onApplyScheduleRef.current(applied.scheduleSpecYaml);
+    scheduleSpecYamlRef.current = browserYaml;
+    syncedBrowserScheduleSpecRef.current = browserYaml;
+    syncedScheduleSpecRef.current = applied.scheduleSpecYaml;
+    appliedScheduleSpecRunsRef.current[applied.runId] = notice;
     return { notice, browserApplied: true };
   }, []);
   const sessionIdRef = useRef<string | null>(null);
@@ -301,7 +301,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     persistConversationRef.current = null;
     historyCreateRef.current = false;
     historyForgottenRef.current = false;
-    preserveBrowserScheduleRef.current = false;
+    preserveBrowserScheduleSpecRef.current = false;
     resumedRequestRef.current = null;
     observedEventIdRef.current = 0;
     eventRouterRef.current = new SessionEventRouter();
@@ -314,9 +314,9 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     sessionIdRef.current = null;
     sessionEndpointRef.current = null;
     setSessionEndpoint(null);
-    syncedScheduleRef.current = null;
-    syncedBrowserScheduleRef.current = null;
-    appliedScheduleRunsRef.current = {};
+    syncedScheduleSpecRef.current = null;
+    syncedBrowserScheduleSpecRef.current = null;
+    appliedScheduleSpecRunsRef.current = {};
     sandboxScheduleRef.current = null;
     checkedSessionRef.current = null;
     queuedMessagesRef.current = [];
@@ -382,9 +382,9 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   };
 
   useEffect(() => {
-    scheduleYamlRef.current = scheduleYaml;
+    scheduleSpecYamlRef.current = scheduleSpecYaml;
     sessionRetentionSecondsRef.current = sessionRetentionSeconds;
-  }, [scheduleYaml, sessionRetentionSeconds]);
+  }, [scheduleSpecYaml, sessionRetentionSeconds]);
 
   useEffect(() => {
     if (!isClientReady) return;
@@ -405,15 +405,15 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         }
         const stored: StoredChatConversation = {
           lastActivityAt: lastActivityRef.current,
-          preserveBrowserSchedule: preserveBrowserScheduleRef.current,
+          preserveBrowserScheduleSpec: preserveBrowserScheduleSpecRef.current,
           sessionId: activeSessionId,
           endpoint: sessionEndpointRef.current ?? aiEndpoint,
           expiresAt: sessionExpiresAt,
           retentionSeconds: sessionRetentionSeconds,
           messages,
-          syncedSchedule: syncedScheduleRef.current ?? scheduleYaml,
-          syncedBrowserSchedule: syncedBrowserScheduleRef.current ?? scheduleYaml,
-          appliedScheduleRuns: appliedScheduleRunsRef.current,
+          syncedScheduleSpec: syncedScheduleSpecRef.current ?? scheduleSpecYaml,
+          syncedBrowserScheduleSpec: syncedBrowserScheduleSpecRef.current ?? scheduleSpecYaml,
+          appliedScheduleSpecRuns: appliedScheduleSpecRunsRef.current,
           sessionEventId: lastSessionEventIdRef.current,
           activeOptimization,
           backendVersion,
@@ -469,7 +469,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     lifecycle,
     lastSessionEventIdRef,
     messages,
-    scheduleYaml,
+    scheduleSpecYaml,
     sessionExpiresAt,
     sessionRetentionSeconds,
     trimmedHistoryCount,
@@ -582,7 +582,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       lifecycle.begin('background', runId);
       // The server renews the session when it starts this turn.
       setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
-      sandboxScheduleRef.current = scheduleYamlRef.current;
+      sandboxScheduleRef.current = scheduleSpecYamlRef.current;
       setMessages(previous => {
         const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return existing ? previous.map(message => message.id === existing.id
@@ -671,7 +671,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       ...assistantEventCallbacks(event => {
         resumeBackgroundMessage();
         updateBackgroundMessage(message => applyAssistantEvent(message, event));
-      }, sandboxScheduleRef, scheduleYamlRef, applyRunSchedule),
+      }, sandboxScheduleRef, scheduleSpecYamlRef, applyRunSchedule),
       onOptimization: activity => {
         setActiveOptimization(current => applyOptimizationEvent(current, { type: 'optimization', activity }));
         if (activity.terminal) setMessages(previous => appendOptimizationResult(previous, activity, Date.now()));
@@ -824,7 +824,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
     resetResponse();
     setError(null);
     const operation = lifecycle.begin('foreground', activeAssistantId);
-    sandboxScheduleRef.current = scheduleYaml;
+    sandboxScheduleRef.current = scheduleSpecYaml;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -832,7 +832,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       let sessionId = sessionIdRef.current;
       const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
       if (sessionId === null) {
-        sessionId = await createSession(scheduleYaml, authToken, sessionEndpoint, requestSelection);
+        sessionId = await createSession(scheduleSpecYaml, authToken, sessionEndpoint, requestSelection);
         if (!lifecycle.owns(operation)) return;
         controller.signal.throwIfAborted();
         historyCreateRef.current = true;
@@ -845,17 +845,17 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
         setActiveSessionId(sessionId);
         setConversationUnavailable(false);
         setSessionNotice(null);
-      } else if (!resume?.recover && syncedScheduleRef.current !== scheduleYaml) {
-        // The schedule can change elsewhere in the app between questions, including an undo
+      } else if (!resume?.recover && syncedScheduleSpecRef.current !== scheduleSpecYaml) {
+        // The Schedule Spec can change elsewhere in the app between questions, including an undo
         // of an applied change. The backend records the change for the next run.
-        await updateSessionSchedule(sessionId, scheduleYaml, authToken, sessionEndpoint);
+        await updateSessionSchedule(sessionId, scheduleSpecYaml, authToken, sessionEndpoint);
       }
       if (!lifecycle.owns(operation)) return;
       controller.signal.throwIfAborted();
       if (!resume?.recover) {
-        preserveBrowserScheduleRef.current = false;
-        syncedScheduleRef.current = scheduleYaml;
-        syncedBrowserScheduleRef.current = scheduleYaml;
+        preserveBrowserScheduleSpecRef.current = false;
+        syncedScheduleSpecRef.current = scheduleSpecYaml;
+        syncedBrowserScheduleSpecRef.current = scheduleSpecYaml;
       }
       renewSessionExpiration();
       let runFinished = false;
@@ -913,7 +913,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
           setMessages(previous => previous.map(message => (
             message.id === assistantId ? applyAssistantEvent(message, event) : message
           )));
-        }, sandboxScheduleRef, scheduleYamlRef, applyRunSchedule),
+        }, sandboxScheduleRef, scheduleSpecYamlRef, applyRunSchedule),
         onSteering: (queuedId, queuedMessage) => {
           const runId = eventRouterRef.current.foreground?.runId;
           const createdAt = queuedMessagesRef.current.find(message => message.id === queuedId)?.createdAt ?? Date.now();
@@ -1247,7 +1247,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       lastActivityRef.current = storedConversation.lastActivityAt ?? Date.now();
       historyCreateRef.current = !fromHistory
         && (storedConversation.historyPending === true || storedConversation.lastActivityAt === undefined);
-      preserveBrowserScheduleRef.current = fromHistory || storedConversation.preserveBrowserSchedule === true;
+      preserveBrowserScheduleSpecRef.current = fromHistory || storedConversation.preserveBrowserScheduleSpec === true;
       setConversationUnavailable(false);
       setSessionNotice(null);
       setError(null);
@@ -1271,9 +1271,9 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
       setActiveOptimization(storedConversation.activeOptimization
         ? { ...storedConversation.activeOptimization, points: storedConversation.activeOptimization.points ?? [] }
         : null);
-      syncedScheduleRef.current = storedConversation.syncedSchedule;
-      syncedBrowserScheduleRef.current = storedConversation.syncedBrowserSchedule ?? storedConversation.syncedSchedule;
-      appliedScheduleRunsRef.current = { ...storedConversation.appliedScheduleRuns };
+      syncedScheduleSpecRef.current = storedConversation.syncedScheduleSpec;
+      syncedBrowserScheduleSpecRef.current = storedConversation.syncedBrowserScheduleSpec ?? storedConversation.syncedScheduleSpec;
+      appliedScheduleSpecRunsRef.current = { ...storedConversation.appliedScheduleSpecRuns };
       sessionEndpointRef.current = storedConversation.endpoint;
       setSessionEndpoint(storedConversation.endpoint);
       if (expired) {
@@ -1317,7 +1317,7 @@ export function useAiChat({ scheduleYaml, aiEndpoint, authRequired, authToken, i
   });
   return {
     recentChats, historyError, removeRecentChat, clearRecentChats,
-    scheduleDiffers: activeSessionId !== null && scheduleYaml !== (syncedBrowserScheduleRef.current ?? syncedScheduleRef.current),
+    scheduleDiffers: activeSessionId !== null && scheduleSpecYaml !== (syncedBrowserScheduleSpecRef.current ?? syncedScheduleSpecRef.current),
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary,
     activeSessionId, sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable,
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,

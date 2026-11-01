@@ -22,6 +22,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -30,7 +31,14 @@ from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_
 from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
-from .ai_eval.runner import fixture_text
+FIXTURES = {
+    "ward87": Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml",
+    "request-audit-groups": Path(__file__).parent / "ai_eval/fixtures/request-audit-groups.yaml",
+}
+
+
+def fixture_text(fixture: str) -> str:
+    return FIXTURES[fixture].read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -92,7 +100,7 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path, newline):
     for path in REFERENCE_ATTACHMENT_TOOLS.values():
         (tmp_path / path.name).write_bytes(path.read_bytes())
     source = fixture_text("ward87").replace("\n", newline)
-    (tmp_path / "schedule.yaml").write_bytes(source.encode("utf-8"))
+    (tmp_path / "schedule-spec.yaml").write_bytes(source.encode("utf-8"))
     (tmp_path / "context.json").write_text(json.dumps(build_result_context(source)))
     process = subprocess.run(
         [
@@ -101,7 +109,7 @@ def test_standalone_cli_uses_only_hydrated_helpers(tmp_path, newline):
             "--context",
             str(tmp_path / "context.json"),
             "--source",
-            str(tmp_path / "schedule.yaml"),
+            str(tmp_path / "schedule-spec.yaml"),
             "--weight=-.inf",
             "--max-requests",
             "0",

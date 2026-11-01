@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize request body reflects live page edits without going through Save and Load edit mode', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('optimize request body reflects live page edits without going through Save 
    * 4. Confirm the posted YAML contains the renamed person and not the original one.
    */
   await disableModalDialogs(page);
-  await seedMinimalSchedulingState(page);
+  await seedMinimalScheduleSpecState(page);
   await setDateRange(page);
 
   await page.goto('/people');

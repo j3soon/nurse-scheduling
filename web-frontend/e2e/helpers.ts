@@ -22,7 +22,7 @@
 import { expect, Page, Route } from '@playwright/test';
 import ExcelJS from 'exceljs';
 
-const STORAGE_KEY = 'nurse-scheduling-data';
+const STORAGE_KEY = 'nurse-scheduling-spec';
 const OPTIMIZE_SERVER_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
@@ -54,7 +54,7 @@ type StoredState = {
   };
 };
 
-export async function seedSchedulingState(page: Page, state: StoredState) {
+export async function seedScheduleSpecState(page: Page, state: StoredState) {
   const persisted = JSON.stringify({
     state,
     history: [state],
@@ -75,8 +75,8 @@ export async function seedSchedulingState(page: Page, state: StoredState) {
   );
 }
 
-export async function seedMinimalSchedulingState(page: Page) {
-  await seedSchedulingState(page, {
+export async function seedMinimalScheduleSpecState(page: Page) {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'minimal E2E schedule',
     dates: { range: {}, groups: [] },
@@ -276,7 +276,7 @@ export async function mockOptimizeAndExport(
     });
   });
 
-  await page.route('http://localhost:8000/optimize', async route => {
+  await page.route('http://localhost:8000/schedule_spec/optimize', async route => {
     const request = route.request();
 
     if (request.method() === 'OPTIONS') {
@@ -397,7 +397,7 @@ export async function mockOptimizeAndExport(
 export async function disableOptimizeAnonymization(page: Page) {
   // Backend readiness requires client initialization, unlike static checkbox markup.
   await expect(page.getByRole('button', { name: 'Optimize and Download', exact: true })).toBeEnabled();
-  const checkbox = page.getByRole('checkbox', { name: /anonymize schedule data/i });
+  const checkbox = page.getByRole('checkbox', { name: /anonymize Schedule Spec/i });
   await checkbox.uncheck();
   await expect(checkbox).not.toBeChecked();
 }

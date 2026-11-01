@@ -33,7 +33,7 @@ from ruamel.yaml.events import (
 )
 
 from .errors import InputValidationError
-from .models import NurseSchedulingData
+from .models import ScheduleSpec
 
 MAX_EXPANDED_NODES = 200_000
 """Largest number of nodes a document may expand to once aliases are followed."""
@@ -43,8 +43,8 @@ own data nests five deep, so a bound well above that keeps a deep document from 
 expensive to even look at."""
 
 
-class SchedulingDataTooComplexError(ValueError):
-    """Scheduling data expands to more nodes than this project will process."""
+class ScheduleSpecTooComplexError(ValueError):
+    """Schedule Spec expands to more nodes than this project will process."""
 
 
 @dataclass(frozen=True)
@@ -66,10 +66,10 @@ def _parse_events(content: bytes):
     """
     try:
         yield from YAML(typ="safe").parse(content)
-    except (SchedulingDataTooComplexError, YAMLError):
+    except (ScheduleSpecTooComplexError, YAMLError):
         raise
     except Exception as error:
-        raise YAMLError(f"Scheduling data could not be read: {error}") from error
+        raise YAMLError(f"Schedule Spec could not be read: {error}") from error
 
 
 def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -> YamlExpansion:
@@ -80,7 +80,7 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
     from the event stream keeps that cost visible without ever building the structure.
 
     Raises:
-        SchedulingDataTooComplexError: If the expansion or the nesting exceeds its bound.
+        ScheduleSpecTooComplexError: If the expansion or the nesting exceeds its bound.
     """
     anchor_sizes: dict[str, int] = {}
     aliases = 0
@@ -92,9 +92,8 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
             frames.append([1, anchor])
             if len(frames) - 1 > MAX_NESTING_DEPTH:
                 # Raised while parsing, so the rest of a deep document is never read.
-                raise SchedulingDataTooComplexError(
-                    f"Scheduling data nests deeper than {MAX_NESTING_DEPTH} levels, "
-                    "which this server refuses to process"
+                raise ScheduleSpecTooComplexError(
+                    f"Schedule Spec nests deeper than {MAX_NESTING_DEPTH} levels, which this server refuses to process"
                 )
             continue
         if isinstance(event, (MappingEndEvent, SequenceEndEvent)):
@@ -112,8 +111,8 @@ def measure_yaml_expansion(content: bytes, *, limit: int = MAX_EXPANDED_NODES) -
         else:
             continue
         if frames[-1][0] > limit:
-            raise SchedulingDataTooComplexError(
-                f"Scheduling data expands to more than {limit} nodes, which this server refuses to process"
+            raise ScheduleSpecTooComplexError(
+                f"Schedule Spec expands to more than {limit} nodes, which this server refuses to process"
             )
     return YamlExpansion(nodes=frames[0][0], aliases=aliases)
 
@@ -129,28 +128,28 @@ def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any
     """
     expansion = measure_yaml_expansion(content)
     if reject_aliases and expansion.aliases:
-        raise ValueError("YAML aliases are not allowed in frontend schedules")
+        raise ValueError("YAML aliases are not allowed in frontend Schedule Specs")
     stream = BytesIO(content)
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
     data = YAML(typ="safe").load(stream)
     if not isinstance(data, dict):
-        raise InputValidationError("Scheduling YAML must contain a top-level mapping")
+        raise InputValidationError("Schedule Spec YAML must contain a top-level mapping")
     return data
 
 
-def load_data(content: bytes) -> NurseSchedulingData:
-    """Load nurse scheduling data from YAML bytes content.
+def load_schedule_spec(content: bytes) -> ScheduleSpec:
+    """Load nurse Schedule Spec from YAML bytes content.
 
     Args:
         content: File content as bytes
 
     Returns:
-        NurseSchedulingData: The validated scheduling data
+        ScheduleSpec: The validated Schedule Spec
 
     Raises:
-        SchedulingDataTooComplexError: If the data expands to more nodes than are processed.
+        ScheduleSpecTooComplexError: If the data expands to more nodes than are processed.
     """
     data = _load_yaml(content)
-    return NurseSchedulingData.model_validate(data)
+    return ScheduleSpec.model_validate(data)

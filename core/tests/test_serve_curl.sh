@@ -21,8 +21,8 @@ echo ""
 
 echo "--------------------------------"
 echo "Valid YAML file upload"
-JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/optimize" \
-    -F "file=@$TEST_DIR/01_1nurse_1shift_1day.yaml" \
+JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/schedule_spec/optimize" \
+    -F "schedule_spec_file=@$TEST_DIR/01_1nurse_1shift_1day.yaml" \
     -w "\nHTTP Status: %{http_code}\n")
 echo "$JOB_RESPONSE"
 echo ""
@@ -30,8 +30,8 @@ echo ""
 echo "--------------------------------"
 echo "YAML content as string"
 YAML_CONTENT=$(cat "$TEST_DIR/01_1nurse_1shift_1day.yaml")
-JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/optimize" \
-    -F "yaml_content=$YAML_CONTENT" \
+JOB_RESPONSE=$(curl -s -X POST "$BASE_URL/schedule_spec/optimize" \
+    -F "schedule_spec_yaml=$YAML_CONTENT" \
     -w "\nHTTP Status: %{http_code}\n")
 echo "$JOB_RESPONSE"
 echo ""

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('dates page recovers from an invalid range and then applies a corrected range', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('dates page recovers from an invalid range and then applies a corrected ran
    * 4. Correct the range and confirm downstream date columns appear.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'dates invalid recovery seed',
     dates: { range: {}, groups: [] },

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('people upload preserves unmentioned existing people at the tail in their original order', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('people upload preserves unmentioned existing people at the tail in their o
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people tail order seed',
     dates: { range: {}, groups: [] },

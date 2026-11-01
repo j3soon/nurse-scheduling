@@ -67,14 +67,13 @@ from nurse_scheduling.ai.transcript import (
     ToolResultImage,
     ToolResultMessage,
     UserMessage,
-    entry_from_record,
 )
 from nurse_scheduling.ai.workspace import SandboxAttachment
 
 from . import test_ai_basic as basic
 
 EMPTY_STATE = {
-    "schedule_yaml": basic.schedule_yaml(),
+    "schedule_spec_yaml": basic.schedule_spec_yaml(),
     "dropped_history_messages": 0,
     "dropped_entries": 0,
 }
@@ -108,7 +107,7 @@ def test_recovery_default_session_lifetime():
 
 @pytest.fixture
 def recorded_history(monkeypatch):
-    records = {"starts": [], "finishes": [], "saves": [], "entries": [], "schedule_changes": []}
+    records = {"starts": [], "finishes": [], "saves": [], "entries": [], "schedule_spec_changes": []}
 
     def start(_self, run_id, session_id, *, state, prompt, prompt_seq, entries=(), **fields):
         records["entries"].extend([*entries, (prompt_seq, run_id, UserMessage(prompt))])
@@ -122,14 +121,14 @@ def recorded_history(monkeypatch):
         session_id=None,
         state=None,
         entries=(),
-        schedule_change=None,
+        schedule_spec_change=None,
         uploads=(),
         downloads=None,
         files=(),
     ):
         records["entries"].extend(entries)
         records["finishes"].append((*outcome, state))
-        records["schedule_changes"].append(schedule_change)
+        records["schedule_spec_changes"].append(schedule_spec_change)
 
     def save(_self, *_args, entries=(), **kwargs):
         records["entries"].extend(entries)
@@ -175,7 +174,7 @@ def test_records_text_usage_and_sanitized_failure(recorded_history, failed):
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
     (start,) = recorded_history["starts"]
     (finish,) = recorded_history["finishes"]
     assert (start["session_id"], start["prompt"], start["model"]) == (session_id, "Question", "test-model")
@@ -206,14 +205,14 @@ def test_database_unavailable_releases_session_before_provider_call(recorded_his
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
         assert response.status_code == 503
         assert provider.calls == []
         session = app.state.session_store._sessions[session_id]
         assert session.transcript == []
         assert session.dropped_entries == 0
         monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert session.transcript.count(UserMessage("Question")) == 1
 
@@ -226,11 +225,11 @@ def test_schedule_application_payload_is_saved_with_the_completed_run(recorded_h
         sandbox_factory=basic.rename_factory(),
     )
     with basic.AuthenticatedTestClient(app) as client:
-        session_id = basic.create_session(client, basic.schedule_yaml())
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Change description"})
-    application = next(data for kind, data in basic.parse_sse(response.text) if kind == "schedule_applied")
-    assert recorded_history["schedule_changes"] == [{"type": "schedule_applied", **application}]
-    assert recorded_history["finishes"][0][-1][2]["schedule_yaml"] == application["schedule_yaml"]
+        session_id = basic.create_session(client, basic.schedule_spec_yaml())
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Change description"})
+    application = next(data for kind, data in basic.parse_sse(response.text) if kind == "schedule_spec_applied")
+    assert recorded_history["schedule_spec_changes"] == [{"type": "schedule_spec_applied", **application}]
+    assert recorded_history["finishes"][0][-1][2]["schedule_spec_yaml"] == application["schedule_spec_yaml"]
 
 
 def test_final_write_failure_preserves_successful_conversation(recorded_history, monkeypatch, caplog):
@@ -240,7 +239,7 @@ def test_final_write_failure_preserves_successful_conversation(recorded_history,
     )
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
     events = basic.parse_sse(response.text)
     assert ("warning", {"message": RECOVERY_SAVE_WARNING, "run_id": events[-1][1]["run_id"]}) in events
     assert events[-1][1]["history_saved"] is False
@@ -266,7 +265,7 @@ def test_records_queued_steering_in_run_order(recorded_history):
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Is Monday covered?"})
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Is Monday covered?"})
 
     (start,) = recorded_history["starts"]
     assert run_messages(recorded_history, start["run_id"]) == [
@@ -285,7 +284,7 @@ def test_history_records_the_typed_prompt_and_the_retained_upload_count(recorded
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
         basic.upload_files(client, session_id, ("ward.xlsx", b"bytes", "application/octet-stream"))
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Read this."})
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Read this."})
         transcript = app.state.session_store._sessions[session_id].transcript
 
     (start,) = recorded_history["starts"]
@@ -306,8 +305,8 @@ def test_history_and_session_keep_the_full_run_context(recorded_history):
         sandbox_factory=basic.rename_factory(),
     )
     with basic.AuthenticatedTestClient(app) as client:
-        session_id = basic.create_session(client, basic.schedule_yaml())
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+        session_id = basic.create_session(client, basic.schedule_spec_yaml())
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
         retained = app.state.session_store._sessions[session_id].transcript
 
     (start,) = recorded_history["starts"]
@@ -336,7 +335,7 @@ def test_failed_session_save_releases_the_session_slot(recorded_history, monkeyp
         settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
     )
     with basic.AuthenticatedTestClient(app) as client:
-        response = client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})
+        response = client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
     assert response.status_code == 503
     assert app.state.session_store._sessions == {}
     assert app.state.session_store.retained_bytes == 0
@@ -348,7 +347,7 @@ def test_recovery_read_failure_during_message_lookup_returns_503(recorded_histor
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "m1"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question", "message_id": "m1"})
     assert response.status_code == 503
     assert provider.calls == []
 
@@ -359,13 +358,13 @@ def test_saved_export_read_failure_returns_503_and_allows_retry(recorded_history
     app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        response = client.get(f"/sessions/{session_id}/export")
+        response = client.get(f"/v1/sessions/{session_id}/export")
         assert response.status_code == 503
         assert "secret-database-url" not in response.text
         assert not app.state.recovery._pins
         body = b"ZIP bytes from the server"
         monkeypatch.setattr(app_module, "create_chat_archive", lambda *_args, **_kwargs: io.BytesIO(body))
-        retried = client.get(f"/sessions/{session_id}/export")
+        retried = client.get(f"/v1/sessions/{session_id}/export")
         assert retried.content == body and retried.headers["content-type"] == "application/zip"
     assert provider.calls == []
 
@@ -384,12 +383,12 @@ def test_saved_export_timeout_reports_pending_snapshot_and_allows_retry(recorded
         session = basic.create_session(client)
         with monkeypatch.context() as patch:
             patch.setattr(app.state.recovery, phase, timed_out)
-            response = client.get(f"/sessions/{session}/export")
+            response = client.get(f"/v1/sessions/{session}/export")
         assert response.status_code == 503
         assert response.json() == {"detail": "The chat snapshot is still being saved. Try again."}
         assert "AI chat archive creation failed" not in caplog.text
         assert not app.state.recovery._pins
-        assert client.get(f"/sessions/{session}/export").content == b"ZIP"
+        assert client.get(f"/v1/sessions/{session}/export").content == b"ZIP"
 
 
 @pytest.mark.parametrize("error", [OSError, TimeoutError], ids=["disk-error", "archive-io-timeout"])
@@ -404,7 +403,7 @@ def test_saved_export_archive_io_failure_is_not_reported_as_a_pending_save(recor
     monkeypatch.setattr(app_module, "create_chat_archive", failed)
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        response = client.get(f"/sessions/{session}/export")
+        response = client.get(f"/v1/sessions/{session}/export")
         assert response.status_code == 503
         assert response.json() == {"detail": "The chat archive could not be created. Try again."}
         assert not app.state.recovery._pins
@@ -422,7 +421,7 @@ def test_saved_export_renderer_failures_remain_server_errors(recorded_history, m
     monkeypatch.setattr(app_module, "create_chat_archive", failed)
     with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
         session = basic.create_session(client)
-        response = client.get(f"/sessions/{session}/export")
+        response = client.get(f"/v1/sessions/{session}/export")
         assert response.status_code == 500
         assert "private renderer details" not in response.text
         assert not app.state.recovery._pins
@@ -457,7 +456,7 @@ async def read_events(
             if f"event: {until}\n".encode() in b"".join(chunks):
                 await requests.put({"type": "http.disconnect"})
 
-    path = f"/sessions/{session_id}/events"
+    path = f"/v1/sessions/{session_id}/events"
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -505,15 +504,17 @@ def test_stop_during_failed_run_start_does_not_stop_next_run(recorded_history, m
     async def exercise():
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             monkeypatch.setattr(ChatHistory, "start_run", start)
-            first = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "First"}))
+            first = asyncio.create_task(client.post(f"/v1/sessions/{session_id}/messages", json={"message": "First"}))
             await asyncio.to_thread(entered.wait, 5)
-            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/stop")).status_code == 202
             release.set()
             assert (await first).status_code == 202
             monkeypatch.setattr(ChatHistory, "start_run", lambda *_args, **_kwargs: None)
-            second = await client.post(f"/sessions/{session_id}/messages", json={"message": "Second"})
+            second = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Second"})
             owner = client.cookies[basic.OWNER_COOKIE]
             frames = await read_events(app, session_id, owner)
             return second.json()["run_id"], frames
@@ -540,9 +541,11 @@ def test_disconnected_admission_still_runs_and_releases_the_session(recorded_his
     async def exercise():
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             monkeypatch.setattr(ChatHistory, "start_run", start)
-            first = asyncio.create_task(client.post(f"/sessions/{session_id}/messages", json={"message": "First"}))
+            first = asyncio.create_task(client.post(f"/v1/sessions/{session_id}/messages", json={"message": "First"}))
             await asyncio.to_thread(blocked.wait, 5)
             # A lost request does not cancel accepted work.
             first.cancel()
@@ -551,7 +554,7 @@ def test_disconnected_admission_still_runs_and_releases_the_session(recorded_his
             while app.state.runs.busy(session_id):
                 await asyncio.sleep(0.01)
             assert not app.state.session_store._sessions[session_id].active
-            second = await client.post(f"/sessions/{session_id}/messages", json={"message": "Second"})
+            second = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Second"})
             assert second.status_code == 202
             while app.state.runs.busy(session_id):
                 await asyncio.sleep(0.01)
@@ -567,10 +570,10 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
     committed = []
 
     def save(_self, _session_id, *, state, credential_id=None, entries=(), uploads=(), downloads=None, files=()):
-        if state[2]["schedule_yaml"] == older:
+        if state[2]["schedule_spec_yaml"] == older:
             blocked.set()
             release.wait(5)
-        committed.append(state[2]["schedule_yaml"])
+        committed.append(state[2]["schedule_spec_yaml"])
 
     monkeypatch.setattr(ChatHistory, "save_session", save)
 
@@ -579,11 +582,13 @@ def test_recovery_state_writes_commit_in_capture_order(recorded_history, monkeyp
             settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            path = f"/sessions/{session_id}/schedule"
-            first = asyncio.create_task(client.put(path, json={"schedule_yaml": older}))
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            path = f"/v1/sessions/{session_id}/schedule_spec"
+            first = asyncio.create_task(client.put(path, json={"schedule_spec_yaml": older}))
             await asyncio.to_thread(blocked.wait, 5)
-            second = asyncio.create_task(client.put(path, json={"schedule_yaml": newer}))
+            second = asyncio.create_task(client.put(path, json={"schedule_spec_yaml": newer}))
             # Without serialization, the newer state commits while the older write is blocked.
             await asyncio.sleep(0.1)
             assert newer not in committed
@@ -600,11 +605,11 @@ def test_schedule_update_that_cannot_be_saved_can_be_retried(recorded_history, m
     )
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/schedule"
+        path = f"/v1/sessions/{session_id}/schedule_spec"
         monkeypatch.setattr(ChatHistory, "save_session", unavailable)
-        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 503
+        assert client.put(path, json={"schedule_spec_yaml": "description: newer"}).status_code == 503
         monkeypatch.setattr(ChatHistory, "save_session", lambda *_args, **_kwargs: None)
-        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
+        assert client.put(path, json={"schedule_spec_yaml": "description: newer"}).status_code == 204
 
 
 def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history, monkeypatch):
@@ -619,11 +624,11 @@ def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history
         second = basic.create_session(client)
         for session_id in (first, second):
             store._sessions[session_id].snapshot = object()
-        assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
+        assert client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()}).status_code == 429
         for session_id in (first, second):
             store._sessions[session_id].snapshot = None
-        assert client.get(f"/sessions/{second}/uploads").status_code == 200
-        assert client.get(f"/sessions/{first}/uploads").status_code == 200
+        assert client.get(f"/v1/sessions/{second}/uploads").status_code == 200
+        assert client.get(f"/v1/sessions/{first}/uploads").status_code == 200
         third = basic.create_session(client)
     assert list(store._sessions) == [first, third]
 
@@ -632,17 +637,17 @@ def test_full_store_evicts_the_least_recently_used_idle_session(recorded_history
 def test_session_admission_counts_as_most_recent_use(restored):
     store = SessionStore(basic.make_settings(max_sessions=2))
     store.allow_eviction(lambda _session_id: True)
-    first = store.create("browser-owner", basic.schedule_yaml())
-    second = store.create("browser-owner", basic.schedule_yaml())
+    first = store.create("browser-owner", basic.schedule_spec_yaml())
+    second = store.create("browser-owner", basic.schedule_spec_yaml())
     store.require_owned(first.id, first.owner_token)
     if restored:
         owner, expires_at, state = store.recovery_state(first.id)
         third = store.restore(str(uuid4()), owner, state, expires_at, entries=(), next_entry_seq=0)
     else:
-        third = store.create("browser-owner", basic.schedule_yaml())
+        third = store.create("browser-owner", basic.schedule_spec_yaml())
     assert store.get(second.id) is None
 
-    fourth = store.create("browser-owner", basic.schedule_yaml())
+    fourth = store.create("browser-owner", basic.schedule_spec_yaml())
     assert list(store._sessions) == [third.id, fourth.id]
 
 
@@ -660,23 +665,31 @@ def test_full_store_keeps_a_session_until_its_state_write_ends(recorded_history,
             settings=basic.make_settings(history_postgres_url="test", max_sessions=1), provider=basic.FakeProvider()
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             monkeypatch.setattr(ChatHistory, operation, write)
             if operation == "finish_run":
-                request = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+                request = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
             else:
-                request = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": "description: newer"})
+                request = client.put(
+                    f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": "description: newer"}
+                )
             pending = asyncio.create_task(request)
             await asyncio.to_thread(blocked.wait, 5)
             # The session is idle while its write runs, but eviction would make the write fail.
             assert app.state.session_store._sessions[session_id].active is False
-            assert (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).status_code == 429
+            assert (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).status_code == 429
             release.set()
             assert (await pending).status_code in {202, 204}
             while app.state.runs.busy(session_id):
                 await asyncio.sleep(0.01)
             await app.state.recovery.flush(session_id)
-            assert (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).status_code == 201
+            assert (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).status_code == 201
 
     asyncio.run(exercise())
 
@@ -688,31 +701,31 @@ def test_full_store_keeps_a_session_whose_state_was_not_saved(recorded_history, 
     )
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/schedule"
+        path = f"/v1/sessions/{session_id}/schedule_spec"
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, operation, unavailable)
             if operation == "finish_run":
-                response = client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+                response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
                 assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
             else:
-                assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 503
+                assert client.put(path, json={"schedule_spec_yaml": "description: newer"}).status_code == 503
         # Memory holds the only copy of the newest state until a save succeeds.
-        assert client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()}).status_code == 429
-        assert client.put(path, json={"schedule_yaml": "description: newer"}).status_code == 204
+        assert client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()}).status_code == 429
+        assert client.put(path, json={"schedule_spec_yaml": "description: newer"}).status_code == 204
         basic.create_session(client)
     assert session_id not in app.state.session_store._sessions
     if operation == "finish_run":
         # The schedule save also retried the answer's final outcome with the newer state.
         [retried] = recorded_history["finishes"]
         assert retried[1] == "completed"
-        assert retried[5][2]["schedule_yaml"] == "description: newer"
+        assert retried[5][2]["schedule_spec_yaml"] == "description: newer"
 
 
 def test_full_store_without_recovery_keeps_refusing_new_sessions():
     app = basic.create_test_app(settings=basic.make_settings(max_sessions=1), provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(app) as client:
         basic.create_session(client)
-        response = client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})
+        response = client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
     assert response.status_code == 429
 
 
@@ -725,7 +738,7 @@ def test_background_recovery_outage_releases_session_and_reports_status(recorded
         app = basic.create_test_app(
             settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider()
         )
-        session = app.state.session_store.create(str(uuid4()), basic.schedule_yaml())
+        session = app.state.session_store.create(str(uuid4()), basic.schedule_spec_yaml())
         optimizer = app.state.session_optimizer
         await optimizer._on_update(session.id, {"job_id": "job", "state": "completed", "terminal": True})
         await optimizer._on_completion(session.id, "Review the optimizer result.", None)
@@ -769,7 +782,7 @@ def test_recovery_writers_report_each_outage_once_and_report_recovery(monkeypatc
 
     async def exercise():
         store = SessionStore(basic.make_settings())
-        session = store.create("owner", basic.schedule_yaml())
+        session = store.create("owner", basic.schedule_spec_yaml())
         history = ChatHistory("test")
         recovery = SessionRecovery(history, store, SessionEventStream())
         if operation == "append_entries":
@@ -890,6 +903,46 @@ def session_state(owner: str, expires_in: float = 60, **changes) -> tuple[str, f
     return owner, time.time() + expires_in, {**EMPTY_STATE, **changes}
 
 
+@pytest.mark.parametrize("last_migration", [5, 11], ids=["before-column-rename", "after-column-rename"])
+def test_postgres_renamed_migration_preserves_applied_schedule_spec(uninitialized_postgres_history, last_migration):
+    history = uninitialized_postgres_history
+    run, session = str(uuid4()), str(uuid4())
+    payload = {"schedule_spec_yaml": basic.schedule_spec_yaml(), "run_id": run}
+    with history._connect() as connection:
+        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
+        migrations = sorted(Path(history_module.__file__).with_name("migrations").glob("*.sql"))
+        for migration in migrations[:last_migration]:
+            connection.execute(migration.read_text(encoding="utf-8"))
+            if migration.name.startswith("004_"):
+                connection.execute("ALTER TABLE chat_runs DROP COLUMN question")
+            version = "005_run_schedule_change.sql" if migration.name.startswith("005_") else migration.name
+            connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (version,))
+        connection.execute(
+            "INSERT INTO chat_sessions (id, owner_hash, expires_at, state) "
+            "VALUES (%s, 'owner', now() + interval '1 hour', '{}'::jsonb)",
+            (session,),
+        )
+        column = "schedule_change" if last_migration < 11 else "schedule_spec_change"
+        connection.execute(
+            sql.SQL("INSERT INTO chat_runs (id, session_id, {}) VALUES (%s, %s, %s)").format(sql.Identifier(column)),
+            (run, session, history_module.Jsonb(payload)),
+        )
+
+    history.initialize()
+    history.initialize()
+
+    with history._connect() as connection:
+        assert connection.execute("SELECT schedule_spec_change FROM chat_runs WHERE id = %s", (run,)).fetchone() == (
+            payload,
+        )
+        columns = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'chat_runs'"
+        ).fetchall()
+        assert ("schedule_change",) not in columns
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (11,)
+
+
 def test_postgres_uploads_survive_restart_and_removal(postgres_history):
     settings = basic.make_settings(history_postgres_url="test", max_attachment_total_bytes=20)
     app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
@@ -897,45 +950,45 @@ def test_postgres_uploads_survive_restart_and_removal(postgres_history):
     payload = {"files": ("notes.txt", b"handover\x00", "text/plain")}
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
-        response = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        response = client.post(f"/v1/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
         assert response.status_code == 201
         first = response.json()[0]
-        duplicate = client.post(f"/sessions/{session}/uploads", files=payload).json()[0]
+        duplicate = client.post(f"/v1/sessions/{session}/uploads", files=payload).json()[0]
         assert duplicate["filename"] == "notes (1).txt"
         cookies = dict(client.cookies)
 
-    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))
     provider = basic.ScriptedToolProvider([read], [TextDelta("Read")])
     factory = FakeSandboxFactory()
     restarted = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=factory)
     with basic.AuthenticatedTestClient(restarted) as client:
-        assert client.get(f"/sessions/{session}/uploads").status_code == 404
+        assert client.get(f"/v1/sessions/{session}/uploads").status_code == 404
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session}/uploads").json() == [first, duplicate]
+        assert client.get(f"/v1/sessions/{session}/uploads").json() == [first, duplicate]
         assert all(upload.data is None for upload in restarted.state.session_store.get(session).uploads.values())
-        retry = client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
+        retry = client.post(f"/v1/sessions/{session}/uploads?upload_id={upload_id}", files=payload)
         assert retry.status_code == 201 and retry.json() == [first]
         conflict = client.post(
-            f"/sessions/{session}/uploads?upload_id={upload_id}",
+            f"/v1/sessions/{session}/uploads?upload_id={upload_id}",
             files={"files": ("notes.txt", b"changed", "text/plain")},
         )
         assert conflict.status_code == 409
         assert (
             client.post(
-                f"/sessions/{session}/uploads", files={"files": ("large.txt", b"123", "text/plain")}
+                f"/v1/sessions/{session}/uploads", files={"files": ("large.txt", b"123", "text/plain")}
             ).status_code
             == 413
         )
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Read the files"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Read the files"}).status_code == 200
         for metadata in (first, duplicate):
             filename = metadata["filename"].replace(" (1)", "_1_")
             path = f"/workspace/attachments/{metadata['id']}-{filename}"
             assert factory.created[0].files[path] == b"handover\x00"
-        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == 204
     again = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(again) as client:
         client.cookies.update(cookies)
-        assert client.get(f"/sessions/{session}/uploads").json() == [duplicate]
+        assert client.get(f"/v1/sessions/{session}/uploads").json() == [duplicate]
     with postgres_history._connect() as connection:
         assert connection.execute("SELECT source_id, data FROM chat_files WHERE removed_at IS NULL").fetchall() == [
             (duplicate["id"], b"handover\x00")
@@ -957,24 +1010,24 @@ def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_histo
         payload = {"files": ("notes.txt", b"handover", "text/plain")}
         save = ChatHistory.save_session
         monkeypatch.setattr(ChatHistory, "save_session", unavailable)
-        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
+        assert client.post(f"/v1/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 503
         assert app.state.session_store.get(session).uploads[upload_id].data == b"handover"
         with postgres_history._connect() as connection:
             assert connection.execute("SELECT count(*) FROM chat_files").fetchone() == (0,)
             assert not connection.execute("SELECT state FROM chat_sessions").fetchone()[0]["uploads"]
         monkeypatch.setattr(ChatHistory, "save_session", save)
-        assert client.post(f"/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
+        assert client.post(f"/v1/sessions/{session}/uploads?upload_id={upload_id}", files=payload).status_code == 201
         assert app.state.session_store.get(session).uploads[upload_id].data is None
-        assert len(client.get(f"/sessions/{session}/uploads").json()) == 1
+        assert len(client.get(f"/v1/sessions/{session}/uploads").json()) == 1
         monkeypatch.setattr(ChatHistory, "save_session", unavailable)
-        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 503
+        assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == 503
         monkeypatch.setattr(ChatHistory, "save_session", save)
-        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 204
-        assert client.delete(f"/sessions/{session}/uploads/{upload_id}").status_code == 404
+        assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == 204
+        assert client.delete(f"/v1/sessions/{session}/uploads/{upload_id}").status_code == 404
         # A removed ID can be used for a new upload, with new bytes.
         assert (
             client.post(
-                f"/sessions/{session}/uploads?upload_id={upload_id}",
+                f"/v1/sessions/{session}/uploads?upload_id={upload_id}",
                 files={"files": ("new.txt", b"new bytes", "text/plain")},
             ).status_code
             == 201
@@ -988,7 +1041,7 @@ def test_postgres_failed_upload_is_not_acknowledged_and_can_retry(postgres_histo
 
 def test_postgres_upload_write_is_atomic(postgres_history, monkeypatch):
     store = SessionStore(basic.make_settings())
-    session = store.create(str(uuid4()), basic.schedule_yaml())
+    session = store.create(str(uuid4()), basic.schedule_spec_yaml())
     uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
     # Fail after the session row and file bytes have been written. Neither may commit.
     with monkeypatch.context() as patch:
@@ -1015,7 +1068,7 @@ def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, mon
         return load(self, session_id, owner, upload_id, size_bytes)
 
     monkeypatch.setattr(ChatHistory, "load_upload", record_load)
-    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))
     provider = basic.ScriptedToolProvider([TextDelta("No files needed")], [read], [TextDelta("Read")])
     factory = FakeSandboxFactory()
     app = basic.create_test_app(
@@ -1027,7 +1080,7 @@ def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, mon
         session = basic.create_session(client)
         payload = b"x" * 1_000_000
         response = client.post(
-            f"/sessions/{session}/uploads",
+            f"/v1/sessions/{session}/uploads",
             files=[("files", (name, payload, "text/plain")) for name in ("one.txt", "two.txt")],
         )
         assert response.status_code == 201
@@ -1040,12 +1093,12 @@ def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, mon
         # A full store unloads the first chat. Restoring its metadata must not read file bytes.
         basic.create_session(client)
         assert store.get(session) is None
-        assert client.get(f"/sessions/{session}/uploads").json() == metadata
+        assert client.get(f"/v1/sessions/{session}/uploads").json() == metadata
         assert all(upload.data is None for upload in store.get(session).uploads.values())
         assert store.retained_bytes < len(payload)
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Hello"}).status_code == 200
         assert loads == [] and factory.created == []
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
         assert loads == [(file["id"], len(payload)) for file in metadata]
         assert all(upload.data is None for upload in store.get(session).uploads.values())
         assert store.retained_bytes < len(payload)
@@ -1053,7 +1106,7 @@ def test_postgres_uploads_load_only_when_a_sandbox_is_used(postgres_history, mon
 
 @pytest.mark.parametrize("failure", ["unavailable", "missing"], ids=["database-outage", "missing-file"])
 def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch, failure, caplog):
-    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))
     factory = FakeSandboxFactory()
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"),
@@ -1063,7 +1116,9 @@ def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         assert (
-            client.post(f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"hi", "text/plain")}).status_code
+            client.post(
+                f"/v1/sessions/{session}/uploads", files={"files": ("notes.txt", b"hi", "text/plain")}
+            ).status_code
             == 201
         )
         if failure == "unavailable":
@@ -1071,7 +1126,7 @@ def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch
         else:
             with postgres_history._connect() as connection:
                 connection.execute("DELETE FROM chat_files")
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Read files"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Read files"})
         assert response.status_code == 200
         error = next(data for kind, data in basic.parse_sse(response.text) if kind == "error")
         assert error["message"] == (
@@ -1092,7 +1147,7 @@ def test_postgres_upload_read_failure_releases_run(postgres_history, monkeypatch
 
 
 def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, monkeypatch):
-    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule.yaml"})),))
+    read = ToolCallRequest((ToolCall("read", "read", json.dumps({"path": "/workspace/schedule-spec.yaml"})),))
     factory = FakeSandboxFactory()
     app = basic.create_test_app(
         settings=basic.make_settings(history_postgres_url="test"),
@@ -1105,7 +1160,7 @@ def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, m
             patch.setattr(ChatHistory, "save_session", unavailable)
             assert (
                 client.post(
-                    f"/sessions/{session}/uploads", files={"files": ("notes.txt", b"pending", "text/plain")}
+                    f"/v1/sessions/{session}/uploads", files={"files": ("notes.txt", b"pending", "text/plain")}
                 ).status_code
                 == 503
             )
@@ -1120,7 +1175,7 @@ def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, m
             return load(self, *args)
 
         monkeypatch.setattr(ChatHistory, "load_upload", check_snapshot)
-        assert client.post(f"/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
+        assert client.post(f"/v1/sessions/{session}/messages", json={"message": "Read files"}).status_code == 200
         assert factory.created[0].files[f"/workspace/attachments/{upload.id}-notes.txt"] == b"pending"
         assert live.uploads[upload.id].data is None
         assert not live.active
@@ -1128,7 +1183,7 @@ def test_postgres_run_saves_pending_upload_before_loading_it(postgres_history, m
 
 def test_postgres_upload_read_checks_owner_expiry_and_size(postgres_history):
     store = SessionStore(basic.make_settings())
-    session = store.create(str(uuid4()), basic.schedule_yaml())
+    session = store.create(str(uuid4()), basic.schedule_spec_yaml())
     uploads = store.retain_uploads(session.id, session.owner_token, [SandboxAttachment("notes", "text/plain", b"hi")])
     postgres_history.save_session(session.id, store.recovery_state(session.id), uploads=uploads)
     args = (session.id, session.owner_token, uploads[0].id)
@@ -1146,7 +1201,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
     history.save_session(session, session_state(owner), "team-a")
     history.start_run(run, session, session_state(owner), "What's next?", 0, model="model", attachment_count=3)
     history.start_run(run, session, session_state(owner), "duplicate", 1, model="model", attachment_count=3)
-    call = ToolCall("call-1", "read", '{"path":"schedule.yaml"}')
+    call = ToolCall("call-1", "read", '{"path":"schedule-spec.yaml"}')
     from nurse_scheduling.ai.transcript import ProviderIdentity
 
     entries = [
@@ -1168,7 +1223,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
     state = session_state(owner)
     history.finish_run(run, "completed", None, TokenUsage(1, 2, 3), True, session_id=session, state=state)
     history.finish_run(run, "cancelled", None, None, False, session_id=session, state=state)
-    app_event = (5, run, AppEventEntry("[App event] The schedule changed in the app."))
+    app_event = (5, run, AppEventEntry("[App event] The Schedule Spec changed in the app."))
     history.save_session(session, state, entries=[app_event])
     restarted = ChatHistory("test")
     restarted.initialize()
@@ -1194,7 +1249,7 @@ def test_postgres_duplicates_and_reconnection(postgres_history):
             *map(record, entries),
             record(app_event[2]),
         ]
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (11,)
     # Complete tool exchanges survive a process restart.
     assert restarted.load_session(session, owner)["entries"] == [
         UserMessage("What's next?"),
@@ -1250,8 +1305,8 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
     run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
     history.save_session(session, session_state(owner))
     history.start_run(run, session, session_state(owner), "Question", 0, model="model", attachment_count=0)
-    answered = session_state(owner, schedule_yaml="description: answered")
-    change = {"type": "schedule_applied", "run_id": run, "schedule_yaml": answered[2]["schedule_yaml"]}
+    answered = session_state(owner, schedule_spec_yaml="description: answered")
+    change = {"type": "schedule_spec_applied", "run_id": run, "schedule_spec_yaml": answered[2]["schedule_spec_yaml"]}
     with pytest.raises(TypeError):
         history.finish_run(
             run,
@@ -1262,11 +1317,11 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
             session_id=session,
             state=answered,
             entries=[(1, run, object())],
-            schedule_change=change,
+            schedule_spec_change=change,
         )
     assert history.load_session(session, owner)["state"] == EMPTY_STATE
     with history._connect() as connection:
-        assert connection.execute("SELECT status, schedule_change FROM chat_runs").fetchone() == ("running", None)
+        assert connection.execute("SELECT status, schedule_spec_change FROM chat_runs").fetchone() == ("running", None)
     entries = [(1, run, AssistantMessage("Answer"))]
     history.finish_run(
         run,
@@ -1277,7 +1332,7 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
         session_id=session,
         state=answered,
         entries=entries,
-        schedule_change=change,
+        schedule_spec_change=change,
     )
     restored = history.load_session(session, owner)
     assert restored["state"] == answered[2]
@@ -1286,7 +1341,10 @@ def test_postgres_finish_commits_status_state_and_entries_together(postgres_hist
         2,
     )
     with history._connect() as connection:
-        assert connection.execute("SELECT status, schedule_change FROM chat_runs").fetchone() == ("completed", change)
+        assert connection.execute("SELECT status, schedule_spec_change FROM chat_runs").fetchone() == (
+            "completed",
+            change,
+        )
 
 
 def test_postgres_event_rows_combine_fragments_without_losing_boundaries(postgres_history):
@@ -1346,81 +1404,6 @@ def test_postgres_reset_replaces_the_whole_run_for_a_cursor_inside_a_row(postgre
     ]
 
 
-@pytest.mark.parametrize("typed", [False, True], ids=["production-text", "pr4-typed-snapshot"])
-def test_postgres_upgrade_preserves_deployed_sessions_and_message_receipts(uninitialized_postgres_history, typed):
-    history = uninitialized_postgres_history
-    session, owner, run_id = str(uuid4()), str(uuid4()), str(uuid4())
-    migrations = Path(history_module.__file__).with_name("migrations")
-    entries = [UserMessage("Original question"), AssistantMessage("Saved answer")]
-    # Earlier versions stored the user's approval, which restores as the app event the model received.
-    approval = entry_from_record("proposal_decision", {"decision": "approved"})
-    old_state = {
-        "schedule_yaml": "description: original",
-        "proposal_yaml": "description: proposal",
-        "proposal_diff": "Saved diff",
-        "dropped_history_messages": 2,
-    }
-    if typed:
-        from nurse_scheduling.ai.transcript import entry_record
-
-        old_state["transcript"] = [
-            *({"type": kind, "payload": payload} for kind, payload in map(entry_record, entries)),
-            {"type": "proposal_decision", "payload": {"decision": "approved"}},
-        ]
-    else:
-        from nurse_scheduling.ai.context import projected_history
-
-        old_state["history"] = [*projected_history(entries), {"role": "user", "content": approval.text}]
-    with history._connect() as connection:
-        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
-        for name in ("001_chat_history.sql", "002_arbitrary_attachments.sql", "003_chat_recovery.sql"):
-            connection.execute((migrations / name).read_text(encoding="utf-8"))
-            connection.execute("INSERT INTO ai_history_migrations VALUES (%s)", (name,))
-        connection.execute(
-            "INSERT INTO chat_recovery_sessions (id, owner_hash, expires_at, state, auth_credential_id) "
-            "VALUES (%s, %s, to_timestamp(%s), %s, 'team-a')",
-            (session, hashlib.sha256(owner.encode()).hexdigest(), time.time() + 3600, json.dumps(old_state)),
-        )
-        connection.execute(
-            "INSERT INTO chat_recovery_turns (id, session_id, request_id, question, model, status) "
-            "VALUES (%s, %s, 'accepted-id', 'Original question', 'saved-model', 'completed')",
-            (run_id, session),
-        )
-        connection.execute(
-            "INSERT INTO chat_recovery_entries (session_id, channel, turn_id, event_id, last_event_id, event_type, data) "
-            "VALUES (%s, %s, %s, 1, 2, 'delta', %s), (%s, 'background', NULL, 1, 1, 'optimization', %s)",
-            (
-                session,
-                run_id,
-                run_id,
-                json.dumps({"text": "Saved answer"}),
-                session,
-                json.dumps({"job_id": "saved-job", "state": "completed"}),
-            ),
-        )
-        connection.execute("INSERT INTO chat_recovery_stops VALUES (%s, 'stopped-id')", (session,))
-    history.initialize()
-    history.initialize()
-    restored = history.load_session(session, owner)
-    assert restored["entries"] == [*entries, approval]
-    assert restored["state"] == {
-        "schedule_yaml": "description: original",
-        "pending_proposal": {"schedule_yaml": "description: proposal", "diff": "Saved diff", "run_id": None},
-        "dropped_history_messages": 2,
-        "dropped_entries": 0,
-    }
-    assert history.find_message(session, "accepted-id") == (run_id, "Original question")
-    assert history.message_stopped(session, "stopped-id")
-    assert history.load_session(session, str(uuid4())) is None
-    events = history.load_events(session, 0)
-    assert [(row[3], row[4].get("text")) for row in events] == [("delta", "Saved answer"), ("optimization", None)]
-    assert events[0][4]["run_id"] == run_id
-    with history._connect() as connection:
-        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (10,)
-        assert connection.execute("SELECT auth_credential_id FROM chat_sessions").fetchone() == ("team-a",)
-        assert connection.execute("SELECT model FROM chat_runs").fetchone() == ("saved-model",)
-
-
 def test_postgres_recovery_enforces_owner_and_session_expiry(postgres_history):
     owner, other_owner = str(uuid4()), str(uuid4())
     expired, current = str(uuid4()), str(uuid4())
@@ -1467,7 +1450,9 @@ def test_postgres_recovery_keeps_operational_metadata(postgres_history):
     with basic.AuthenticatedTestClient(app) as client:
         session = basic.create_session(client)
         for question in ("First", "Second"):
-            response = client.post(f"/sessions/{session}/messages", json={"message": question, "message_id": question})
+            response = client.post(
+                f"/v1/sessions/{session}/messages", json={"message": question, "message_id": question}
+            )
             assert response.status_code == 200
         owner = client.cookies[basic.OWNER_COOKIE]
     with postgres_history._connect() as connection:
@@ -1529,7 +1514,9 @@ def test_postgres_background_run_keeps_metadata_and_event_ownership(postgres_his
     async def exercise():
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=Provider())
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             await app.state.session_optimizer._on_completion(session_id, "Review the optimizer result.", None)
             return session_id
 
@@ -1556,7 +1543,7 @@ def test_postgres_rejected_question_preserves_all_history_after_restart(postgres
     app = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        path = f"/sessions/{session_id}/messages"
+        path = f"/v1/sessions/{session_id}/messages"
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, "start_run", unavailable)
             refused = client.post(path, json={"message": "Question", "message_id": "question"})
@@ -1576,7 +1563,7 @@ def test_postgres_rejected_question_preserves_all_history_after_restart(postgres
         assert session.transcript == expected
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted, cookies={basic.OWNER_COOKIE: owner}) as client:
-        assert client.get(f"/sessions/{session_id}").status_code == 200
+        assert client.get(f"/v1/sessions/{session_id}").status_code == 200
         assert restarted.state.session_store._sessions[session_id].transcript == expected
 
 
@@ -1590,8 +1577,10 @@ def test_postgres_recovers_complete_message_and_history_after_backend_restart(po
             settings=settings, provider=basic.FakeProvider([["FIRST", *(["x"] * 1200), "LAST"]])
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            run_id = (await client.post(f"/sessions/{session_id}/messages", json=request)).json()["run_id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            run_id = (await client.post(f"/v1/sessions/{session_id}/messages", json=request)).json()["run_id"]
             owner = client.cookies[basic.OWNER_COOKIE]
             frames = await read_events(app, session_id, owner)
             return session_id, owner, run_id, frames[-1][0]
@@ -1602,10 +1591,10 @@ def test_postgres_recovers_complete_message_and_history_after_backend_restart(po
     async def restarted_process():
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
-            assert (await client.get(f"/sessions/{session_id}")).status_code == 404
+            assert (await client.get(f"/v1/sessions/{session_id}")).status_code == 404
             client.cookies.set(basic.OWNER_COOKIE, owner)
-            assert (await client.get(f"/sessions/{session_id}")).status_code == 200
-            repeated = await client.post(f"/sessions/{session_id}/messages", json=request)
+            assert (await client.get(f"/v1/sessions/{session_id}")).status_code == 200
+            repeated = await client.post(f"/v1/sessions/{session_id}/messages", json=request)
             assert repeated.json() == {"run_id": run_id}
             # The browser cursor is from the previous process, so the reset replaces the run.
             frames = await read_events(app, session_id, owner, cursor, until="session_reset")
@@ -1643,7 +1632,8 @@ def test_postgres_recovers_question_and_partial_output_from_interrupted_run(post
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with serving(app, owner) as client:
             response = await client.post(
-                f"/sessions/{session}/messages", json={"message": "Keep working", "message_id": "interrupted-question"}
+                f"/v1/sessions/{session}/messages",
+                json={"message": "Keep working", "message_id": "interrupted-question"},
             )
             assert response.json() == {"run_id": run}
             frames = await read_events(app, session, owner, 1, until="session_reset")
@@ -1749,7 +1739,7 @@ def test_postgres_recovers_background_metadata_after_restart(postgres_history):
             provider=provider,
         )
         async with serving(app, owner) as client:
-            assert (await client.get(f"/sessions/{session}")).status_code == 200
+            assert (await client.get(f"/v1/sessions/{session}")).status_code == 200
 
     asyncio.run(exercise())
     assert provider.calls == []
@@ -1773,8 +1763,10 @@ def test_postgres_reset_loads_complete_output_after_projection_eviction(postgres
         # A tiny replay budget evicts output from both the journal and the projection.
         app.state.session_event_stream._max_bytes = 200
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Long answer"})
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Long answer"})
             while app.state.runs.busy(session_id):
                 await asyncio.sleep(0.01)
             owner = client.cookies[basic.OWNER_COOKIE]
@@ -1794,14 +1786,18 @@ def test_postgres_evicted_session_restores_on_its_next_request(postgres_history)
             provider=basic.FakeProvider([["Saved answer"]]),
         )
         async with serving(app) as client:
-            first = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{first}/messages", json={"message": "Question"})
+            first = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
+            await client.post(f"/v1/sessions/{first}/messages", json={"message": "Question"})
             while app.state.runs.busy(first):
                 await asyncio.sleep(0.01)
             await app.state.recovery.flush(first)
-            second = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            second = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             assert list(app.state.session_store._sessions) == [second]
-            assert (await client.get(f"/sessions/{first}")).status_code == 200
+            assert (await client.get(f"/v1/sessions/{first}")).status_code == 200
             assert list(app.state.session_store._sessions) == [first]
             return app.state.session_store._sessions[first].transcript
 
@@ -1816,7 +1812,7 @@ def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history)
     app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(app) as client:
         session_id = client.post(
-            "/sessions", json={"schedule_yaml": basic.schedule_yaml(), "frontend_timezone": "Asia/Taipei"}
+            "/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml(), "frontend_timezone": "Asia/Taipei"}
         ).json()["id"]
         owner = client.cookies[basic.OWNER_COOKIE]
 
@@ -1827,7 +1823,7 @@ def test_postgres_frontend_timezone_survives_a_service_restart(postgres_history)
     restarted = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(restarted) as client:
         client.cookies.set(basic.OWNER_COOKIE, owner)
-        response = client.post(f"/sessions/{session_id}/messages", json={"message": "Today?"})
+        response = client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Today?"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert restarted.state.sandbox_factory.created[0].envs == {"TZ": "Asia/Taipei"}
         assert not any("[Current status]" in str(message.get("content")) for message in provider.calls[0])
@@ -1840,14 +1836,14 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
     app = basic.create_test_app(settings=settings, provider=provider)
     with basic.AuthenticatedTestClient(app) as client:
         session_id = basic.create_session(client)
-        client.post(f"/sessions/{session_id}/messages", json={"message": "Q1"})
+        client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Q1"})
         basic.upload_files(client, session_id, ("ward.xlsx", b"bytes", "application/octet-stream"))
         payload = basic.base_schedule_payload()
         payload["description"] = "Ward A"
-        path = f"/sessions/{session_id}/schedule"
-        assert client.put(path, json={"schedule_yaml": basic.schedule_yaml(payload)}).status_code == 204
+        path = f"/v1/sessions/{session_id}/schedule_spec"
+        assert client.put(path, json={"schedule_spec_yaml": basic.schedule_spec_yaml(payload)}).status_code == 204
         for question in ("Q2", "Q3", "Q4"):
-            client.post(f"/sessions/{session_id}/messages", json={"message": question})
+            client.post(f"/v1/sessions/{session_id}/messages", json={"message": question})
         owner = client.cookies[basic.OWNER_COOKIE]
         live = app.state.session_store._sessions[session_id]
         expected = (list(live.transcript), live.dropped_entries, live.dropped_history_messages)
@@ -1858,7 +1854,7 @@ def test_postgres_restored_conversation_matches_the_live_conversation(postgres_h
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
         async with serving(app, owner) as client:
-            assert (await client.get(f"/sessions/{session_id}")).status_code == 200
+            assert (await client.get(f"/v1/sessions/{session_id}")).status_code == 200
             restored = app.state.session_store._sessions[session_id]
             return list(restored.transcript), restored.dropped_entries, restored.dropped_history_messages
 
@@ -1874,8 +1870,10 @@ def test_postgres_saves_provider_retry_notices_and_the_failed_run(postgres_histo
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=provider, sandbox_factory=basic.rename_factory())
         async with serving(app) as client:
-            session = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session}/messages", json={"message": "Rename P1."})
+            session = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session}/messages", json={"message": "Rename P1."})
             while app.state.runs.busy(session):
                 await asyncio.sleep(0.01)
             await app.state.recovery.flush(session)
@@ -1915,8 +1913,10 @@ def test_postgres_saves_each_message_before_its_run_ends(postgres_history):
             sandbox_factory=basic.rename_factory(),
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Rename P1."})
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Rename P1."})
             deadline = time.monotonic() + 5
             while "tool_result" not in (saved := await asyncio.to_thread(saved_types)) and time.monotonic() < deadline:
                 await asyncio.sleep(0.05)
@@ -1933,14 +1933,15 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
     with basic.AuthenticatedTestClient(first) as client:
         session = basic.create_session(client)
         owner = client.cookies[basic.OWNER_COOKIE]
-        assert client.post(f"/sessions/{session}/stop", json={"message_id": "stopped-request"}).status_code == 202
+        assert client.post(f"/v1/sessions/{session}/stop", json={"message_id": "stopped-request"}).status_code == 202
     provider = basic.FakeProvider()
 
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app, owner) as client:
             result = await client.post(
-                f"/sessions/{session}/messages", json={"message": "Original question", "message_id": "stopped-request"}
+                f"/v1/sessions/{session}/messages",
+                json={"message": "Original question", "message_id": "stopped-request"},
             )
             assert result.status_code == 202
             frames = await read_events(app, session, owner, until="stopped")
@@ -1959,7 +1960,7 @@ def test_postgres_stop_before_message_arrival_survives_restart(postgres_history)
     restored = basic.create_test_app(settings=settings, provider=restored_provider)
     with basic.AuthenticatedTestClient(restored) as client:
         client.cookies.set(basic.OWNER_COOKIE, owner)
-        response = client.post(f"/sessions/{session}/messages", json={"message": "Retry"})
+        response = client.post(f"/v1/sessions/{session}/messages", json={"message": "Retry"})
         assert basic.parse_sse(response.text)[-1][0] == "done"
         assert restored_provider.calls[0][1:3] == [
             {"role": "user", "content": "Original question"},
@@ -1982,9 +1983,11 @@ def test_postgres_shutdown_reports_interrupted_run_as_restart(postgres_history, 
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=WaitingProvider())
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             if kind == "foreground":
-                await client.post(f"/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"})
+                await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"})
             else:
                 optimizer = app.state.session_optimizer
                 task = asyncio.create_task(optimizer._on_completion(session_id, "Review the optimizer result.", None))
@@ -2001,11 +2004,11 @@ def test_postgres_shutdown_reports_interrupted_run_as_restart(postgres_history, 
         async with serving(app, owner) as client:
             if kind == "foreground":
                 response = await client.post(
-                    f"/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"}
+                    f"/v1/sessions/{session_id}/messages", json={"message": "Q", "message_id": "m"}
                 )
                 assert response.status_code == 202
             else:
-                assert (await client.get(f"/sessions/{session_id}")).status_code == 200
+                assert (await client.get(f"/v1/sessions/{session_id}")).status_code == 200
             return await read_events(app, session_id, owner, until="session_reset")
 
     frames = asyncio.run(restarted())
@@ -2039,8 +2042,10 @@ def test_postgres_shutdown_after_the_final_answer_omits_it_after_restart(postgre
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
             await asyncio.wait_for(answered.wait(), timeout=5)
             return session_id, client.cookies[basic.OWNER_COOKIE]
 
@@ -2052,7 +2057,7 @@ def test_postgres_shutdown_after_the_final_answer_omits_it_after_restart(postgre
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app, owner) as client:
-            response = await client.post(f"/sessions/{session_id}/messages", json={"message": "Next"})
+            response = await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Next"})
             assert response.status_code == 202
             await read_events(app, session_id, owner)
 
@@ -2085,10 +2090,12 @@ def test_postgres_saves_the_interrupted_state_of_entries_that_were_already_saved
     async def exercise():
         app = basic.create_test_app(settings=settings, provider=basic.FakeProvider([["Provisional edit is saved"]]))
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Edit", "message_id": "m"})
             await asyncio.wait_for(compacted.wait(), timeout=5)
-            assert (await client.post(f"/sessions/{session_id}/stop")).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/stop")).status_code == 202
             await read_events(app, session_id, client.cookies[basic.OWNER_COOKIE], until="stopped")
 
     asyncio.run(exercise())
@@ -2107,9 +2114,11 @@ def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, 
         session_id = basic.create_session(client)
         with monkeypatch.context() as patch:
             patch.setattr(ChatHistory, "finish_run", unavailable)
-            response = client.post(f"/sessions/{session_id}/messages", json=request)
+            response = client.post(f"/v1/sessions/{session_id}/messages", json=request)
         assert basic.parse_sse(response.text)[-1][1]["history_saved"] is False
-        update = client.put(f"/sessions/{session_id}/schedule", json={"schedule_yaml": basic.schedule_yaml()})
+        update = client.put(
+            f"/v1/sessions/{session_id}/schedule_spec", json={"schedule_spec_yaml": basic.schedule_spec_yaml()}
+        )
         assert update.status_code == 204
         owner = client.cookies[basic.OWNER_COOKIE]
     with postgres_history._connect() as connection:
@@ -2119,7 +2128,7 @@ def test_postgres_retries_a_final_outcome_that_failed_to_save(postgres_history, 
     async def restarted():
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app, owner) as client:
-            assert (await client.post(f"/sessions/{session_id}/messages", json=request)).status_code == 202
+            assert (await client.post(f"/v1/sessions/{session_id}/messages", json=request)).status_code == 202
             return await read_events(app, session_id, owner, until="session_reset")
 
     frames = asyncio.run(restarted())
@@ -2135,11 +2144,13 @@ def test_postgres_shutdown_retries_a_failed_final_outcome(postgres_history, monk
             settings=basic.make_settings(history_postgres_url="test"), provider=basic.FakeProvider([["Saved answer"]])
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             with monkeypatch.context() as patch:
                 patch.setattr(ChatHistory, "finish_run", unavailable)
                 await client.post(
-                    f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+                    f"/v1/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
                 )
                 while app.state.runs.busy(session_id):
                     await asyncio.sleep(0.01)
@@ -2171,7 +2182,7 @@ def test_postgres_restart_recovers_a_saved_terminal_with_an_unfinished_status(po
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with serving(app, owner) as client:
             response = await client.post(
-                f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+                f"/v1/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
             )
             assert response.json() == {"run_id": run_id}
             assert provider.calls == []
@@ -2188,15 +2199,15 @@ def test_postgres_restart_recovers_a_saved_terminal_with_an_unfinished_status(po
 
 def test_postgres_restart_replays_a_committed_schedule_before_its_missing_terminal(postgres_history):
     session_id, owner, run_id = str(uuid4()), str(uuid4()), str(uuid4())
-    original = basic.schedule_yaml()
+    original = basic.schedule_spec_yaml()
     applied = original.replace("description: ''", "description: Changed")
     assert applied != original
     change = {
-        "type": "schedule_applied",
+        "type": "schedule_spec_applied",
         "run_id": run_id,
-        "schedule_yaml": applied,
+        "schedule_spec_yaml": applied,
         "diff": '- description: "" -> "Changed"',
-        "replaced_queued_schedule": False,
+        "replaced_queued_schedule_spec": False,
     }
     state = session_state(owner)
     postgres_history.save_session(session_id, state)
@@ -2211,9 +2222,9 @@ def test_postgres_restart_replays_a_committed_schedule_before_its_missing_termin
         None,
         True,
         session_id=session_id,
-        state=session_state(owner, schedule_yaml=applied),
+        state=session_state(owner, schedule_spec_yaml=applied),
         entries=[(1, run_id, AssistantMessage("Changed description"))],
-        schedule_change=change,
+        schedule_spec_change=change,
     )
 
     async def restarted():
@@ -2222,14 +2233,15 @@ def test_postgres_restart_replays_a_committed_schedule_before_its_missing_termin
         async with serving(app, owner) as client:
             assert (
                 await client.post(
-                    f"/sessions/{session_id}/messages", json={"message": "Change description", "message_id": "change"}
+                    f"/v1/sessions/{session_id}/messages",
+                    json={"message": "Change description", "message_id": "change"},
                 )
             ).json() == {"run_id": run_id}
             assert provider.calls == []
-            assert app.state.session_store.get(session_id).schedule_yaml == applied
+            assert app.state.session_store.get(session_id).schedule_spec_yaml == applied
             frames = await read_events(app, session_id, owner, until="session_reset")
             reset = next(data for _id, kind, data in frames if kind == "session_reset")
-            assert [event["type"] for event in reset["events"]] == ["schedule_applied", "done"]
+            assert [event["type"] for event in reset["events"]] == ["schedule_spec_applied", "done"]
             assert reset["events"][0]["data"] == {key: value for key, value in change.items() if key != "type"}
 
     asyncio.run(restarted())
@@ -2244,8 +2256,10 @@ def test_postgres_explicit_reset_recovers_output_at_the_current_cursor(postgres_
             provider=basic.FakeProvider([["Complete answer"]]),
         )
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
-            await client.post(f"/sessions/{session_id}/messages", json={"message": "Question"})
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
+            await client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Question"})
             while app.state.runs.busy(session_id):
                 await asyncio.sleep(0.01)
             cursor = app.state.session_event_stream.cursor(session_id)
@@ -2285,10 +2299,12 @@ def test_reset_covers_output_when_the_run_finishes_during_its_storage_read(postg
         )
         app.state.session_event_stream._max_bytes = 1
         async with serving(app) as client:
-            session_id = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            session_id = (
+                await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})
+            ).json()["id"]
             run_id = (
                 await client.post(
-                    f"/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
+                    f"/v1/sessions/{session_id}/messages", json={"message": "Question", "message_id": "accepted"}
                 )
             ).json()["run_id"]
             await asyncio.wait_for(started.wait(), 5)
@@ -2402,15 +2418,15 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
     with basic.AuthenticatedTestClient(app) as client:
         assert client.get("/capabilities").json()["saved_chat_export"]
         session_id = client.post(
-            "/sessions",
+            "/v1/sessions",
             json={
-                "schedule_yaml": basic.schedule_yaml(),
+                "schedule_spec_yaml": basic.schedule_spec_yaml(),
                 "frontend_version": "v0.4.3",
                 "ai_endpoint": "https://ai.example.test/ai",
             },
         ).json()["id"]
-        assert client.post(f"/sessions/{session_id}/messages", json={"message": "Hello"}).status_code == 200
-        exported = client.get(f"/sessions/{session_id}/export")
+        assert client.post(f"/v1/sessions/{session_id}/messages", json={"message": "Hello"}).status_code == 200
+        exported = client.get(f"/v1/sessions/{session_id}/export")
         assert exported.status_code == 200
         snapshot = json.loads(ZipFile(io.BytesIO(exported.content)).read("chat.json"))
         assert snapshot["frontend_version"] == "v0.4.3"
@@ -2419,9 +2435,9 @@ def test_postgres_saved_export_is_owned_and_survives_restart(postgres_history):
         cookies = dict(client.cookies)
     restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
     with basic.AuthenticatedTestClient(restarted) as client:
-        assert client.get(f"/sessions/{session_id}/export").status_code == 404
+        assert client.get(f"/v1/sessions/{session_id}/export").status_code == 404
         client.cookies.update(cookies)
-        restored = client.get(f"/sessions/{session_id}/export")
+        restored = client.get(f"/v1/sessions/{session_id}/export")
         assert restored.content == exported.content
 
 
@@ -2435,7 +2451,7 @@ def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_histo
                 break
             connection.execute(migration.read_text(encoding="utf-8"))
             if migration.name.startswith("004_"):
-                history_module._migrate_legacy_transcripts(connection)
+                connection.execute("ALTER TABLE chat_runs DROP COLUMN question")
             connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (migration.name,))
     run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
     state = session_state(owner)
@@ -2451,7 +2467,9 @@ def test_postgres_upgrade_converts_old_trim_offsets(uninitialized_postgres_histo
     history.append_entries(session, [(seq, run, entry) for seq, entry in enumerate(entries, 1)])
     owner_token, expires, payload = state
     payload["dropped_entries"] = 3
-    history.finish_run(run, "completed", None, None, True, session_id=session, state=(owner_token, expires, payload))
+    history.save_session(session, (owner_token, expires, payload))
+    with history._connect() as connection:
+        connection.execute("UPDATE chat_runs SET status = 'completed', committed = true WHERE id = %s", (run,))
     history.initialize()
     loaded = history.load_session(session, owner)
     assert loaded["state"]["dropped_entries"] == 4
@@ -2527,12 +2545,12 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
         "reasoning_details": [{"type": "reasoning.encrypted", "data": "cipher", "id": "reasoning-1"}],
         "thinking_blocks": [{"type": "thinking", "thinking": "Read the schedule", "signature": "signed"}],
     }
-    tool = ToolCall("read-1", "read", '{"path":"/workspace/schedule.yaml"}')
+    tool = ToolCall("read-1", "read", '{"path":"/workspace/schedule-spec.yaml"}')
     entries = [
         AssistantMessage("Earlier answer"),
         AssistantMessage("", "tool_use", "Read the schedule", (tool,), native, identity),
         ToolResultMessage(tool.id, tool.name, "P1 never works nights.", True),
-        AssistantMessage("The current schedule was inspected."),
+        AssistantMessage("The current Schedule Spec was inspected."),
         CompactionEntry("Goal: preserve P1's night restriction. The schedule was inspected.", 3, 9000),
     ]
     state = session_state(owner)
@@ -2555,7 +2573,7 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
     events = [
         ("run_start", {"run_id": run, "trigger": "user"}),
         ("provider_call", {**call, "call_id": "answer", "cost_usd": "0.1"}),
-        ("delta", {"run_id": run, "text": "The current schedule was inspected."}),
+        ("delta", {"run_id": run, "text": "The current Schedule Spec was inspected."}),
         ("compaction_start", common),
         ("provider_call", {**call, "call_id": "summary", "status": "pending", "cost_usd": None}),
         ("provider_call", {**call, "call_id": "summary", "cost_usd": "0.02"}),
@@ -2587,7 +2605,7 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
         )
         app = basic.create_test_app(settings=basic.make_settings(history_postgres_url="test"), provider=provider)
         async with asyncio.timeout(10), serving(app, owner) as client:
-            assert (await client.get(f"/sessions/{session}")).status_code == 200
+            assert (await client.get(f"/v1/sessions/{session}")).status_code == 200
             frames = await read_events(app, session, owner, 3, until="session_reset", reset=True)
             reset = next(data for _, kind, data in frames if kind == "session_reset")
             replay = [(event["type"], event["data"]) for event in reset["events"]]
@@ -2596,12 +2614,12 @@ def test_postgres_compacted_chat_replays_native_tools_events_and_costs_after_res
             assert next(data for kind, data in replay if kind == "context_usage")["used_tokens"] == 1000
             assert reset["cost_summary"]["usd"] == "0.12"
             repeated = await client.post(
-                f"/sessions/{session}/messages", json={"message": "Inspect the schedule", "message_id": "inspect"}
+                f"/v1/sessions/{session}/messages", json={"message": "Inspect the schedule", "message_id": "inspect"}
             )
             assert repeated.json() == {"run_id": run} and provider.calls == []
             assert (
                 await client.post(
-                    f"/sessions/{session}/messages", json={"message": "Continue", "message_id": "follow-up"}
+                    f"/v1/sessions/{session}/messages", json={"message": "Continue", "message_id": "follow-up"}
                 )
             ).status_code == 202
             await read_events(app, session, owner, frames[-1][0])
@@ -2658,11 +2676,13 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
         settings = basic.make_settings(history_postgres_url="test", compaction_keep_recent_tokens=1000)
         app = basic.create_test_app(settings=settings, provider=provider)
         async with serving(app) as client:
-            sid = (await client.post("/sessions", json={"schedule_yaml": basic.schedule_yaml()})).json()["id"]
+            sid = (await client.post("/v1/sessions", json={"schedule_spec_yaml": basic.schedule_spec_yaml()})).json()[
+                "id"
+            ]
             session = app.state.session_store._sessions[sid]
             session._add_entry(UserMessage("Remember nights " + "x" * 12000))
             session._add_entry(AssistantMessage("Earlier answer " + "y" * 70000))
-            response = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            response = await client.post(f"/v1/sessions/{sid}/compact", json={"message_id": "manual"})
             assert response.status_code == 202
             run = app.state.runs._runs[sid][0]
             await run.wait()
@@ -2672,7 +2692,7 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
         restarted = basic.create_test_app(settings=settings, provider=provider)
         async with serving(restarted) as client:
             client.cookies.update(cookies)
-            duplicate = await client.post(f"/sessions/{sid}/compact", json={"message_id": "manual"})
+            duplicate = await client.post(f"/v1/sessions/{sid}/compact", json={"message_id": "manual"})
             assert duplicate.json() == response.json()
             session = restarted.state.session_store._sessions[sid]
             assert session.transcript[-1] == summary
@@ -2687,3 +2707,15 @@ def test_manual_compaction_summary_and_request_id_survive_restart(postgres_histo
                 ).fetchone() == ("compaction", "completed", True)
 
     asyncio.run(exercise())
+
+
+def test_postgres_unsupported_ai_state_is_unavailable(postgres_history):
+    from nurse_scheduling.ai.chat_archive import ChatSessionNotFoundError, write_chat_archive
+
+    session, owner = str(uuid4()), str(uuid4())
+    postgres_history.save_session(session, (owner, time.time() + 3600, {"schedule_yaml": "description: old"}))
+    assert postgres_history.load_session(session, owner) is None
+    with postgres_history._connect() as connection:
+        assert postgres_history.export_snapshot(connection, session) is None
+    with pytest.raises(ChatSessionNotFoundError):
+        write_chat_archive(postgres_history, session, io.BytesIO(), owner=owner)

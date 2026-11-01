@@ -25,7 +25,7 @@
 - Keep screenshots focused on a decision or result. Add concise alt text and
   describe any warning that appears in the image. Add screenshots where a
   beginner would otherwise struggle to follow a step.
-- Keep Quick Start on a minimal working schedule. On each app-page guide, put
+- Keep Quick Start on a minimal working Schedule Spec. On each app-page guide, put
   an anonymized real-scenario example and matching screenshot after the
   introduction.
 - Use `core/tests/testcases/real/large-ward-with-87-people-2025-11.yaml` as the
@@ -60,7 +60,7 @@
   clear independent purpose.
 - Keep `docs/PRIVACY.md` as a symlink to the root `PRIVACY.md`.
 - Describe AI runs as server-owned operations that continue without a connected
-  browser. Reconnect, schedule replacement, notices, and Undo do not control a
+  browser. Reconnect, Schedule Spec replacement, notices, and Undo do not control a
   run. Send supplies browser state for a user-requested turn, and Stop requests
   cancellation. Optimizer completion is a server-owned trigger. Approval or
   rejection in the browser must not gate server execution.
@@ -81,14 +81,13 @@
   phrase such as "shift families." Distinguish a nurse's monthly primary shift
   from actual daily assignments. Define new concepts, such as near-hard
   constraints, before using them in explanations.
-- Use "schedule" as the umbrella term for the roster in any state, "schedule
-  data" for the browser-kept YAML input, "completed schedule" for the roster
-  with daily assignments completed by the optimizer or by hand, and "optimized
-  schedule" for the optimizer output. Name the zero-content state after
-  **Create empty schedule** "empty schedule data," and the ward-supplied documents and
-  records interpreted into schedule data "source materials." Avoid "schedule
-  config" and "schedule result": solver options and a job's outcome and
-  score already use those words.
+- Use **Schedule Spec** for input defining people, dates, shift types, constraints,
+  preferences, and export settings. Use **Schedule** for actual shift assignments.
+  A fixed assignment in a Schedule Spec remains an input constraint. Name formats
+  "Schedule Spec YAML" and "schedule as XLSX". Use "schedule" for assignments
+  without redundant output qualifiers. Use "workbook" for spreadsheet operations.
+  Call the zero-content input "empty Schedule Spec" and uninterpreted ward
+  documents "source materials".
 - Keep introductory terminology short, with one bullet per concept in GUI tab
   order explaining its meaning and purpose. Put ward conventions in a separate
   section and detailed examples beside the steps that use them.
@@ -126,7 +125,7 @@
   them, and prefer descriptive bullets over tables for groups and rationale.
   Use tables where readers need to compare structured values.
 - Explain the input, output, and tutorial scope early. Distinguish source
-  workbooks, extracted inputs, schedule data, optimized assignments,
+  workbooks, extracted inputs, Schedule Spec, optimized assignments,
   and any conversion back to the ward's layout that the tutorial skips.
 - Keep paragraphs short and focused. Put case-specific run times or results
   in their own paragraph when they interrupt a general explanation. Use the
@@ -135,7 +134,7 @@
   prose or clear abbreviations accepted by the app, such as `11b`, `11m`, and
   `-100m`. Avoid fractional abbreviations such as `-.1b`, which can be mistaken
   for `-1b`. Preserve literal syntax in code and downloadable files.
-- State outcomes explicitly, for example, "Schedule uploaded," followed by
+- State outcomes explicitly, for example, "Schedule Spec uploaded," followed by
   only the necessary summary. Readers should immediately know whether an
   action succeeded and what still needs attention.
 
@@ -182,7 +181,7 @@
 
 ## Validation
 
-- For walkthroughs that claim a GUI can reproduce a bundled schedule, start
+- For walkthroughs that claim a GUI can reproduce a bundled Schedule Spec, start
   the frontend with `cd web-frontend && bun run dev`, follow the steps in a
   Playwright browser, and download the resulting YAML from Save and Load.
   Compare its scheduling values with the committed fixture using

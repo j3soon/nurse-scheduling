@@ -965,7 +965,7 @@ def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
                 ]
             )
         ),
-        compiled_schedule=SimpleNamespace(
+        compiled_schedule_spec=SimpleNamespace(
             export=SimpleNamespace(
                 formatting=[SimpleNamespace(people=(0,), dates=(), shift_types=())],
             )
@@ -1010,7 +1010,7 @@ def test_dataframe_generation_supports_multiple_assigned_shift_types():
     )
     ctx = SimpleNamespace(
         scenario=scenario,
-        compiled_schedule=SimpleNamespace(dates=(date,)),
+        compiled_schedule_spec=SimpleNamespace(dates=(date,)),
         n_days=1,
         n_shift_types=2,
         n_people=1,

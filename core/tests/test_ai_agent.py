@@ -413,7 +413,7 @@ def test_parallel_tool_failure_cancels_siblings_without_wrapping_the_error():
 
 def test_mixed_tool_batch_remains_sequential():
     calls = (
-        ToolCall("call_0", READ_TOOL, '{"path":"schedule.yaml"}'),
+        ToolCall("call_0", READ_TOOL, '{"path":"schedule-spec.yaml"}'),
         ToolCall("call_1", BASH_TOOL, '{"command":"rg people"}'),
     )
     provider = FakeProvider([ToolCallRequest(calls)], _text("Done."))

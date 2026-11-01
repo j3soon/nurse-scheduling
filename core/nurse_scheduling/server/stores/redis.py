@@ -52,7 +52,7 @@ from ..jobs.models import (
 )
 from ..retry import retry_with_backoff
 from ..suspicion import address_digest
-from ..usage_metrics import RedisUsageMetrics, schedule_basics_for
+from ..usage_metrics import RedisUsageMetrics, schedule_spec_basics_for
 
 REDIS_OPERATION_TIMEOUT_SECONDS = 2.0
 """Short timeout for ordinary Redis operations and deployment probes."""
@@ -246,7 +246,7 @@ class RedisJobStore:
         """
         # Parsed once outside the loop, because a watched transaction may retry and the
         # submitted YAML can be megabytes.
-        schedule_basics = schedule_basics_for(input_bytes) if self._usage_metrics is not None else {}
+        schedule_basics = schedule_spec_basics_for(input_bytes) if self._usage_metrics is not None else {}
         while True:
             try:
                 with self._redis.pipeline() as transaction:

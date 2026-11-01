@@ -34,9 +34,9 @@ from nurse_scheduling.errors import InputValidationError
 from nurse_scheduling.loader import (
     MAX_EXPANDED_NODES,
     MAX_NESTING_DEPTH,
-    SchedulingDataTooComplexError,
+    ScheduleSpecTooComplexError,
     _load_yaml,
-    load_data,
+    load_schedule_spec,
     measure_yaml_expansion,
 )
 
@@ -91,15 +91,15 @@ preferences:
 """
 
 
-def test_load_data_accepts_utf8_bom_api_version_key():
-    data = load_data(VALID_YAML_BODY.format(api_version_key="apiVersion").encode("utf-8-sig"))
+def test_load_schedule_spec_accepts_utf8_bom_api_version_key():
+    data = load_schedule_spec(VALID_YAML_BODY.format(api_version_key="apiVersion").encode("utf-8-sig"))
 
     assert data.apiVersion == "alpha"
 
 
-def test_load_data_rejects_sentry_mojibake_api_version_key():
+def test_load_schedule_spec_rejects_sentry_mojibake_api_version_key():
     with pytest.raises(ValidationError, match="apiVersion"):
-        load_data(SENTRY_MOJIBAKE_YAML.encode("utf-8"))
+        load_schedule_spec(SENTRY_MOJIBAKE_YAML.encode("utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -110,11 +110,11 @@ def test_load_data_rejects_sentry_mojibake_api_version_key():
         "锘縜piVersion",
     ],
 )
-def test_load_data_rejects_bom_corrupted_api_version_keys(api_version_key):
+def test_load_schedule_spec_rejects_bom_corrupted_api_version_keys(api_version_key):
     content = VALID_YAML_BODY.format(api_version_key=api_version_key).encode("utf-8")
 
     with pytest.raises(ValidationError, match="apiVersion"):
-        load_data(content)
+        load_schedule_spec(content)
 
 
 @pytest.mark.parametrize(
@@ -148,10 +148,10 @@ def test_alias_expansion_is_refused_before_anything_walks_it():
     bomb = _alias_bomb()
 
     assert len(bomb) < 1024
-    with pytest.raises(SchedulingDataTooComplexError):
+    with pytest.raises(ScheduleSpecTooComplexError):
         measure_yaml_expansion(bomb)
-    with pytest.raises(SchedulingDataTooComplexError):
-        load_data(bomb)
+    with pytest.raises(ScheduleSpecTooComplexError):
+        load_schedule_spec(bomb)
 
 
 def test_modest_alias_use_is_still_accepted():
@@ -177,7 +177,7 @@ def test_a_real_scenario_stays_far_below_the_limit():
 
 
 def test_the_limit_is_reported_with_the_number_it_exceeded():
-    with pytest.raises(SchedulingDataTooComplexError, match="200000"):
+    with pytest.raises(ScheduleSpecTooComplexError, match="200000"):
         measure_yaml_expansion(_alias_bomb())
 
 
@@ -186,7 +186,7 @@ def test_deep_nesting_is_refused_before_it_is_read():
     depth = 100_000
     payload = b"apiVersion: alpha\nx: " + b"[" * depth + b"]" * depth + b"\n"
 
-    with pytest.raises(SchedulingDataTooComplexError, match=str(MAX_NESTING_DEPTH)):
+    with pytest.raises(ScheduleSpecTooComplexError, match=str(MAX_NESTING_DEPTH)):
         measure_yaml_expansion(payload)
 
 
@@ -195,7 +195,7 @@ def test_an_unsupported_version_directive_reads_as_a_yaml_error():
     with pytest.raises(YAMLError):
         measure_yaml_expansion(b"%YAML 1.3\n---\na: 1\n")
     with pytest.raises(YAMLError):
-        load_data(b"%YAML 1.3\n---\na: 1\n")
+        load_schedule_spec(b"%YAML 1.3\n---\na: 1\n")
 
 
 @pytest.mark.parametrize(
@@ -212,7 +212,7 @@ def test_brackets_in_description_are_not_nesting(description):
     payload = base.replace(b"dates:\n", b"description: " + description + b"\ndates:\n", 1)
 
     assert measure_yaml_expansion(payload).nodes < MAX_NESTING_DEPTH
-    assert load_data(payload).description.strip().endswith("[" * 300)
+    assert load_schedule_spec(payload).description.strip().endswith("[" * 300)
 
 
 def test_brackets_in_a_comment_are_not_nesting():
@@ -220,7 +220,7 @@ def test_brackets_in_a_comment_are_not_nesting():
     payload = base.replace(b"dates:\n", b"# " + b"[" * 300 + b"\ndates:\n", 1)
 
     assert measure_yaml_expansion(payload).nodes < MAX_NESTING_DEPTH
-    assert load_data(payload).apiVersion == "alpha"
+    assert load_schedule_spec(payload).apiVersion == "alpha"
 
 
 @pytest.mark.parametrize("content", [b"null\n", b"- one\n- two\n"])

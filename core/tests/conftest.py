@@ -27,6 +27,10 @@ import pytest
 
 from nurse_scheduling.server.solver_options import SOLVER_RUNTIME_MODULES, solver_is_available
 
+from .collection import LEGACY_AI_TEST_PATTERNS
+
+collect_ignore_glob = LEGACY_AI_TEST_PATTERNS
+
 
 @pytest.fixture
 def legacy_text_encoding(monkeypatch: pytest.MonkeyPatch):

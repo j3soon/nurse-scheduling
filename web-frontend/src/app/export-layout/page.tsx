@@ -23,7 +23,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import {
   ExportExtraColumn,
   ExportExtraRow,
@@ -183,7 +183,7 @@ export default function ExportFormattingPage() {
     peopleData,
     dateData,
     shiftTypeData
-  } = useSchedulingData();
+  } = useScheduleSpec();
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [editingTarget, setEditingTarget] = useState<EditingTarget | null>(null);
   const [errors, setErrors] = useState<ExportLayoutErrors>({});

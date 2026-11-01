@@ -40,7 +40,7 @@ test('downloading immediately after upload yields the uploaded state', async ({ 
     buffer: Buffer.from(uploadedYaml, 'utf8'),
   });
   const summary = page.getByRole('status', { name: 'YAML import summary' });
-  await expect(summary).toContainText('Schedule uploaded: uploaded.yaml');
+  await expect(summary).toContainText('Schedule Spec uploaded: uploaded.yaml');
   await expect(summary).toContainText('1 preference');
   await expect(page.locator('pre')).toContainText('imported review example');
 

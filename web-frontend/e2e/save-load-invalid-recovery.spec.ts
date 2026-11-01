@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('save-load editor recovers from invalid YAML and then saves successfully', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('save-load editor recovers from invalid YAML and then saves successfully', 
    * 4. Confirm the updated state is applied on a downstream page.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'invalid recovery seed',
     dates: {

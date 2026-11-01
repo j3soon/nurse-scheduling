@@ -32,14 +32,14 @@ from nurse_scheduling.ai.schema import (
     SCHEMA_REFERENCE_FILES,
     TAIWAN_HOLIDAYS_SOURCE,
     USER_GUIDE_DIRECTORY,
-    load_schedule_reference,
+    load_schedule_spec_reference,
     load_taiwan_holidays_reference,
     load_user_guide_references,
 )
-from nurse_scheduling.ai.validation import validate_frontend_schedule_yaml
+from nurse_scheduling.ai.validation import validate_frontend_schedule_spec_yaml
 from nurse_scheduling.loader import _load_yaml
 
-from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_yaml
+from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_spec_yaml
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,9 @@ def _parse_topics(reference: str) -> dict[str, ReferenceTopic]:
 
 
 SCHEMA_REFERENCES = {
-    group: reference for group in SCHEMA_REFERENCE_FILES if (reference := load_schedule_reference(group)) is not None
+    group: reference
+    for group in SCHEMA_REFERENCE_FILES
+    if (reference := load_schedule_spec_reference(group)) is not None
 }
 assert SCHEMA_REFERENCES.keys() == SCHEMA_REFERENCE_FILES.keys()
 SCHEMA_TOPICS = {
@@ -86,7 +88,7 @@ SCHEMA_PATHS = tuple(SCHEMA_TOPICS)
 SCHEMA_REFERENCE_GROUPS = {group: tuple(_parse_topics(reference)) for group, reference in SCHEMA_REFERENCES.items()}
 EXAMPLE_PATHS = tuple(path for path, topic in SCHEMA_TOPICS.items() if topic.example is not None)
 MODEL_TOPIC_COVERAGE = {
-    models.NurseSchedulingData: ("schedule",),
+    models.ScheduleSpec: ("schedule_spec",),
     models.DateContainer: ("dates",),
     models.DateRange: ("dates.range",),
     models.DateGroup: ("dates.groups",),
@@ -115,7 +117,7 @@ MODEL_TOPIC_COVERAGE = {
     models.ExportExtraRow: ("export.extraRows",),
 }
 BACKEND_FIELD_REQUIREMENTS = {
-    "schedule": {
+    "schedule_spec": {
         "required": ("apiVersion", "dates", "people", "shiftTypes", "preferences"),
         "optional": ("appVersion", "description", "export"),
     },
@@ -235,7 +237,7 @@ def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():
     assert sorted(grouped_paths) == sorted(SCHEMA_PATHS)
     assert len(grouped_paths) == len(set(grouped_paths))
     for group, paths in SCHEMA_REFERENCE_GROUPS.items():
-        reference = load_schedule_reference(group)
+        reference = load_schedule_spec_reference(group)
         assert reference is not None
         assert len(reference.encode("utf-8")) <= DEFAULT_MAX_BYTES
         assert len(reference.splitlines()) <= DEFAULT_MAX_LINES
@@ -244,7 +246,7 @@ def test_task_sized_references_cover_every_topic_once_and_fit_one_bash_result():
 
 
 def test_export_reference_includes_common_fields_and_nested_condition_shape():
-    reference = load_schedule_reference("export")
+    reference = load_schedule_spec_reference("export")
 
     assert reference is not None
     for field in ("backgroundColor", "bottomBorderColor", "rightBorderColor", "fontColor"):
@@ -320,7 +322,7 @@ def test_frontend_singleton_and_scalar_restrictions_are_documented():
 
 def test_schema_separates_the_two_counting_preferences():
     """Staffing per shift and shifts per person read alike until the schema says otherwise."""
-    reference = load_schedule_reference("preferences")
+    reference = load_schedule_spec_reference("preferences")
 
     assert reference is not None
     assert "counts how many people a shift type needs on a date" in reference
@@ -338,7 +340,7 @@ def test_schema_separates_the_two_counting_preferences():
 
 
 def test_schema_documents_soft_affinity_default():
-    reference = load_schedule_reference("preferences")
+    reference = load_schedule_spec_reference("preferences")
 
     assert reference is not None
     assert "omit `weight` to use the soft default 1" in reference
@@ -348,7 +350,7 @@ def test_schema_documents_soft_affinity_default():
 
 
 def test_schema_documents_soft_shift_request_default():
-    reference = load_schedule_reference("preferences")
+    reference = load_schedule_spec_reference("preferences")
 
     assert reference is not None
     assert "map directly to `person`, `date`, and `shiftType`" in reference
@@ -359,9 +361,9 @@ def test_schema_documents_soft_shift_request_default():
 
 
 def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
-    core = load_schedule_reference("core")
-    preferences = load_schedule_reference("preferences")
-    export = load_schedule_reference("export")
+    core = load_schedule_spec_reference("core")
+    preferences = load_schedule_spec_reference("preferences")
+    export = load_schedule_spec_reference("export")
 
     assert core is not None
     assert preferences is not None
@@ -381,7 +383,7 @@ def test_schema_guidance_preserves_selectors_and_defines_coefficient_pairs():
 
 
 def test_range_shrink_guidance_covers_date_scopes_in_one_search():
-    reference = load_schedule_reference("core")
+    reference = load_schedule_spec_reference("core")
 
     assert reference is not None
     for field in (
@@ -413,6 +415,6 @@ def test_every_returned_yaml_example_is_frontend_compatible(path: str):
         section = next(iter(fragment))
         payload[section].update(fragment[section])
 
-    result = validate_frontend_schedule_yaml(schedule_yaml(payload), SCHEDULE_BYTE_LIMIT)
+    result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert result.valid, result.render()
