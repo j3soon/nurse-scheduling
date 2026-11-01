@@ -201,23 +201,31 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   freshness guard." Keep detailed mechanisms and evaluation bookkeeping in
   supporting docs. Before finishing, read the text without the conversation
   and check that the problem, action, and result are clear.
-- Name the schedule's role or format directly, such as "current schedule,"
-  "original schedule," "validated schedule," or "backend schedule format."
+- Name the schedule's role or format directly, such as "current Schedule Spec,"
+  "original schedule," "validated Schedule Spec," or "backend schedule format."
   Name the specific property of other values too, such as "normalized
   selector" or "compiled selector." `scripts/check_terminology.sh` rejects
   vague jargon that hides it, and CI runs the check.
-- Use "schedule" as the umbrella term for the roster in any state. Name the
-  browser-kept YAML input "schedule data" (排班資訊) and the optimizer output
-  "optimized schedule" (排好的班). Name the state with daily assignments
-  completed, whether by the optimizer or by hand, "completed schedule". Name
-  the format at API and code boundaries,
-  such as "schedule YAML" or "XLSX artifact," because "result" already means a
-  job's outcome and score. Avoid "schedule config": `ExportConfig` and solver
-  options already own "config." Name the zero-content state of the input
-  "empty schedule data" and the ward's scattered, not-yet-interpreted
-  documents "source materials."
-- Use "schedule data" for YAML files and "schedule workbook" for XLSX files.
-  Describe XLSX-to-YAML imports as "build schedule data from an XLSX workbook."
+- Use **Schedule Spec** for input defining people, dates, shift types, constraints,
+  preferences, and export settings. Use the same term in GUI labels and technical
+  prose. Use `ScheduleSpec`, `schedule_spec`, and `scheduleSpec` in code.
+- Use **Schedule** for output containing actual shift assignments, whether made
+  by the optimizer or by hand. Fixed assignments in a Schedule Spec are input
+  constraints. Use "optimized schedule" when the optimizer produced it.
+- Name formats explicitly: "Schedule Spec YAML" and "schedule workbook".
+  Use "empty Schedule Spec" for empty input and "source materials" for documents
+  that have not yet been interpreted into a Schedule Spec.
+- Follow [Deployment and Compatibility](docs/content/developer-guide/compatibility.md).
+  Every push to `dev` replaces all services together. Keep tagged release
+  frontends compatible with newer optimizer backends. Automatically migrate
+  browser Schedule Specs, history used by Undo/Redo, and settings. Experimental
+  AI conversations, sessions, and chat history have no upgrade compatibility
+  guarantee. Current frontend code need not support older backends.
+- Isolate required tagged-frontend adapters and browser migrations in dedicated
+  `compat.py`, `compat.ts`, or `compat/` modules. Current callers and writers use
+  current names and formats. Keep legacy fixtures in their original format.
+  Test migration failure and preservation of user content. Avoid adapters for
+  unsupported Python imports, AI protocols, or developer-tool export formats.
 - When reporting validation, lead with what passed. Separate correctness checks
   from performance measurements, and limit each caveat to the claim it affects.
   If test input changed, say which checks were repeated and which measurements
