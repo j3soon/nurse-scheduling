@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 test('export layout references cascade through entity rename, delete, undo, and redo', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('export layout references cascade through entity rename, delete, undo, and 
    * 3. Confirm Save and Load YAML reflects the cascade, then undo and redo the delete.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'export layout cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -113,7 +113,7 @@ test('export layout extra rows and columns cascade through entity deletion', asy
    * 3. Confirm partially affected rules are narrowed and fully stale rules are removed.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'export extra layout cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -186,7 +186,7 @@ test('optimize payload stays free of stale IDs after delete cascade', async ({ p
    * 3. Run Optimize with a mocked backend and inspect the submitted YAML.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'optimize stale cascade seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

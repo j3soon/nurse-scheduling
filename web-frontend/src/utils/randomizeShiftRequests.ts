@@ -22,7 +22,7 @@
 // Developer utility for scattering concrete-date shift requests in exported scheduling snapshots.
 import { SHIFT_REQUEST } from '@/types/scheduling';
 import type { Group, Item, ShiftRequestPreference } from '@/types/scheduling';
-import type { SchedulingState } from '@/hooks/useSchedulingData';
+import type { ScheduleSpecState } from '@/hooks/useScheduleSpec';
 import { WEEKDAY, WEEKEND } from '@/utils/keywords';
 import { TAIWAN_FREEDAY_GROUP_ID, TAIWAN_WORKDAY_GROUP_ID } from '@/utils/taiwanHolidays';
 
@@ -165,11 +165,11 @@ function movePersonRequests(
 }
 
 export function randomizeConcreteDateShiftRequests(
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dateItems: Item[],
   dateGroups: Group[],
   random: Random = Math.random
-): SchedulingState {
+): ScheduleSpecState {
   // These sets distinguish concrete date and person items from group references.
   const dateItemIds = new Set(dateItems.map(item => item.id));
   const peopleItemIds = new Set(state.people.items.map(item => item.id));

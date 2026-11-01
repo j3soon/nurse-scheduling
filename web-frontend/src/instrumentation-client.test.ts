@@ -27,12 +27,12 @@ const sentryMocks = vi.hoisted(() => ({
   setTag: vi.fn(),
 }));
 
-const schedulingStateMocks = vi.hoisted(() => ({
+const scheduleSpecStateMocks = vi.hoisted(() => ({
   getLatestSchedulingYamlForSentry: vi.fn(),
 }));
 
 vi.mock('@sentry/nextjs', () => sentryMocks);
-vi.mock('@/utils/sentrySchedulingState', () => schedulingStateMocks);
+vi.mock('@/utils/sentryScheduleSpecState', () => scheduleSpecStateMocks);
 
 describe('instrumentation-client', () => {
   beforeEach(() => {
@@ -75,8 +75,8 @@ describe('instrumentation-client', () => {
     );
   });
 
-  it('attaches the latest scheduling YAML before sending browser events', async () => {
-    schedulingStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
+  it('attaches the latest Schedule Spec YAML before sending browser events', async () => {
+    scheduleSpecStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
 
     await import('./instrumentation-client');
 
@@ -107,8 +107,8 @@ describe('instrumentation-client', () => {
     });
   });
 
-  it('does not attach scheduling YAML to one-click optimization ratings', async () => {
-    schedulingStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
+  it('does not attach Schedule Spec YAML to one-click optimization ratings', async () => {
+    scheduleSpecStateMocks.getLatestSchedulingYamlForSentry.mockReturnValue('apiVersion: test\n');
 
     await import('./instrumentation-client');
 
@@ -124,7 +124,7 @@ describe('instrumentation-client', () => {
     const hint = {};
 
     expect(sentryOptions.beforeSend(event, hint)).toBe(event);
-    expect(schedulingStateMocks.getLatestSchedulingYamlForSentry).not.toHaveBeenCalled();
+    expect(scheduleSpecStateMocks.getLatestSchedulingYamlForSentry).not.toHaveBeenCalled();
     expect(hint).toEqual({});
   });
 });

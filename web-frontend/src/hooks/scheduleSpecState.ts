@@ -20,7 +20,7 @@
 import { Item, Group, DateRange, Preference, AT_MOST_ONE_SHIFT_PER_DAY, ExportConfig } from '@/types/scheduling';
 import { API_VERSION } from '@/utils/keywords';
 
-export interface SchedulingState {
+export interface ScheduleSpecState {
   apiVersion: string | number;
   description: string;
   dates: { range: DateRange, items: Item[]; groups: Group[] };
@@ -30,7 +30,7 @@ export interface SchedulingState {
   export?: ExportConfig;
 }
 
-export function createDefaultState(): SchedulingState {
+export function createDefaultState(): ScheduleSpecState {
   return {
     apiVersion: API_VERSION,
     description: '',

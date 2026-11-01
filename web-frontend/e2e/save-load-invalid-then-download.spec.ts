@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('invalid YAML upload does not corrupt state and download still reflects the original state', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('invalid YAML upload does not corrupt state and download still reflects the
    * 4. Confirm the downloaded content still reflects the original state.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'invalid then download seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

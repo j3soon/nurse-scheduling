@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shift preference editor persists mixed manual and infinity values through reopen', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('shift preference editor persists mixed manual and infinity values through 
    * 4. Reopen the matrix and confirm the persisted values are restored.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift request modal seed',
     dates: {

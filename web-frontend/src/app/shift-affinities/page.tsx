@@ -23,7 +23,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { ShiftAffinityPreference, SHIFT_AFFINITY } from '@/types/scheduling';
 import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { DraggableCardList } from '@/components/DraggableCardList';
@@ -53,7 +53,7 @@ export default function ShiftAffinitiesPage() {
     shiftTypeData,
     peopleData,
     dateData
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Get shift affinities from the flattened preferences
   const shiftAffinities = getPreferencesByType<ShiftAffinityPreference>(SHIFT_AFFINITY);

@@ -157,6 +157,8 @@ explicitly when an E2E build must use another version.
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve
 unrecognized versioned settings until a migration is defined.
+After decoding legacy browser storage, check the current key again so a newer
+save from another tab takes precedence over the migration.
 
 Send backend requests through the page's authorized fetch helper so the selected
 backend's token is attached. Job events use `EventSource` with the backend's
@@ -204,8 +206,10 @@ after the run is identified before deciding that its output expired. Preserve ea
 answer's original position when replacement replay rebuilds its output.
 Replay snapshots replace output without completing unrelated active operations.
 Keep queued messages waiting until foreground and background work are both idle.
-AI chat does not require compatibility with older AI backend APIs. Update the
-client and server together when their contract changes. When auth is
+Current AI clients use `/v1/sessions` and Schedule Spec fields. Update the AI
+client and server together. Older AI APIs, conversations, and chat history need
+no compatibility adapters. Follow the root compatibility policy for automatic
+migration of browser Schedule Specs and settings. When auth is
 required, send the AI token through the shared authorized-header helper on
 every session request, including the fetch-based event stream. Store it only
 when the user explicitly opts in to unencrypted device storage.
@@ -250,7 +254,7 @@ When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 Store AI chat history with the saving frontend `appVersion`, without a separate
 numeric storage version.
 
-When switching saved AI chats, preserve browser schedule data during event replay.
+When switching saved AI chats, preserve browser Schedule Spec during event replay.
 Reset pending model and reasoning choices on explicit chat switches. Preserve
 choices made while the current conversation creates its first session.
 Keep local history expiry separate from backend session expiry. Test that forgetting

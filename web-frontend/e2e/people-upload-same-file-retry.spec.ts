@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('people upload can retry the same filename after failure and then recover with valid content', async ({ page }) => {
   /*
@@ -36,7 +36,7 @@ test('people upload can retry the same filename after failure and then recover w
     await dialog.accept();
   });
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'same file retry seed',
     dates: { range: {}, groups: [] },

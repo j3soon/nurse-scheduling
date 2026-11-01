@@ -24,10 +24,10 @@ import userEvent from '@testing-library/user-event';
 import ShiftCountsPage from '@/app/shift-counts/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 function renderShiftCountsPage() {
@@ -77,7 +77,7 @@ describe('ShiftCountsPage', () => {
   beforeEach(() => {
     updatePreferencesByType.mockReset();
     duplicatePreferenceByType.mockReset();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -194,7 +194,7 @@ describe('ShiftCountsPage', () => {
   });
 
   it('shows an invalid coefficient error before checking coefficient overlap', async () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -239,7 +239,7 @@ describe('ShiftCountsPage', () => {
   });
 
   it('dismisses the edited shift count draft before duplicating a shift count', async () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -281,7 +281,7 @@ describe('ShiftCountsPage', () => {
   });
 
   it('dismisses an added shift count draft before duplicating a shift count', async () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -325,7 +325,7 @@ describe('ShiftCountsPage', () => {
   });
 
   it('shows all invalid coefficient errors and clears only the edited coefficient error', async () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -381,7 +381,7 @@ describe('ShiftCountsPage', () => {
   });
 
   it('clears multiple coefficient errors queued before a render', async () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

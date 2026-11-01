@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('clear-data actions can be undone and redone from the shift requests page', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('clear-data actions can be undone and redone from the shift requests page',
    * 4. Redo twice to clear them again.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'clear undo redo seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

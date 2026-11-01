@@ -18,13 +18,13 @@
  */
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 const BACKEND_URL = 'http://localhost:8000';
 const BACKEND_TOKEN = 'e2e-shared-backend-token';
 const STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 
-const seedMinimalSchedule = (page: Parameters<typeof seedSchedulingState>[0]) => seedSchedulingState(page, {
+const seedMinimalSchedule = (page: Parameters<typeof seedScheduleSpecState>[0]) => seedScheduleSpecState(page, {
   apiVersion: 'test',
   description: 'optimize auth seed',
   dates: {

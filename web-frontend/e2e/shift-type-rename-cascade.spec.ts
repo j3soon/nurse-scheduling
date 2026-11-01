@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 test('renaming shift types and shift type groups updates downstream references', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('renaming shift types and shift type groups updates downstream references',
    * 3. Revisit downstream pages and confirm only the renamed IDs remain.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift type rename seed',
     dates: {
@@ -126,7 +126,7 @@ test('renaming and deleting shift types keeps people history coherent in UI and 
    * 3. Delete DX and confirm history truncates to the suffix the schedule can still explain.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift history rename delete seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -189,7 +189,7 @@ test('optimize payload truncates people history after shift-type deletion', asyn
    * 3. Run Optimize and assert the submitted YAML keeps only the usable suffix.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift history optimize trim seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

@@ -21,7 +21,7 @@ import { ShiftTypeRequirementsPreference, ShiftRequestPreference, Preference, AT
 import { ALL } from '@/utils/keywords';
 import { compareFirstIdByEntryOrder, getOrderedEntries, sortIdsByEntryOrder, sortPairsByFirstIdEntryOrder } from '@/utils/entityOrdering';
 import { hasNestedReferenceIds, ReferenceIdTree } from '@/utils/referenceIds';
-import { SchedulingState } from './schedulingState';
+import { ScheduleSpecState } from './scheduleSpecState';
 
 export type NullableShiftTypeRequirementsPreference = Omit<ShiftTypeRequirementsPreference, 'qualifiedPeople'> & {
   // Backend input accepts both null/missing and the reserved ALL selector for
@@ -47,7 +47,7 @@ function sortFlatOrPreserveNestedReferenceIds<T extends ReferenceIdTree[] | unde
   return sortIdsByEntryOrder(value as string[] | undefined, entries) as T;
 }
 
-export function normalizePreferenceOrder(pref: Preference, state: SchedulingState): Preference {
+export function normalizePreferenceOrder(pref: Preference, state: ScheduleSpecState): Preference {
   const peopleEntries = getOrderedEntries(state.people);
   const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
   const dateEntries = getOrderedEntries(state.dates);
@@ -103,7 +103,7 @@ export function sortPreferencesByType(preferences: Preference[]): Preference[] {
   return [...preferences].sort((a, b) => typeOrder.indexOf(a.type) - typeOrder.indexOf(b.type));
 }
 
-export function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreference[], state: SchedulingState): ShiftRequestPreference[] {
+export function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreference[], state: ScheduleSpecState): ShiftRequestPreference[] {
   const peopleEntries = getOrderedEntries(state.people);
   const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
   // Sort requests by person, then shift type, then weight; request dates are
@@ -119,7 +119,7 @@ export function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreferen
 
 // Normalize IDs within each preference, order shift requests by entities, then
 // group all preferences by type for stable saved/exported state.
-export function normalizePreferencesOrder(preferences: Preference[], state: SchedulingState): Preference[] {
+export function normalizePreferencesOrder(preferences: Preference[], state: ScheduleSpecState): Preference[] {
   const normalizedPreferences = preferences.map(pref => normalizePreferenceOrder(pref, state));
   const sortedShiftRequests = sortShiftRequestsByEntityOrder(
     normalizedPreferences.filter((pref): pref is ShiftRequestPreference => pref.type === SHIFT_REQUEST),

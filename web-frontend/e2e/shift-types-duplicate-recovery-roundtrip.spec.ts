@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shift-type duplicate-ID recovery survives a save-load roundtrip', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('shift-type duplicate-ID recovery survives a save-load roundtrip', async ({
    * 4. Confirm downstream pages still use only the corrected IDs.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift-type duplicate recovery roundtrip seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -82,8 +82,8 @@ test('shift-type duplicate-ID recovery survives a save-load roundtrip', async ({
   expect(yamlText).toContain('Daytime Group');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/save-and-load');
   await page.locator('input[type="file"]').setInputFiles({

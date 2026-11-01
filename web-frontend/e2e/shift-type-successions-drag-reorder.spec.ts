@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shift type succession pattern reorder is preserved in the saved rule', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('shift type succession pattern reorder is preserved in the saved rule', asy
    * 3. Save the rule and confirm the persisted pattern order matches the dragged order.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'succession drag seed',
     dates: {

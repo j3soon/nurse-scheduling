@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shift type successions can be edited and deleted through the page UI', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('shift type successions can be edited and deleted through the page UI', asy
    * 3. Delete the same rule and confirm the list returns to the empty state.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'succession edit seed',
     dates: {

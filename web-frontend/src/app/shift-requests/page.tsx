@@ -26,7 +26,7 @@ import { FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
 import UploadButton from '@/components/UploadButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
@@ -48,7 +48,7 @@ export default function ShiftRequestsPage() {
     addPersonHistory,
     updatePersonHistory,
     reorderItems,
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Get shift request preferences from the flattened preferences
   const shiftRequestPreferences = getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);

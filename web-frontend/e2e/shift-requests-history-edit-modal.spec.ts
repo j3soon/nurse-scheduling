@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('history edit modal updates the saved people-history summary', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('history edit modal updates the saved people-history summary', async ({ pag
    * 3. Confirm the summary reflects the updated history after the modal closes.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'history modal seed',
     dates: {

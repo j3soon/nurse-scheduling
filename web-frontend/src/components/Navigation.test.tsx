@@ -23,7 +23,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect } from 'react';
 import Navigation from '@/components/Navigation';
-import { SchedulingDataProvider } from '@/hooks/useSchedulingData';
+import { ScheduleSpecProvider } from '@/hooks/useScheduleSpec';
 import {
   UnsavedEditingStateProvider,
   useUnsavedEditingState,
@@ -56,14 +56,14 @@ function renderNavigation({ tabSwitchWarningActive = false } = {}) {
   return render(
     <UnsavedEditingStateProvider>
       {tabSwitchWarningActive && <TestTabSwitchWarning />}
-      <SchedulingDataProvider>
+      <ScheduleSpecProvider>
         <Navigation />
-      </SchedulingDataProvider>
+      </ScheduleSpecProvider>
     </UnsavedEditingStateProvider>
   );
 }
 
-const STORAGE_KEY = 'nurse-scheduling-data';
+const STORAGE_KEY = 'nurse-scheduling-spec';
 
 function seedCustomExportLayoutState() {
   const state = {
@@ -170,7 +170,7 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it('undoes and redoes schedule changes with the tab bar buttons', async () => {
+  it('undoes and redoes Schedule Spec changes with the tab bar buttons', async () => {
     const user = userEvent.setup();
     seedCustomExportLayoutState();
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
@@ -242,9 +242,9 @@ describe('Navigation', () => {
       mockUsePathname.mockReturnValue('/shift-counts');
       rerender(
         <UnsavedEditingStateProvider>
-          <SchedulingDataProvider>
+          <ScheduleSpecProvider>
             <Navigation />
-          </SchedulingDataProvider>
+          </ScheduleSpecProvider>
         </UnsavedEditingStateProvider>
       );
       expect(screen.getByRole('button', { name: '7. Shift Counts' })).toHaveAttribute('aria-current', 'page');
@@ -263,9 +263,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/save-and-load');
     rerender(
       <UnsavedEditingStateProvider>
-        <SchedulingDataProvider>
+        <ScheduleSpecProvider>
           <Navigation />
-        </SchedulingDataProvider>
+        </ScheduleSpecProvider>
       </UnsavedEditingStateProvider>
     );
 
@@ -289,9 +289,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/experimental-ai');
     rerender(
       <UnsavedEditingStateProvider>
-        <SchedulingDataProvider>
+        <ScheduleSpecProvider>
           <Navigation />
-        </SchedulingDataProvider>
+        </ScheduleSpecProvider>
       </UnsavedEditingStateProvider>
     );
 
@@ -348,9 +348,9 @@ describe('Navigation', () => {
     mockUsePathname.mockReturnValue('/shift-requests');
     rerender(
       <UnsavedEditingStateProvider>
-        <SchedulingDataProvider>
+        <ScheduleSpecProvider>
           <Navigation />
-        </SchedulingDataProvider>
+        </ScheduleSpecProvider>
       </UnsavedEditingStateProvider>
     );
 

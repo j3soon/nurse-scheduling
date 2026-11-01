@@ -109,8 +109,8 @@ vi.mock('@/utils/yamlGenerator', () => ({
   generateYamlFromState: mockGenerateYaml,
 }));
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: () => ({
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: () => ({
     apiVersionData: 'alpha',
     descriptionData: 'current schedule',
     dateData: { items: [], groups: [], range: {} },

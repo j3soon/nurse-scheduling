@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange, waitForStoredCurrentSchedulingData } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalScheduleSpecState, setDateRange, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('optimize request body follows undo and redo of upstream edits', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('optimize request body follows undo and redo of upstream edits', async ({ p
    * 3. Redo the edit and optimize again, confirming the request body includes the new person.
    */
   await disableModalDialogs(page);
-  await seedMinimalSchedulingState(page);
+  await seedMinimalScheduleSpecState(page);
   await setDateRange(page);
 
   await page.goto('/people');

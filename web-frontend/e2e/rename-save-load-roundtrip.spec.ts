@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('renamed people and groups survive a save-load roundtrip', async ({ page }) => {
   /*
@@ -30,7 +30,7 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
    * 3. Capture the resulting YAML from Save and Load.
    * 4. Upload that YAML back, wait for completion, and confirm the renamed references persist.
    */
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'rename roundtrip seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -74,7 +74,7 @@ test('renamed people and groups survive a save-load roundtrip', async ({ page })
     mimeType: 'application/x-yaml',
     buffer: Buffer.from(yamlText ?? '', 'utf8'),
   });
-  await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('Schedule uploaded: rename-roundtrip.yaml');
+  await expect(page.getByRole('status', { name: 'YAML import summary' })).toContainText('Schedule Spec uploaded: rename-roundtrip.yaml');
 
   await page.goto('/shift-requests');
   await expect(page.getByText('Person: P1X')).toBeVisible();

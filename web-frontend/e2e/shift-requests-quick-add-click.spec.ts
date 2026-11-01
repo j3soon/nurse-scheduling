@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('single quick-add click applies one shift request cell', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('single quick-add click applies one shift request cell', async ({ page }) =
    * 4. Confirm that one cell and one grouped request were created.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'single quick-add click seed',
     dates: {

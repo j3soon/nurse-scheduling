@@ -19,13 +19,13 @@
 
 import { DataType } from '@/types/scheduling';
 import { ItemGroupEditorPageData } from '@/components/ItemGroupEditorPage';
-import { SchedulingState } from './schedulingState';
+import { ScheduleSpecState } from './scheduleSpecState';
 
 export const applyDataUpdate = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   newData: ItemGroupEditorPageData
-): SchedulingState => {
+): ScheduleSpecState => {
   switch (dataType) {
     case DataType.DATES:
       return {

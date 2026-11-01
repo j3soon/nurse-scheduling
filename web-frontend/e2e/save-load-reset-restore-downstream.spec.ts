@@ -20,13 +20,13 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('reset followed by upload restores downstream pages, not just the YAML preview', async ({ page }) => {
   /*
    * Steps:
    * 1. Seed a mixed state and capture its YAML from Save and Load.
-   * 2. Reset the app through New Schedule and confirm the seeded entities disappear downstream.
+   * 2. Reset the app through New Schedule Spec and confirm the seeded entities disappear downstream.
    * 3. Upload the captured YAML.
    * 4. Verify People, Shift Types, and Shift Requests all reflect the restored state.
    */
@@ -35,7 +35,7 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
   page.on('dialog', async dialog => {
     dialogs.push(dialog.message());
   });
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'reset restore downstream seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
@@ -57,8 +57,8 @@ test('reset followed by upload restores downstream pages, not just the YAML prev
   const yamlText = await page.locator('pre').textContent();
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('Restore Person', { exact: true })).toHaveCount(0);

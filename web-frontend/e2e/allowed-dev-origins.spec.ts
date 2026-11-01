@@ -181,6 +181,6 @@ test('hydrates through a non-loopback development origin', async ({ page, devSer
 
   await page.goto(`http://${host}:${port}/experimental-ai`);
 
-  await expect(page.getByRole('textbox', { name: 'Ask about the current schedule' })).toBeEnabled();
+  await expect(page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   await expect(page.getByLabel('Attach files')).toBeAttached();
 });

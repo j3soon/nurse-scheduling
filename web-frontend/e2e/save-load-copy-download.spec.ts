@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('save-load copy and download expose the current YAML through real UI controls', async ({ page, context }) => {
   /*
@@ -33,7 +33,7 @@ test('save-load copy and download expose the current YAML through real UI contro
   await disableModalDialogs(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'copy download seed',
     dates: {

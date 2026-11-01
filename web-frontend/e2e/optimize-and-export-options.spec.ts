@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 test('optimize and export sends the modified prettify and timeout options', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('optimize and export sends the modified prettify and timeout options', asyn
    */
   await disableModalDialogs(page);
   let submittedBody = '';
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'optimize options seed',
     dates: {

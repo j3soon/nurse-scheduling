@@ -27,7 +27,7 @@ test('new schedule reset can be followed by restoring the just-created state fro
    * Steps:
    * 1. Create real UI state by adding a person and confirm it appears on the People page.
    * 2. Capture the YAML for that created state from Save and Load.
-   * 3. Reset the app through the New Schedule flow and confirm the created person disappears.
+   * 3. Reset the app through the New Schedule Spec flow and confirm the created person disappears.
    * 4. Upload the captured YAML and confirm the created person returns.
    */
   await disableModalDialogs(page);
@@ -37,8 +37,8 @@ test('new schedule reset can be followed by restoring the just-created state fro
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await page.getByRole('button', { name: 'Add Person' }).click();
@@ -53,8 +53,8 @@ test('new schedule reset can be followed by restoring the just-created state fro
   expect(yamlText).toContain('Restore Person');
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('Restore Person', { exact: true })).toHaveCount(0);

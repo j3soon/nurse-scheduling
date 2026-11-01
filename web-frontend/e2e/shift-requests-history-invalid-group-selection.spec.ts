@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('history quick-add ignores grouped shift-type selections and leaves history unchanged', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('history quick-add ignores grouped shift-type selections and leaves history
    * 4. Confirm no history entry is created.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'history invalid group seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('month-spanning date ranges use MM-DD identifiers downstream', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('month-spanning date ranges use MM-DD identifiers downstream', async ({ pag
    * 4. Revisit Shift Requests and confirm the generated IDs use MM-DD format.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'month spanning dates seed',
     dates: { range: {}, groups: [] },

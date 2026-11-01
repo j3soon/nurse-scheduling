@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize and export surfaces backend validation errors for invalid upstream state', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('optimize and export surfaces backend validation errors for invalid upstrea
    * 4. Confirm the backend validation message is rendered to the user.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'invalid optimize state',
     dates: { range: {}, groups: [] },

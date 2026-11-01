@@ -20,7 +20,7 @@
 import { DataType, ShiftAffinityPreference, ShiftCountPreference, ShiftRequestPreference, ShiftTypeRequirementsPreference, ShiftTypeSuccessionsPreference, SHIFT_AFFINITY, SHIFT_COUNT, SHIFT_REQUEST, SHIFT_TYPE_REQUIREMENT, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
 import { truncateHistoryAfterUnusable } from '@/utils/personHistory';
 import { filterReferenceIdTree, mapReferenceIdTree, ReferenceIdTree } from '@/utils/referenceIds';
-import { SchedulingState } from './schedulingState';
+import { ScheduleSpecState } from './scheduleSpecState';
 
 const renameReferenceIds = (ids: ReferenceIdTree, oldId: string, newId: string): ReferenceIdTree =>
   mapReferenceIdTree(ids, id => id === oldId ? newId : id);
@@ -29,11 +29,11 @@ const filterReferenceIds = (ids: ReferenceIdTree, deletedIdsSet: Set<string>): R
   filterReferenceIdTree(ids, id => !deletedIdsSet.has(id));
 
 export const applyPeopleHistoryForIdChange = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   oldId: string,
   newId: string
-): SchedulingState => {
+): ScheduleSpecState => {
   if (dataType !== DataType.SHIFT_TYPES) return state;
   return {
     ...state,
@@ -48,10 +48,10 @@ export const applyPeopleHistoryForIdChange = (
 };
 
 export const applyPeopleHistoryForIdDeletion = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   deletedIds: string[]
-): SchedulingState => {
+): ScheduleSpecState => {
   if (dataType !== DataType.SHIFT_TYPES || deletedIds.length === 0) return state;
 
   const deletedIdSet = new Set(deletedIds);
@@ -68,11 +68,11 @@ export const applyPeopleHistoryForIdDeletion = (
 };
 
 export const applyPreferencesForIdChange = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   oldId: string,
   newId: string
-): SchedulingState => {
+): ScheduleSpecState => {
   const shiftTypeReqFieldMap = {
     [DataType.DATES]: 'date',
     [DataType.PEOPLE]: 'qualifiedPeople',
@@ -162,10 +162,10 @@ export const applyPreferencesForIdChange = (
 };
 
 export const applyPreferencesForIdDeletion = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   deletedIds: string[]
-): SchedulingState => {
+): ScheduleSpecState => {
   // Return early if no IDs to delete
   if (deletedIds.length === 0) {
     return state;
@@ -290,10 +290,10 @@ export const applyPreferencesForIdDeletion = (
 };
 
 export const applyExportLayoutForIdDeletion = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   deletedIds: string[]
-): SchedulingState => {
+): ScheduleSpecState => {
   if (deletedIds.length === 0) {
     return state;
   }
@@ -361,11 +361,11 @@ export const applyExportLayoutForIdDeletion = (
 };
 
 export const applyExportLayoutForIdChange = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   oldId: string,
   newId: string
-): SchedulingState => {
+): ScheduleSpecState => {
   const renameId = (id: string) => id === oldId ? newId : id;
   const renameIds = (ids: string[]) => ids.map(renameId);
 
@@ -419,11 +419,11 @@ export const applyExportLayoutForIdChange = (
 };
 
 export const applyReferencesForIdChange = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   oldId: string,
   newId: string
-): SchedulingState => {
+): ScheduleSpecState => {
   let nextState = applyPeopleHistoryForIdChange(state, dataType, oldId, newId);
   nextState = applyPreferencesForIdChange(nextState, dataType, oldId, newId);
   nextState = applyExportLayoutForIdChange(nextState, dataType, oldId, newId);
@@ -431,10 +431,10 @@ export const applyReferencesForIdChange = (
 };
 
 export const applyReferencesForIdDeletion = (
-  state: SchedulingState,
+  state: ScheduleSpecState,
   dataType: DataType,
   deletedIds: string[]
-): SchedulingState => {
+): ScheduleSpecState => {
   let nextState = applyPeopleHistoryForIdDeletion(state, dataType, deletedIds);
   nextState = applyPreferencesForIdDeletion(nextState, dataType, deletedIds);
   nextState = applyExportLayoutForIdDeletion(nextState, dataType, deletedIds);

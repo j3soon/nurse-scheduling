@@ -22,7 +22,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import PeoplePage from '@/app/people/page';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 const fileContentsByName = new Map<string, string>();
 
 class MockFileReader {
@@ -34,8 +34,8 @@ class MockFileReader {
   }
 }
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 vi.mock('@/components/ItemGroupEditorPage', () => ({
@@ -72,7 +72,7 @@ describe('PeoplePage upload parsing', () => {
   it('alerts and blocks updates when uploaded people list has duplicates', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [{ id: 'Alice', description: '', history: [] }],
         groups: [],
@@ -106,7 +106,7 @@ describe('PeoplePage upload parsing', () => {
   it('reorders and adds people on valid upload with success summary', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [{ id: 'Alice', description: '', history: [] }],
         groups: [],
@@ -153,7 +153,7 @@ describe('PeoplePage upload parsing', () => {
   it('treats trimmed duplicates as duplicates and blocks updates', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [{ id: 'Alice', description: '', history: [] }],
         groups: [],
@@ -179,7 +179,7 @@ describe('PeoplePage upload parsing', () => {
   it('ignores comments and blank lines when uploading people', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [{ id: 'Alice', description: '', history: [] }],
         groups: [],
@@ -205,7 +205,7 @@ describe('PeoplePage upload parsing', () => {
   it('alerts when uploaded people file has no usable names', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [],
         groups: [],
@@ -229,7 +229,7 @@ describe('PeoplePage upload parsing', () => {
   it('alerts when the uploaded file resolves with no readable content', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [],
         groups: [],
@@ -253,7 +253,7 @@ describe('PeoplePage upload parsing', () => {
   it('warns and blocks uploads that exceed the maximum people count', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [],
         groups: [],
@@ -282,7 +282,7 @@ describe('PeoplePage upload parsing', () => {
   it('preserves existing descriptions and history when reordering known people via upload', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [
           { id: 'Alice', description: 'Primary nurse', history: ['D'] },
@@ -325,7 +325,7 @@ describe('PeoplePage upload parsing', () => {
   it('recovers from duplicate-name upload errors and still preserves metadata on the next valid upload', () => {
     const reorderItems = vi.fn();
 
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       peopleData: {
         items: [
           { id: 'Alice', description: 'Primary nurse', history: ['D'] },

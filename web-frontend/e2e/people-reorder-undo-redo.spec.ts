@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('people drag reorder can be undone and redone through the shared item-group editor page', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('people drag reorder can be undone and redone through the shared item-group
    * 4. Redo to restore the reordered state.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'people reorder undo redo seed',
     dates: { range: {}, groups: [] },

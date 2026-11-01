@@ -18,10 +18,10 @@
  */
 
 import { DataType } from '@/types/scheduling';
-import { SchedulingState } from './schedulingState';
+import { ScheduleSpecState } from './scheduleSpecState';
 import { applyDataUpdate } from './schedulingDataUpdate';
 
-const baseState: SchedulingState = {
+const baseState: ScheduleSpecState = {
   apiVersion: 'test',
   description: 'schedule',
   dates: {

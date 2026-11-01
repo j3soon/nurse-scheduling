@@ -19,10 +19,10 @@
 
 // This test is mostly AI generated.
 
-import type { SchedulingState } from '@/hooks/useSchedulingData';
-import { anonymizeSchedulingState, anonymizeSchedulingStateWithMapping, removeDescriptionFields } from '@/utils/anonymizeSchedulingState';
+import type { ScheduleSpecState } from '@/hooks/useScheduleSpec';
+import { anonymizeScheduleSpecState, anonymizeScheduleSpecStateWithMapping, removeDescriptionFields } from '@/utils/anonymizeScheduleSpecState';
 
-const state: SchedulingState = {
+const state: ScheduleSpecState = {
   apiVersion: 'alpha',
   description: 'schedule',
   dates: { range: {}, items: [], groups: [] },
@@ -47,9 +47,9 @@ const state: SchedulingState = {
   }
 };
 
-describe('anonymizeSchedulingState', () => {
+describe('anonymizeScheduleSpecState', () => {
   it('replaces people item IDs and item references without mutating the source state', () => {
-    const result = anonymizeSchedulingState(state, {
+    const result = anonymizeScheduleSpecState(state, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false
     });
@@ -69,7 +69,7 @@ describe('anonymizeSchedulingState', () => {
   });
 
   it('replaces nested affinity people references in imported backend syntax', () => {
-    const nestedState: SchedulingState = {
+    const nestedState: ScheduleSpecState = {
       ...state,
       preferences: [
         {
@@ -83,7 +83,7 @@ describe('anonymizeSchedulingState', () => {
       ]
     };
 
-    const result = anonymizeSchedulingState(nestedState, {
+    const result = anonymizeScheduleSpecState(nestedState, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false
     });
@@ -95,7 +95,7 @@ describe('anonymizeSchedulingState', () => {
   });
 
   it('replaces people group IDs and references independently', () => {
-    const result = anonymizeSchedulingState(state, {
+    const result = anonymizeScheduleSpecState(state, {
       anonymizePeopleItems: false,
       anonymizePeopleGroups: true
     });
@@ -110,7 +110,7 @@ describe('anonymizeSchedulingState', () => {
   });
 
   it('returns a reverse mapping for restoring anonymized IDs', () => {
-    const result = anonymizeSchedulingStateWithMapping(state, {
+    const result = anonymizeScheduleSpecStateWithMapping(state, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false
     });
@@ -122,7 +122,7 @@ describe('anonymizeSchedulingState', () => {
   });
 
   it('removes description fields when requested', () => {
-    const result = anonymizeSchedulingState(state, {
+    const result = anonymizeScheduleSpecState(state, {
       anonymizePeopleItems: true,
       anonymizePeopleGroups: false,
       removeDescriptions: true

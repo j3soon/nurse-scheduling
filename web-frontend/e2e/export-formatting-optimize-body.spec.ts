@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedSchedulingState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
 
 test('export formatting rules affect the YAML sent to optimize and export', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('export formatting rules affect the YAML sent to optimize and export', asyn
    * 4. Confirm the posted YAML contains the export formatting rule.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'formatting body seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

@@ -23,7 +23,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { Group, Item, ShiftTypeRequirementsPreference, SHIFT_TYPE_REQUIREMENT } from '@/types/scheduling';
 import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { CountShiftTypeCoefficientFields } from '@/components/CountShiftTypeCoefficientFields';
@@ -201,7 +201,7 @@ export default function ShiftTypeRequirementsPage() {
     shiftTypeData,
     peopleData,
     dateData
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Get shift type requirements from the flattened preferences
   const shiftTypeRequirements = getPreferencesByType<ShiftTypeRequirementsPreference>(SHIFT_TYPE_REQUIREMENT);

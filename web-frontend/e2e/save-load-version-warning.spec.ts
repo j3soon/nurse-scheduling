@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { seedSchedulingState } from './helpers';
+import { seedScheduleSpecState } from './helpers';
 
 test('version warning allows cancelling replacement and accepted uploads can be undone', async ({ page }) => {
   /*
@@ -29,7 +29,7 @@ test('version warning allows cancelling replacement and accepted uploads can be 
    * 2. Cancel the warning and confirm the original group survives a reload.
    * 3. Accept the warning, then undo the upload and confirm the original group returns.
    */
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'original seed',
     dates: {
@@ -98,7 +98,7 @@ test('version warning allows cancelling replacement and accepted uploads can be 
   acceptReplacement = true;
   await page.locator('input[type="file"]').setInputFiles(upload);
   const summary = page.getByRole('status', { name: 'YAML import summary' });
-  await expect(summary).toContainText('Schedule uploaded: mismatch.yaml');
+  await expect(summary).toContainText('Schedule Spec uploaded: mismatch.yaml');
   await expect(summary).toContainText('App version mismatch detected');
   await expect(page.locator('pre')).toContainText('Team Omega');
   expect(dialogs).toHaveLength(2);

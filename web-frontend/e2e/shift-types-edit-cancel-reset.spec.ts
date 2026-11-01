@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('canceling edit of an existing shift type restores persisted values on reopen', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('canceling edit of an existing shift type restores persisted values on reop
    * 4. Reopen edit mode and confirm the form inputs reset to the persisted values.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'shift type edit cancel seed',
     dates: { range: {}, groups: [] },

@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('shows the custom export layout indicator on the navigation tab only when a layout is stored', async ({ page }) => {
   /*
@@ -34,7 +34,7 @@ test('shows the custom export layout indicator on the navigation tab only when a
   await page.goto('/');
   await expect(page.getByTestId('custom-export-layout-indicator')).toHaveCount(0);
 
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'custom export layout navigation seed',
     dates: {

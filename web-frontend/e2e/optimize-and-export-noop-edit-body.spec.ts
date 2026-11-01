@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalSchedulingState, setDateRange } from './helpers';
+import { disableModalDialogs, disableOptimizeAnonymization, mockOptimizeAndExport, seedMinimalScheduleSpecState, setDateRange } from './helpers';
 
 test('optimize request body stays on persisted state after an upstream edit is canceled', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('optimize request body stays on persisted state after an upstream edit is c
    * 4. Confirm the posted YAML still contains the persisted original person and not the canceled draft.
    */
   await disableModalDialogs(page);
-  await seedMinimalSchedulingState(page);
+  await seedMinimalScheduleSpecState(page);
   await setDateRange(page);
 
   await page.goto('/people');

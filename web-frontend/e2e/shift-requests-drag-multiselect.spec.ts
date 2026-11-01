@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('quick-add drag selection applies the same shift request across multiple cells', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('quick-add drag selection applies the same shift request across multiple ce
    * 4. Confirm the grouped request remains after the gesture completes.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'drag multiselect seed',
     dates: {

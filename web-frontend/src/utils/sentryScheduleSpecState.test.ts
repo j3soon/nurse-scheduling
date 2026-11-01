@@ -17,11 +17,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { SchedulingState } from '@/hooks/useSchedulingData';
-import { getLatestSchedulingYamlForSentry, setLatestSchedulingStateForSentry } from '@/utils/sentrySchedulingState';
+import type { ScheduleSpecState } from '@/hooks/useScheduleSpec';
+import { getLatestSchedulingYamlForSentry, setLatestScheduleSpecStateForSentry } from '@/utils/sentryScheduleSpecState';
 
 it('anonymizes people item IDs and references and removes descriptions in Sentry YAML', () => {
-  const state: SchedulingState = {
+  const state: ScheduleSpecState = {
     apiVersion: 'alpha',
     description: 'Sensitive schedule',
     dates: { range: {}, items: [], groups: [] },
@@ -34,7 +34,7 @@ it('anonymizes people item IDs and references and removes descriptions in Sentry
       { type: 'shift request', description: 'Sensitive request', person: ['Alice'], date: ['ALL'], shiftType: ['OFF'], weight: 1 }
     ]
   };
-  setLatestSchedulingStateForSentry(state, current => current);
+  setLatestScheduleSpecStateForSentry(state, current => current);
 
   const yaml = getLatestSchedulingYamlForSentry();
 

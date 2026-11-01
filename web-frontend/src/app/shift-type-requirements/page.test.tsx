@@ -24,10 +24,10 @@ import userEvent from '@testing-library/user-event';
 import ShiftTypeRequirementsPage from '@/app/shift-type-requirements/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 function renderShiftTypeRequirementsPage() {
@@ -45,7 +45,7 @@ describe('ShiftTypeRequirementsPage', () => {
   beforeEach(() => {
     updatePreferencesByType.mockReset();
     duplicatePreferenceByType.mockReset();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -89,7 +89,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('saves a selected shift type group as a flat list', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -171,7 +171,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('replaces the selected shift type when another radio option is selected', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -214,7 +214,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('treats null qualified people as all people when editing backend-compatible requirements', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -265,7 +265,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('normalizes missing requirement arrays before editing imported backend-compatible data', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -317,7 +317,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('dismisses the edited requirement draft before duplicating a requirement', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -362,7 +362,7 @@ describe('ShiftTypeRequirementsPage', () => {
 
   it('dismisses an added requirement draft before duplicating a requirement', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -416,7 +416,7 @@ describe('ShiftTypeRequirementsPage', () => {
   });
 
   it('expands undefined dates when no exact date group matches', () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -451,7 +451,7 @@ describe('ShiftTypeRequirementsPage', () => {
   });
 
   it('warns when requirements duplicate expanded date and shift type coverage', () => {
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

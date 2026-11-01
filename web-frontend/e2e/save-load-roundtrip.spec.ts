@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState, waitForStoredCurrentSchedulingData } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState, waitForStoredCurrentSchedulingData } from './helpers';
 
 test('save and load roundtrip restores seeded state after reset', async ({ page }) => {
   /*
@@ -35,7 +35,7 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
   page.on('dialog', async dialog => {
     dialogs.push(dialog.message());
   });
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'roundtrip seed',
     dates: {
@@ -83,8 +83,8 @@ test('save and load roundtrip restores seeded state after reset', async ({ page 
   await expect(page.getByTitle('Team Alpha', { exact: true })).toBeVisible();
 
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
 
   await page.goto('/people');
   await expect(page.getByText('Team Alpha')).toHaveCount(0);

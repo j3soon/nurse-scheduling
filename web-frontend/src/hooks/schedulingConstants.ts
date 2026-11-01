@@ -17,7 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-export const STORAGE_KEY = 'nurse-scheduling-data';
+export const STORAGE_KEY = 'nurse-scheduling-spec';
 export const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
 // Constants for infinity value handling in localStorage

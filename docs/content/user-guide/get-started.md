@@ -1,30 +1,30 @@
 # Quick Start
 
-This walkthrough creates a small test schedule, saves a backup, and downloads
-an optimized workbook. It was validated with the frontend and backend running
+This walkthrough creates a small Schedule Spec, saves a YAML backup, and
+downloads an optimized schedule workbook. It was validated with the frontend and backend running
 locally.
 
-!!! warning "Protect schedule data"
+!!! warning "Protect Schedule Spec"
 
     Use test names until your organization approves this system. The hosted
-    app stores the schedule data in your browser and sends it to the selected
+    app stores the Schedule Spec in your browser and sends it to the selected
     optimization server. It also uses Google Analytics and Sentry for
     analytics, replay, and error reporting. Error reports may attach partly
-    anonymized scheduling YAML. **Anonymize schedule data** does not remove
+    anonymized Schedule Spec YAML. **Anonymize Schedule Spec** does not remove
     every potentially sensitive field. Read the full [privacy
     policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md).
 
-## 1. Start a schedule
+## 1. Start a Schedule Spec {#1-start-a-schedule}
 
 1. Open the [Nurse Scheduling app](https://nursescheduling.org/).
-2. Select **New Schedule**.
-3. In the confirmation dialog, select **Create empty schedule**.
+2. Select **New Schedule Spec**.
+3. In the confirmation dialog, select **Create empty Schedule Spec**.
 
-The new schedule has no people or working shifts. The dropdown next to
-**New Schedule** also offers the **87-person example**. Download a YAML backup
+The new Schedule Spec has no people or working shifts. The dropdown next to
+**New Schedule Spec** also offers the **87-person example**. Download a YAML backup
 first when replacing useful work.
 
-![Confirmation before creating an empty schedule](../assets/images/user-guide/01-start-new.png)
+![Confirmation before creating an empty Schedule Spec](../assets/images/user-guide/01-start-new.png)
 
 ## 2. Choose the dates
 
@@ -93,13 +93,13 @@ format.
 ## 7. Optimize and download
 
 1. On **Optimize and Export**, confirm **Server: Online**.
-2. Leave **Prettify XLSX** and **Anonymize schedule data** enabled for the first
+2. Leave **Prettify XLSX** and **Anonymize Schedule Spec** enabled for the first
    run.
 3. Keep the default timeout unless the schedule needs more solve time.
 4. Select **Optimize and Download**.
 
 The first online compatible server is selected in **Auto** mode. Submitting
-sends the schedule data to that server. Anonymization applies to the outbound YAML.
+sends the Schedule Spec to that server. Anonymization applies to the outbound YAML.
 The downloaded workbook restores the original people IDs.
 
 ![Online server and run options before optimization](../assets/images/user-guide/07-optimize.png)

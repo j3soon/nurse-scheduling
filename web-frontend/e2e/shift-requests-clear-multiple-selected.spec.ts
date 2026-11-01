@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs, seedSchedulingState } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('clear mode remains deterministic after multiple shift types were previously selected', async ({ page }) => {
   /*
@@ -31,7 +31,7 @@ test('clear mode remains deterministic after multiple shift types were previousl
    * 4. Confirm the request is cleared.
    */
   await disableModalDialogs(page);
-  await seedSchedulingState(page, {
+  await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'clear after multiselect seed',
     dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },

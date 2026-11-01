@@ -24,10 +24,10 @@ import userEvent from '@testing-library/user-event';
 import ShiftTypeSuccessionsPage from '@/app/shift-type-successions/page';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
-const mockUseSchedulingData = vi.hoisted(() => vi.fn());
+const mockUseScheduleSpec = vi.hoisted(() => vi.fn());
 
-vi.mock('@/hooks/useSchedulingData', () => ({
-  useSchedulingData: mockUseSchedulingData,
+vi.mock('@/hooks/useScheduleSpec', () => ({
+  useScheduleSpec: mockUseScheduleSpec,
 }));
 
 function renderShiftTypeSuccessionsPage() {
@@ -45,7 +45,7 @@ describe('ShiftTypeSuccessionsPage', () => {
   beforeEach(() => {
     updatePreferencesByType.mockReset();
     duplicatePreferenceByType.mockReset();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -93,7 +93,7 @@ describe('ShiftTypeSuccessionsPage', () => {
 
   it('dismisses the edited succession draft before duplicating a succession', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),
@@ -136,7 +136,7 @@ describe('ShiftTypeSuccessionsPage', () => {
 
   it('dismisses an added succession draft before duplicating a succession', async () => {
     const user = userEvent.setup();
-    mockUseSchedulingData.mockReturnValue({
+    mockUseScheduleSpec.mockReturnValue({
       dateData: {
         range: {
           startDate: new Date('2026-01-01T12:00:00.000Z'),

@@ -33,7 +33,7 @@ const EXAMPLE_NAME = 'large-ward-with-87-people-2025-11.yaml';
 const EXAMPLE_YAML = readFileSync(path.join(__dirname, '../public/examples', EXAMPLE_NAME), 'utf8')
   .replace(/^appVersion: .*$/m, `appVersion: ${APP_VERSION}`);
 
-// The schedule data that the Quick Start builds by hand.
+// The Schedule Spec that the Quick Start builds by hand.
 const QUICK_START_YAML = yaml.dump({
   apiVersion: 'alpha',
   description: '',
@@ -162,7 +162,7 @@ async function mockBackend(route: Route, pathname: string) {
       prettify: { default: true },
     });
   }
-  if (pathname === '/optimize' && method === 'POST') return fulfillJson(route, job(false));
+  if (pathname === '/schedule_spec/optimize' && method === 'POST') return fulfillJson(route, job(false));
   if (pathname === `/optimize/${JOB_ID}`) return fulfillJson(route, job(true));
   if (pathname === `/optimize/${JOB_ID}/events`) {
     // A real CP-SAT solve of the Quick Start schedule reports this one solution.
@@ -222,8 +222,8 @@ async function upload(page: Page, text: string, name = 'schedule.yaml') {
 
 async function createEmptySchedule(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
-  await page.getByRole('button', { name: 'Create empty schedule' }).click();
+  await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
+  await page.getByRole('button', { name: 'Create empty Schedule Spec' }).click();
   await expect(page.getByRole('heading', { name: 'Confirm Reset' })).toBeHidden();
 }
 
@@ -295,9 +295,9 @@ test.describe('Quick Start', () => {
     await capture(page, path.join(IMAGES, '00-home.png'));
   });
 
-  test('empty schedule confirmation', async ({ page }) => {
+  test('empty Schedule Spec confirmation', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'New Schedule', exact: true }).click();
+    await page.getByRole('button', { name: 'New Schedule Spec', exact: true }).click();
     const dialog = page.getByRole('heading', { name: 'Confirm Reset' }).locator('xpath=..');
     await capture(dialog, path.join(IMAGES, '01-start-new.png'));
   });
@@ -353,7 +353,7 @@ test.describe('page guides', () => {
     ['/experimental-ai', '21-real-experimental-ai.png'],
   ];
 
-  test('example schedule pages', async ({ page }) => {
+  test('example Schedule Spec pages', async ({ page }) => {
     await upload(page, EXAMPLE_YAML, EXAMPLE_NAME);
     for (const [route, file] of pages) {
       await page.goto(route);

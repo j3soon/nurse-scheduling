@@ -23,7 +23,7 @@ import { expect, test } from './test';
 import type { Page } from '@playwright/test';
 import { disableModalDialogs, waitForStoredCurrentSchedulingData } from './helpers';
 
-const STORAGE_KEY = 'nurse-scheduling-data';
+const STORAGE_KEY = 'nurse-scheduling-spec';
 const WORKER_NAMESPACE_KEY = '__PLAYWRIGHT_WORKER_NAMESPACE__';
 
 const baseState = {

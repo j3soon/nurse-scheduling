@@ -2,7 +2,7 @@
 
 [Open Optimize and Export](https://nursescheduling.org/optimize-and-export){ .md-button .md-button--primary }
 
-This page sends the schedule data to a solver and downloads the optimized
+This page sends the Schedule Spec to a solver and downloads the optimized
 schedule as XLSX. Server selection and submission are required. Workbook
 formatting, anonymization, and timeout changes are optional.
 
@@ -32,7 +32,7 @@ starts.
    device** to keep it for later visits, or leave it unchecked to use it only
    until the page is reloaded.
 2. Optional: keep **Prettify XLSX** enabled to apply Export Layout.
-3. Optional: review **Anonymize schedule data**. Keep it enabled unless there
+3. Optional: review **Anonymize Schedule Spec**. Keep it enabled unless there
    is an approved reason to send original people IDs.
 4. Optional: change the timeout when the default is unsuitable.
 5. Select **Optimize and Download**.

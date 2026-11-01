@@ -22,7 +22,7 @@
 
 import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import DateRangeCalendarPicker from '@/components/DateRangeCalendarPicker';
 import { DateGroupMemberSelector } from '@/components/DateGroupMemberSelector';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
@@ -55,7 +55,7 @@ export default function DatePage() {
     removeItemFromGroup,
     reorderItems,
     reorderGroups,
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Mode state for date range and item group editing
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);

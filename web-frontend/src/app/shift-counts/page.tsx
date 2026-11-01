@@ -23,7 +23,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import {
   ShiftCountPreference,
   SHIFT_COUNT,
@@ -78,7 +78,7 @@ export default function ShiftCountsPage() {
     shiftTypeData,
     peopleData,
     dateData
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Get shift counts from the flattened preferences
   const shiftCounts = getPreferencesByType<ShiftCountPreference>(SHIFT_COUNT);

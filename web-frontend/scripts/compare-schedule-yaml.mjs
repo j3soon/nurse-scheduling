@@ -74,12 +74,12 @@ try {
   const actual = normalize(yaml.load(readFileSync(actualPath, 'utf8')));
   const mismatches = differences(expected, actual);
   if (mismatches.length) {
-    console.error(`Schedule YAML differs:\n${mismatches.join('\n')}`);
+    console.error(`Schedule Spec YAML differs:\n${mismatches.join('\n')}`);
     process.exitCode = 1;
   } else {
-    console.log('Schedule YAML values match (ignoring appVersion and preference order).');
+    console.log('Schedule Spec YAML values match (ignoring appVersion and preference order).');
   }
 } catch (error) {
-  console.error(`Could not compare schedule YAML: ${error.message}`);
+  console.error(`Could not compare Schedule Spec YAML: ${error.message}`);
   process.exitCode = 2;
 }

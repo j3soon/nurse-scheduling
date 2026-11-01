@@ -23,7 +23,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
-import { useSchedulingData } from '@/hooks/useSchedulingData';
+import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { ShiftTypeSuccessionsPreference, SHIFT_TYPE_SUCCESSIONS } from '@/types/scheduling';
 import { CHECKBOX_LIST_SCROLL_CLASS_NAME, CheckboxList } from '@/components/CheckboxList';
 import { ReorderButtons } from '@/components/ReorderButtons';
@@ -54,7 +54,7 @@ export default function ShiftTypeSuccessionsPage() {
     shiftTypeData,
     peopleData,
     dateData
-  } = useSchedulingData();
+  } = useScheduleSpec();
 
   // Get shift type successions from the flattened preferences
   const shiftTypeSuccessions = getPreferencesByType<ShiftTypeSuccessionsPreference>(SHIFT_TYPE_SUCCESSIONS);
