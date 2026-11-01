@@ -903,6 +903,46 @@ def session_state(owner: str, expires_in: float = 60, **changes) -> tuple[str, f
     return owner, time.time() + expires_in, {**EMPTY_STATE, **changes}
 
 
+@pytest.mark.parametrize("last_migration", [5, 11], ids=["before-column-rename", "after-column-rename"])
+def test_postgres_renamed_migration_preserves_applied_schedule_spec(uninitialized_postgres_history, last_migration):
+    history = uninitialized_postgres_history
+    run, session = str(uuid4()), str(uuid4())
+    payload = {"schedule_spec_yaml": basic.schedule_spec_yaml(), "run_id": run}
+    with history._connect() as connection:
+        connection.execute("CREATE TABLE ai_history_migrations (version text PRIMARY KEY)")
+        migrations = sorted(Path(history_module.__file__).with_name("migrations").glob("*.sql"))
+        for migration in migrations[:last_migration]:
+            connection.execute(migration.read_text(encoding="utf-8"))
+            if migration.name.startswith("004_"):
+                connection.execute("ALTER TABLE chat_runs DROP COLUMN question")
+            version = "005_run_schedule_change.sql" if migration.name.startswith("005_") else migration.name
+            connection.execute("INSERT INTO ai_history_migrations (version) VALUES (%s)", (version,))
+        connection.execute(
+            "INSERT INTO chat_sessions (id, owner_hash, expires_at, state) "
+            "VALUES (%s, 'owner', now() + interval '1 hour', '{}'::jsonb)",
+            (session,),
+        )
+        column = "schedule_change" if last_migration < 11 else "schedule_spec_change"
+        connection.execute(
+            sql.SQL("INSERT INTO chat_runs (id, session_id, {}) VALUES (%s, %s, %s)").format(sql.Identifier(column)),
+            (run, session, history_module.Jsonb(payload)),
+        )
+
+    history.initialize()
+    history.initialize()
+
+    with history._connect() as connection:
+        assert connection.execute("SELECT schedule_spec_change FROM chat_runs WHERE id = %s", (run,)).fetchone() == (
+            payload,
+        )
+        columns = connection.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'chat_runs'"
+        ).fetchall()
+        assert ("schedule_change",) not in columns
+        assert connection.execute("SELECT count(*) FROM ai_history_migrations").fetchone() == (11,)
+
+
 def test_postgres_uploads_survive_restart_and_removal(postgres_history):
     settings = basic.make_settings(history_postgres_url="test", max_attachment_total_bytes=20)
     app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())

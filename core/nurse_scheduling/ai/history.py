@@ -105,8 +105,10 @@ class ChatHistory:
             connection.execute("SELECT pg_advisory_xact_lock(782341926)")
             connection.execute("CREATE TABLE IF NOT EXISTS ai_history_migrations (version text PRIMARY KEY)")
             for migration in sorted(Path(__file__).with_name("migrations").glob("*.sql")):
+                # The numeric version stays stable when a migration's description is renamed.
                 applied = connection.execute(
-                    "SELECT 1 FROM ai_history_migrations WHERE version = %s", (migration.name,)
+                    "SELECT 1 FROM ai_history_migrations WHERE split_part(version, '_', 1) = %s",
+                    (migration.name.split("_", 1)[0],),
                 ).fetchone()
                 if not applied:
                     connection.execute(migration.read_text(encoding="utf-8"))

@@ -742,6 +742,7 @@ the model received in `schedule_spec_check`. The transcript shows it as **Schedu
 check passed** or **Schedule Spec check failed**, so the browser shows every
 validation result that the model saw.
 
+<span id="ai-schedule-changes"></span>
 <figure markdown="1" id="ai-schedule-spec-changes">
 
 **Figure 6. Trusted schedule review and browser application.**

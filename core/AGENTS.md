@@ -309,9 +309,11 @@ and current session recovery working.
   outcome persistence finish. Queue completed model entries for storage before tools.
   Recover unfinished status even when a terminal publication was saved. Retry failed
   final outcome writes during shutdown while recovery storage is still available.
-- Append database migrations without renaming previously applied files. Test an
-  upgrade from the deployed schema with saved sessions, message IDs, and Stop
-  requests. Document backup and rollback when the old code cannot read the new schema.
+- Append database migrations without changing previously applied SQL or numeric
+  versions. Migration history uses the numeric filename prefix, so changing a
+  file's description does not run it again. Test upgrades from the deployed
+  schema with saved sessions, message IDs, and Stop requests. Document backup
+  and rollback when the old code cannot read the new schema.
   Do not add code that only preserves edge-case behavior for sessions saved by
   earlier versions, such as their interrupted runs or a missing model lock.
 - Store all session data in PostgreSQL, as Pi stores its session file. Save the

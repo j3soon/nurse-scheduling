@@ -123,7 +123,7 @@ def test_duplicate_fixture_keys_fail_without_credentials(tmp_path):
 
 
 def test_reset_reuses_solver_fixture_and_requires_complete_empty_schedule():
-    case = load_case(TESTCASES / "basics" / "01_reset-schedule.yaml")
+    case = load_case(TESTCASES / "basics" / "01_reset-schedule-spec.yaml")
     source = case.steps[0].value
     assert source == TESTCASES.parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
     before = source.read_text(encoding="utf-8")
@@ -170,7 +170,7 @@ def test_invalid_schedule_fixtures_and_equality_combinations(tmp_path, text):
 
 
 def test_production_execution_checks_schedule_equality():
-    case = load_case(TESTCASES / "basics" / "01_reset-schedule.yaml")
+    case = load_case(TESTCASES / "basics" / "01_reset-schedule-spec.yaml")
     expected = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
     provider = ScriptedProvider(
         [
