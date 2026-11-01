@@ -1,4 +1,4 @@
-"""Helpers for anonymizing sensitive identifiers in scheduling data."""
+"""Helpers for anonymizing sensitive identifiers in Schedule Spec."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -110,8 +110,8 @@ def _dump_yaml(data: Any) -> bytes:
     return output.getvalue()
 
 
-def anonymize_scheduling_data_in_yaml(content: bytes) -> bytes:
-    """Return YAML with supported sensitive scheduling data anonymized, or the original on failure."""
+def anonymize_schedule_spec_in_yaml(content: bytes) -> bytes:
+    """Return YAML with supported sensitive Schedule Spec anonymized, or the original on failure."""
     try:
         return _anonymize_yaml_content(content)
     except Exception:  # noqa: BLE001

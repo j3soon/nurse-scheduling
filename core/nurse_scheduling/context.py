@@ -20,7 +20,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from .models import CompiledSchedule, NurseSchedulingData
+from .models import CompiledScheduleSpec, ScheduleSpec
 from .report import Report
 from .solver_interface import SolverInterface
 
@@ -29,8 +29,8 @@ from .solver_interface import SolverInterface
 class Context:
     """Validated scenario data and mutable state for one solver run."""
 
-    scenario: NurseSchedulingData
-    compiled_schedule: CompiledSchedule = field(init=False)
+    scenario: ScheduleSpec
+    compiled_schedule_spec: CompiledScheduleSpec = field(init=False)
 
     # Computed fields
     n_days: int = field(init=False)
@@ -57,13 +57,13 @@ class Context:
     objective: Any = 0
 
     def __post_init__(self) -> None:
-        self.compiled_schedule = self.scenario.compiled_schedule
-        self.n_days = len(self.compiled_schedule.dates)
+        self.compiled_schedule_spec = self.scenario.compiled_schedule_spec
+        self.n_days = len(self.compiled_schedule_spec.dates)
         self.n_shift_types = len(self.scenario.shiftTypes.items)
         self.n_people = len(self.scenario.people.items)
 
     @classmethod
-    def from_validated(cls, data: NurseSchedulingData) -> "Context":
+    def from_validated(cls, data: ScheduleSpec) -> "Context":
         """Create runtime state without validating or resolving input twice."""
         # Keep generated dates in the compiled snapshot instead of mutating
         # the validated source model to populate its optional date items.

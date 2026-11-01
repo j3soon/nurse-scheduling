@@ -27,7 +27,7 @@ Notable optional variables: `SENTRY_BACKEND_DSN` (an unset DSN keeps the shared 
 - Set `API_AUTH_TOKEN` or `API_AUTH_TOKENS` in `.env`. The deployment image
   requires at least one key.
 - Enable [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/).
-- (Optional) Add a WAF/rate limit rule for `POST /optimize`.
+- (Optional) Add a WAF/rate limit rule for `POST /schedule_spec/optimize`.
 - Keep ports `80` and `443` closed on the VM unless another service needs them.
 
 > We used Cloudflare Tunnel for ease of setup, but you can easily switch to NGINX and Certbot if you have a dedicated public IP and are comfortable exposing it to the internet.
@@ -82,7 +82,7 @@ curl -H "Authorization: Bearer ${AUTH_KEY}" https://api.nursescheduling.org/opti
 discover the deployment without credentials. `/info` reports
 `"auth": {"required": true, "scheme": "bearer"}`, which the frontend uses to
 prompt for a token before calling a protected route. Every other application
-route, including `/` and all of `/optimize`, answers `401` with a
+route, including `/` and all job routes under `/optimize` and `/schedule_spec/optimize`, answers `401` with a
 `WWW-Authenticate: Bearer` header when the key is missing or wrong. Keys are
 resolved through a process-local keyed fingerprint map, then compared in
 constant time. A request does not scan every configured key. `401` responses

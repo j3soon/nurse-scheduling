@@ -25,7 +25,7 @@ import pytest
 
 from nurse_scheduling import schedule
 from nurse_scheduling.ai.result_context import build_request_audit
-from nurse_scheduling.loader import load_data
+from nurse_scheduling.loader import load_schedule_spec
 from nurse_scheduling.preference_audit import audit_staffing_and_successions
 
 from .ai_eval.optimizer_fixtures import RESULT_SOURCES, completion_result
@@ -35,7 +35,7 @@ from .ai_test_helper import parse_schedule, schedule_yaml
 def _forced(data, assignments):
     return {
         (d, s, p): int(assignments[d, p] == s)
-        for d in range(len(data.compiled_schedule.dates))
+        for d in range(len(data.compiled_schedule_spec.dates))
         for s in range(len(data.shiftTypes.items))
         for p in range(len(data.people.items))
     }
@@ -60,7 +60,7 @@ def test_succession_audit_matches_optimizer_score(pattern, weight, history):
         {"type": "shift type successions", "person": ["ALL"], "date": ["ALL"], "pattern": pattern, "weight": weight},
         history,
     )
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     assignments = {
         (d, p): s for (d, p), s in zip(itertools.product(range(3), range(2)), [-1, 1, 0, -1, 1, 0], strict=True)
     }
@@ -89,7 +89,7 @@ def test_staffing_audit_matches_optimizer_score(selectors, qualified, dates):
     if qualified:
         pref["qualifiedPeople"] = qualified
     source = _source(pref, [])
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     assignments = {(d, p): -1 if qualified and p else (d + p) % 2 for d in range(3) for p in range(2)}
     result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, assignments))
     audit = audit_staffing_and_successions(data, assignments)
@@ -135,7 +135,7 @@ def test_stale_policy_counts_have_a_different_source():
 
 def test_incomplete_or_unknown_assignments_cannot_produce_a_policy_verdict():
     source = _source({"type": "shift type successions", "person": ["ALL"], "pattern": ["N", "D"], "weight": -1}, [])
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     with pytest.raises(ValueError, match="every person and date"):
         audit_staffing_and_successions(data, {})
     with pytest.raises(ValueError, match="Unknown assigned shift"):
@@ -177,7 +177,7 @@ def test_a_succession_match_crossing_history_is_counted():
         {"type": "shift type successions", "person": ["ALL"], "date": ["ALL"], "pattern": ["N", "D"], "weight": -7},
         ["N"],
     )
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     assignments = {(d, p): -1 for d in range(3) for p in range(2)}
     assignments[0, 0] = 0
     row = audit_staffing_and_successions(data, assignments)["successions"][0]
@@ -210,7 +210,7 @@ def test_short_horizon_still_checks_history_crossing_patterns(pattern, history, 
         },
     ]
     source = schedule_yaml(raw)
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     ids = {s.id: i for i, s in enumerate(data.shiftTypes.items)}
     ids["OFF"] = -1
     assignments = {(d, 0): ids[shift] for d, shift in enumerate(future)}
@@ -265,7 +265,7 @@ def test_short_history_windows_require_future_evidence_and_selected_dates(histor
         {"type": "at most one shift per day"},
         {"type": "shift type successions", "person": ["ALL"], "date": dates, "pattern": pattern, "weight": -10},
     ]
-    data = load_data(schedule_yaml(raw).encode())
+    data = load_schedule_spec(schedule_yaml(raw).encode())
     audit = audit_staffing_and_successions(data, {(d, 0): -1 for d in range(days)})["successions"][0]
     assert audit["windows"] == 0
 
@@ -285,7 +285,7 @@ def test_short_horizon_hard_history_rest_rule_rejects_a_forced_day():
         },
     ]
     source = schedule_yaml(raw)
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, {(0, 0): 0}))
     assert result.solver_status == "INFEASIBLE"
 
@@ -296,7 +296,7 @@ def test_completed_history_pattern_does_not_constrain_future_shifts(weight):
         {"type": "shift type successions", "person": ["ALL"], "date": ["ALL"], "pattern": ["N", "D"], "weight": weight},
         ["N", "D"],
     )
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     assignments = {(d, p): -1 for d in range(3) for p in range(2)}
     result = schedule(source.encode(), solver="ortools/cp-sat", timeout=5, forced_solution=_forced(data, assignments))
     assert result.solver_status == "OPTIMAL"
@@ -323,7 +323,7 @@ def test_history_window_checks_only_its_future_dates(weight):
         },
     ]
     source = schedule_yaml(raw)
-    data = load_data(source.encode())
+    data = load_schedule_spec(source.encode())
     assignments = {(d, 0): 0 if d < 2 else -1 for d in range(6)}
     row = audit_staffing_and_successions(data, assignments)["successions"][0]
     assert row["windows"] == 1

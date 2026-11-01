@@ -26,7 +26,7 @@ from .constants import OFF_sid
 from .models import (
     CompiledShiftTypeRequirements,
     CompiledShiftTypeSuccessions,
-    NurseSchedulingData,
+    ScheduleSpec,
 )
 from .preference_types import iter_succession_patterns, staffing_expression
 
@@ -35,13 +35,13 @@ def _weight(value):
     return (".inf" if value > 0 else "-.inf") if isinstance(value, float) and math.isinf(value) else value
 
 
-def audit_staffing_and_successions(data: NurseSchedulingData, assignments: Mapping[tuple[int, int], int]) -> dict:
+def audit_staffing_and_successions(data: ScheduleSpec, assignments: Mapping[tuple[int, int], int]) -> dict:
     """Count policy misses using the optimizer's compiled selectors and windows.
 
     Assignment keys are (day, person), with OFF represented by OFF_sid.
     This audits only staffing requirements and shift successions.
     """
-    compiled = data.compiled_schedule
+    compiled = data.compiled_schedule_spec
     expected = {(d, p) for d in range(len(compiled.dates)) for p in range(len(data.people.items))}
     if assignments.keys() != expected:
         raise ValueError("Audit requires one assignment for every person and date")

@@ -25,7 +25,7 @@ import pytest
 from pydantic import ValidationError
 
 from nurse_scheduling.frontend_validation import load_frontend_data, validate_frontend_data
-from nurse_scheduling.models import NurseSchedulingData
+from nurse_scheduling.models import ScheduleSpec
 
 
 def _base_payload() -> dict:
@@ -63,8 +63,8 @@ def _base_payload() -> dict:
     }
 
 
-def _model(payload: dict | None = None) -> NurseSchedulingData:
-    return NurseSchedulingData.model_validate(payload or _base_payload())
+def _model(payload: dict | None = None) -> ScheduleSpec:
+    return ScheduleSpec.model_validate(payload or _base_payload())
 
 
 def test_frontend_model_accepts_frontend_generated_shape():

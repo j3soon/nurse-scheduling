@@ -31,7 +31,7 @@ from fastapi.responses import StreamingResponse
 from ruamel.yaml.error import YAMLError
 from starlette.concurrency import run_in_threadpool
 
-from ...loader import SchedulingDataTooComplexError, measure_yaml_expansion
+from ...loader import ScheduleSpecTooComplexError, measure_yaml_expansion
 from ...sentry import report_suspicious_request
 from ..auth import create_stream_token
 from ..config import ServerSettings
@@ -81,8 +81,8 @@ def _settings(request: Request) -> ServerSettings:
 
 
 async def _read_input(
-    file: UploadFile | None,
-    yaml_content: str | None,
+    schedule_spec_file: UploadFile | None,
+    schedule_spec_yaml: str | None,
     max_bytes: int,
 ) -> tuple[bytes, str]:
     """Read exactly one YAML input source and enforce its byte limit.
@@ -90,22 +90,26 @@ async def _read_input(
     Raises:
         HTTPException: If the source selection, extension, or size is invalid.
     """
-    if file is None and yaml_content is None:
-        raise HTTPException(status_code=400, detail="Either 'file' or 'yaml_content' must be provided")
-    if file is not None and yaml_content is not None:
-        raise HTTPException(status_code=400, detail="Provide either 'file' or 'yaml_content', not both")
-    if file is not None:
-        filename = file.filename or "schedule.yaml"
+    if schedule_spec_file is None and schedule_spec_yaml is None:
+        raise HTTPException(
+            status_code=400, detail="Either 'schedule_spec_file' or 'schedule_spec_yaml' must be provided"
+        )
+    if schedule_spec_file is not None and schedule_spec_yaml is not None:
+        raise HTTPException(
+            status_code=400, detail="Provide either 'schedule_spec_file' or 'schedule_spec_yaml', not both"
+        )
+    if schedule_spec_file is not None:
+        filename = schedule_spec_file.filename or "schedule-spec.yaml"
         if not filename.lower().endswith((".yaml", ".yml")):
             raise HTTPException(status_code=400, detail="The uploaded file must be YAML")
-        content = await file.read(max_bytes + 1)
+        content = await schedule_spec_file.read(max_bytes + 1)
         input_name = filename
     else:
-        assert yaml_content is not None
-        content = yaml_content.encode("utf-8")
+        assert schedule_spec_yaml is not None
+        content = schedule_spec_yaml.encode("utf-8")
         input_name = f"nurse-scheduling-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.yaml"
     if len(content) > max_bytes:
-        raise HTTPException(status_code=413, detail="Scheduling YAML is too large")
+        raise HTTPException(status_code=413, detail="Schedule Spec YAML is too large")
     return content, input_name
 
 
@@ -187,19 +191,19 @@ def _report_foreign_job_access(request: Request, job) -> None:
         report_suspicious_request(request, "foreign_job_access", "warning")
 
 
-@router.post("/optimize", status_code=202, response_model=JobResponse)
+@router.post("/schedule_spec/optimize", status_code=202, response_model=JobResponse)
 async def create_job(
     request: Request,
     response: Response,
-    file: UploadFile | None = File(None, description="YAML file with scheduling data"),  # noqa: B008
-    yaml_content: str | None = Form(None, description="YAML content as a string"),
+    schedule_spec_file: UploadFile | None = File(None, description="Schedule Spec YAML file"),  # noqa: B008
+    schedule_spec_yaml: str | None = Form(None, description="YAML content as a string"),
     prettify: bool | None = Form(None),
     timeout: int | None = Form(None),
     solver: str | None = Form(None, description="Solver value returned by GET /optimize/options"),
 ):
     """Validate an optimization request and enqueue a durable job."""
     settings = _settings(request)
-    content, input_name = await _read_input(file, yaml_content, settings.max_yaml_bytes)
+    content, input_name = await _read_input(schedule_spec_file, schedule_spec_yaml, settings.max_yaml_bytes)
     try:
         normalized_solver = normalize_solver_option(solver if solver is not None else settings.default_solver)
     except ValueError:
@@ -222,7 +226,7 @@ async def create_job(
         # Read only once the free checks above have passed, so a request that was going to be
         # rejected never pays for it, and off the event loop because the data is untrusted.
         expansion = await run_in_threadpool(measure_yaml_expansion, content)
-    except SchedulingDataTooComplexError as error:
+    except ScheduleSpecTooComplexError as error:
         request.state.invalid_reason = "yaml_expansion_bomb"
         raise HTTPException(status_code=400, detail=str(error)) from error
     except YAMLError:

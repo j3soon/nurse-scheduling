@@ -32,7 +32,7 @@ from pydantic import ValidationError
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling.context import Context
-from nurse_scheduling.models import CompiledShiftTypeRequirements, NurseSchedulingData
+from nurse_scheduling.models import CompiledShiftTypeRequirements, ScheduleSpec
 
 
 def _base_payload() -> dict:
@@ -88,8 +88,8 @@ def test_model_compiles_reusable_schedule_indices_for_runtime_phases():
         ],
     }
 
-    data = NurseSchedulingData.model_validate(payload)
-    compiled = data.compiled_schedule
+    data = ScheduleSpec.model_validate(payload)
+    compiled = data.compiled_schedule_spec
     requirement = compiled.preferences[1]
 
     assert compiled.map_sid_s["work"] == (0, 1)
@@ -106,34 +106,34 @@ def test_model_compiles_reusable_schedule_indices_for_runtime_phases():
     ctx = Context.from_validated(data)
 
     assert ctx.scenario is data
-    assert ctx.compiled_schedule is compiled
+    assert ctx.compiled_schedule_spec is compiled
     assert ctx.n_days == len(compiled.dates)
     assert ctx.n_shift_types == len(data.shiftTypes.items)
     assert ctx.n_people == len(data.people.items)
     assert data.dates.items == []
-    assert "compiled_schedule" not in data.model_dump()
+    assert "compiled_schedule_spec" not in data.model_dump()
     copied = data.model_copy(deep=True)
-    assert copied.compiled_schedule is compiled
+    assert copied.compiled_schedule_spec is compiled
     with pytest.raises(TypeError, match="does not support item assignment"):
         compiled.map_sid_s["work"] = (0,)
 
 
-def test_compiled_schedule_supports_pickle_and_context_deepcopy():
-    data = NurseSchedulingData.model_validate(_base_payload())
-    compiled = data.compiled_schedule
+def test_compiled_schedule_spec_supports_pickle_and_context_deepcopy():
+    data = ScheduleSpec.model_validate(_base_payload())
+    compiled = data.compiled_schedule_spec
 
     restored = pickle.loads(pickle.dumps(data))
     assert restored.model_dump() == data.model_dump()
-    assert restored.compiled_schedule == compiled
+    assert restored.compiled_schedule_spec == compiled
     with pytest.raises(TypeError, match="does not support item assignment"):
-        restored.compiled_schedule.map_sid_s["D"] = (1,)
+        restored.compiled_schedule_spec.map_sid_s["D"] = (1,)
 
     ctx = Context.from_validated(data)
     deepcopied_ctx = copy.deepcopy(ctx)
-    assert deepcopied_ctx.compiled_schedule is compiled
+    assert deepcopied_ctx.compiled_schedule_spec is compiled
     assert deepcopied_ctx.scenario is not data
     assert deepcopied_ctx.scenario.model_dump() == data.model_dump()
-    assert deepcopied_ctx.scenario.compiled_schedule is compiled
+    assert deepcopied_ctx.scenario.compiled_schedule_spec is compiled
 
 
 def test_model_requires_at_most_one_shift_preference():
@@ -141,7 +141,7 @@ def test_model_requires_at_most_one_shift_preference():
     payload["preferences"] = [payload["preferences"][1]]
 
     with pytest.raises(ValueError, match="Missing required preferences"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 def test_model_accepts_nested_shift_type_requirement_groups():
@@ -150,7 +150,7 @@ def test_model_accepts_nested_shift_type_requirement_groups():
     payload["preferences"][1]["shiftType"] = [["D", "E"]]
     payload["preferences"][1]["shiftTypeCoefficients"] = [["D", 2]]
 
-    data = NurseSchedulingData.model_validate(payload)
+    data = ScheduleSpec.model_validate(payload)
 
     assert data.preferences[1].shiftType == [["D", "E"]]
     assert data.preferences[1].shiftTypeCoefficients == [("D", 2)]
@@ -161,7 +161,7 @@ def test_model_rejects_off_requirement_with_zero_shift_guidance():
     payload["preferences"][1]["shiftType"] = "OFF"
 
     with pytest.raises(ValueError, match="To specify a zero-shift day, define an ALL shift type"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 def test_model_accepts_zero_float_weight():
@@ -170,7 +170,7 @@ def test_model_accepts_zero_float_weight():
         {"type": "shift request", "person": "n1", "date": "2025-01-01", "shiftType": "D", "weight": 0}
     )
 
-    data = NurseSchedulingData.model_validate(payload)
+    data = ScheduleSpec.model_validate(payload)
 
     assert data.preferences[2].weight == 0
 
@@ -181,42 +181,42 @@ def test_model_rejects_invalid_date_range():
     payload["dates"]["range"]["endDate"] = datetime.date(2025, 1, 1)
 
     with pytest.raises(ValueError, match="enddate must be after or equal to startdate"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 def test_model_rejects_duplicate_or_reserved_shift_type_ids():
     payload = _base_payload()
     payload["shiftTypes"]["items"] = [{"id": "D"}, {"id": "D"}]
     with pytest.raises(ValueError, match="Duplicated shift type ID: 'D'"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["shiftTypes"]["items"] = [{"id": "ALL"}]
     payload["preferences"][1]["shiftType"] = "ALL"
     with pytest.raises(ValueError, match="Shift type ID 'ALL' cannot be one of the reserved values"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["shiftTypes"]["groups"] = [{"id": "D", "members": ["D"]}]
     with pytest.raises(ValueError, match="Duplicated shift type group .*'D'"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 def test_model_rejects_duplicate_or_reserved_people_ids():
     payload = _base_payload()
     payload["people"]["items"] = [{"id": "n1"}, {"id": "n1"}]
     with pytest.raises(ValueError, match="Duplicated person ID: 'n1'"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["people"]["items"] = [{"id": "ALL"}]
     with pytest.raises(ValueError, match="Person ID 'ALL' cannot be one of the reserved values"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["people"]["groups"] = [{"id": "n1", "members": ["n1"]}]
     with pytest.raises(ValueError, match="Duplicated people group .*'n1'"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 @pytest.mark.parametrize("container", ["people", "shiftTypes"])
@@ -225,29 +225,29 @@ def test_model_rejects_ids_that_collide_after_yaml_quoting(container):
     payload[container]["items"] = [{"id": 7}, {"id": "7"}]
 
     with pytest.raises(ValueError, match="Duplicated"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 def test_model_rejects_invalid_dates_items_and_group_ids():
     payload = _base_payload()
     payload["dates"]["items"] = [datetime.date(2025, 1, 1)]
     with pytest.raises(ValueError, match="dates.items is not allowed"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "g1", "members": ["2025-01-01"]}, {"id": "g1", "members": ["2025-01-01"]}]
     with pytest.raises(ValueError, match="Duplicated date group ID: 'g1'"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "WEEKDAY", "members": ["2025-01-01"]}]
     with pytest.raises(ValueError, match="Date group ID 'WEEKDAY' cannot be one of the reserved values"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     payload = _base_payload()
     payload["dates"]["groups"] = [{"id": "2025-01-01", "members": ["2025-01-01"]}]
     with pytest.raises(ValueError, match="Date group ID '2025-01-01' must not be in the format"):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
 
 @pytest.mark.parametrize("field_name", ["people1", "people2", "shiftTypes"])
@@ -264,7 +264,7 @@ def test_model_rejects_scalar_shift_affinity_selections(field_name):
     payload["preferences"].append(affinity)
 
     with pytest.raises(ValidationError) as exc_info:
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     assert any(
         error["loc"][-2:] == ("ShiftAffinityPreference", field_name) and error["msg"] == "Input should be a valid list"
@@ -277,7 +277,7 @@ def test_model_rejects_nested_history_with_field_path():
     payload["people"]["items"][0]["history"] = [["D"]]
 
     with pytest.raises(ValidationError) as exc_info:
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     assert any(
         error["loc"] == ("people", "items", 0, "history", 0) and error["msg"] == "Input should be a valid string"
@@ -296,7 +296,7 @@ def test_model_rejects_scalar_succession_pattern_with_field_path():
     )
 
     with pytest.raises(ValidationError) as exc_info:
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)
 
     assert any(
         error["loc"][-2:] == ("ShiftTypeSuccessionsPreference", "pattern")
@@ -334,4 +334,4 @@ def test_model_rejects_unsupported_backend_semantics(mutate, message):
     mutate(payload)
 
     with pytest.raises(ValueError, match=message):
-        NurseSchedulingData.model_validate(payload)
+        ScheduleSpec.model_validate(payload)

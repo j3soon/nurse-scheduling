@@ -4,6 +4,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fixture_root="$(mktemp -d)"
+export AFFECTED_TEST_PYTHON
+AFFECTED_TEST_PYTHON="$(command -v python)"
 trap 'rm -rf -- "$fixture_root"' EXIT
 
 assert_line() {
@@ -34,6 +36,11 @@ for path in \
   core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md \
   core/nurse_scheduling/ai/prompts/system-steps.json \
   core/tests/test_ai_basic.py \
+  core/tests/test_ai_eval_runner.py \
+  core/tests/test_ai_ladder_audit.py \
+  core/tests/test_ai_prefix_cache_probe.py \
+  core/tests/test_ai_provider_preflight.py \
+  core/tests/test_ai_read_batch_benchmark.py \
   core/tests/test_ai_provider.py \
   core/tests/test_ai_testcases.py \
   core/tests/test_preference_audit.py \
@@ -48,6 +55,8 @@ for path in \
   web-frontend/vitest.config.ts; do
   write_fixture "$path"
 done
+
+cp -- "$script_dir/../core/tests/collection.py" "$fixture_root/core/tests/collection.py"
 
 git -C "$fixture_root" init -q
 git -C "$fixture_root" config user.name 'Affected Test Fixture'
@@ -72,6 +81,12 @@ output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 assert_line "$output" 'test: tests/test_ai_provider.py'
 assert_no_line "$output" 'test: tests/test_scheduler.py'
+
+for legacy in test_ai_eval_runner.py test_ai_ladder_audit.py test_ai_prefix_cache_probe.py test_ai_provider_preflight.py test_ai_read_batch_benchmark.py; do
+  assert_no_line "$output" "test: tests/$legacy"
+done
+output="$("$fixture_root/scripts/test_core_affected.sh" --list core/tests/test_ai_eval_runner.py)"
+assert_line "$output" 'tests: none'
 
 write_fixture core/nurse_scheduling/ai/pi/read.py
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/prompts/steps/role-and-truthfulness.md"
@@ -231,6 +246,7 @@ printf '%s\n' \
   > "$fixture_root/bin/pytest"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'if [[ ${1:-} == */tests/collection.py ]]; then exec "$AFFECTED_TEST_PYTHON" "$@"; fi' \
   'printf "mock python: %s\n" "$*"' \
   'if [[ ${MOCK_SOLVER_PREFLIGHT_FAIL:-} == 1 && ${SKIP_UNAVAILABLE_SOLVERS:-} != true ]]; then exit 2; fi' \
   > "$fixture_root/bin/python"

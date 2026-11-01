@@ -29,7 +29,7 @@ from fastapi import Request
 from fastapi.encoders import jsonable_encoder
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .anonymize_scheduling_data import anonymize_scheduling_data_in_yaml
+from .anonymize_schedule_spec import anonymize_schedule_spec_in_yaml
 from .server.auth import describe_stream_token, extract_bearer_token
 
 if TYPE_CHECKING:
@@ -231,7 +231,7 @@ def capture_optimize_exception(job: "Job", content: bytes, error: Exception) -> 
 
     import sentry_sdk
 
-    anonymized_content = anonymize_scheduling_data_in_yaml(content)
+    anonymized_content = anonymize_schedule_spec_in_yaml(content)
     content_sanitized = anonymized_content is not content
 
     # Ref: https://docs.sentry.io/platforms/python/enriching-events/scopes/

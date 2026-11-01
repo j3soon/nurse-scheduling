@@ -138,8 +138,12 @@ def test_async_reporting_runs_off_the_request_event_loop(monkeypatch):
         event_loop_thread = threading.get_ident()
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
             missing = await client.get(f"/optimize/{ISSUED_JOB_ID}")
-            malformed = await client.post("/optimize", data={"yaml_content": "%YAML 1.3\n---\na: 1\n"})
-            invalid = await client.post("/optimize", data={"yaml_content": "apiVersion: alpha", "timeout": "nope"})
+            malformed = await client.post(
+                "/schedule_spec/optimize", data={"schedule_spec_yaml": "%YAML 1.3\n---\na: 1\n"}
+            )
+            invalid = await client.post(
+                "/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha", "timeout": "nope"}
+            )
         return event_loop_thread, missing, malformed, invalid
 
     event_loop_thread, missing, malformed, invalid = asyncio.run(make_requests())
@@ -232,7 +236,7 @@ def test_yaml_that_expands_past_the_limit_is_refused_and_reported(captured):
         previous, current = chr(ord("a") + index - 1), chr(ord("a") + index)
         bomb += f"k{current}: &{current} [{','.join(f'*{previous}' for _ in range(9))}]\n".encode()
 
-    response = client.post("/optimize", data={"yaml_content": bomb.decode()})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": bomb.decode()})
 
     assert response.status_code == 400
     assert _signals(captured) == [("yaml_expansion_bomb", "error")]
@@ -241,7 +245,7 @@ def test_yaml_that_expands_past_the_limit_is_refused_and_reported(captured):
 def test_ordinary_yaml_is_not_refused_as_an_expansion(captured):
     client = _client()
 
-    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n"})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha\n"})
 
     assert response.status_code == 202
     assert captured.events == []
@@ -253,7 +257,7 @@ def test_deeply_nested_yaml_is_refused_and_reported(captured):
     depth = 10_000
     payload = "apiVersion: alpha\nx: " + "[" * depth + "]" * depth + "\n"
 
-    response = client.post("/optimize", data={"yaml_content": payload})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": payload})
 
     assert response.status_code == 400
     assert _signals(captured) == [("yaml_expansion_bomb", "error")]
@@ -264,8 +268,8 @@ def test_accepted_yaml_using_aliases_is_reported(captured):
     client = _client()
 
     response = client.post(
-        "/optimize",
-        data={"yaml_content": "apiVersion: alpha\npeople: &p [Alice, Bob]\na: *p\n"},
+        "/schedule_spec/optimize",
+        data={"schedule_spec_yaml": "apiVersion: alpha\npeople: &p [Alice, Bob]\na: *p\n"},
     )
 
     assert response.status_code == 202
@@ -276,7 +280,7 @@ def test_accepted_yaml_that_does_not_parse_is_reported(captured):
     """A real client serializes its data, so it does not submit something unparseable."""
     client = _client()
 
-    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n  bad: ["})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha\n  bad: ["})
 
     assert response.status_code == 202
     assert _signals(captured) == [("yaml_unparseable", "warning")]
@@ -286,8 +290,8 @@ def test_filling_the_queue_is_reported(captured):
     """A busy service is many addresses meeting a full queue, not one address filling it."""
     client = _client(max_pending_jobs=1, max_retained_jobs=1)
 
-    accepted = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
-    refused = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+    accepted = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
+    refused = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
 
     assert (accepted.status_code, refused.status_code) == (202, 429)
     assert _signals(captured) == [("job_capacity_exceeded", "warning")]
@@ -296,8 +300,8 @@ def test_filling_the_queue_is_reported(captured):
 def test_exceeding_the_per_address_job_limit_is_reported(captured):
     client = _client(max_pending_jobs_per_client=1)
 
-    accepted = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
-    refused = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"})
+    accepted = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
+    refused = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"})
 
     assert (accepted.status_code, refused.status_code) == (202, 429)
     assert _signals(captured) == [("client_job_capacity_exceeded", "warning")]
@@ -305,7 +309,7 @@ def test_exceeding_the_per_address_job_limit_is_reported(captured):
 
 def test_exceeding_the_per_address_event_stream_limit_is_reported(captured):
     client = _client(max_event_streams_per_client=1)
-    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    job_id = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"}).json()["id"]
     # Hold the address's only slot, as an open stream would.
     assert client.app.state.event_stream_limiter.acquire("203.0.113.7")
 
@@ -319,8 +323,8 @@ def test_timeout_beyond_the_advertised_maximum_is_reported(captured):
     client = _client()
 
     response = client.post(
-        "/optimize",
-        data={"yaml_content": "apiVersion: alpha\n", "timeout": 10**9},
+        "/schedule_spec/optimize",
+        data={"schedule_spec_yaml": "apiVersion: alpha\n", "timeout": 10**9},
     )
 
     assert response.status_code == 400
@@ -367,8 +371,8 @@ def test_accepted_request_within_the_advertised_range_is_not_reported(captured):
     client = _client()
 
     response = client.post(
-        "/optimize",
-        data={"yaml_content": "apiVersion: alpha\n", "timeout": 60},
+        "/schedule_spec/optimize",
+        data={"schedule_spec_yaml": "apiVersion: alpha\n", "timeout": 60},
     )
 
     assert response.status_code == 202
@@ -605,7 +609,7 @@ def test_a_failing_tracker_leaves_an_accepted_response_alone(captured):
     app.state.suspicion_tracker = FailingTracker()
     client = TestClient(app, client=("203.0.113.7", 40000))
 
-    response = client.post("/optimize", data={"yaml_content": "apiVersion: alpha\n  bad: ["})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha\n  bad: ["})
 
     assert response.status_code == 202
     assert response.json()["id"].startswith("job_")
@@ -615,7 +619,7 @@ def test_an_unsupported_version_directive_is_not_a_server_error(captured):
     """The parser raises a bare assertion for this, which would otherwise reach the client."""
     client = _client()
 
-    response = client.post("/optimize", data={"yaml_content": "%YAML 1.3\n---\na: 1\n"})
+    response = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "%YAML 1.3\n---\na: 1\n"})
 
     assert response.status_code == 202
     assert _signals(captured) == [("yaml_unparseable", "warning")]
@@ -672,7 +676,7 @@ def _completed_job(**overrides) -> tuple[TestClient, str]:
     app = create_app(settings=settings, store=MemoryJobStore(), runner=_CompletingRunner(), start_background=True)
     client = TestClient(app, client=("203.0.113.7", 40000))
     client.__enter__()
-    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    job_id = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"}).json()["id"]
     for _ in range(400):
         if client.get(f"/optimize/{job_id}").json()["terminal"]:
             break
@@ -698,7 +702,7 @@ def test_reading_another_browsers_job_is_reported(captured, suffix):
 
 def test_cancelling_another_browsers_job_is_reported(captured):
     client = _client()
-    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    job_id = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"}).json()["id"]
     captured.events.clear()
     client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
@@ -712,7 +716,7 @@ def test_cancelling_another_browsers_job_is_reported(captured):
 @pytest.mark.parametrize("method,suffix", [("delete", ""), ("post", "/finish-now")])
 def test_failed_control_of_another_browsers_job_is_reported(captured, method, suffix):
     client = _client()
-    job_id = client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"]
+    job_id = client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"}).json()["id"]
     captured.events.clear()
     client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)
@@ -725,7 +729,10 @@ def test_failed_control_of_another_browsers_job_is_reported(captured, method, su
 
 def test_foreign_job_access_escalates_on_distinct_jobs(captured):
     client = _client(suspicion_escalate_count=3)
-    job_ids = [client.post("/optimize", data={"yaml_content": "apiVersion: alpha"}).json()["id"] for _ in range(3)]
+    job_ids = [
+        client.post("/schedule_spec/optimize", data={"schedule_spec_yaml": "apiVersion: alpha"}).json()["id"]
+        for _ in range(3)
+    ]
     captured.events.clear()
     client.cookies.delete(CLIENT_ID_COOKIE_NAME)
     client.cookies.set(CLIENT_ID_COOKIE_NAME, uuid4().hex)

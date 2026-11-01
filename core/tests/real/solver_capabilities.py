@@ -222,8 +222,8 @@ def _wait_for_terminal(client: TestClient, job_id: str, timeout_seconds: float) 
 def _submit_job(client: TestClient, testcase: Path, solver: str, timeout_seconds: int) -> dict[str, Any]:
     """Submit the real scenario through the public optimization endpoint."""
     response = client.post(
-        "/optimize",
-        files={"file": (testcase.name, testcase.read_bytes(), "application/yaml")},
+        "/schedule_spec/optimize",
+        files={"schedule_spec_file": (testcase.name, testcase.read_bytes(), "application/yaml")},
         data={"solver": solver, "timeout": str(timeout_seconds), "prettify": "false"},
     )
     if response.status_code != 202:

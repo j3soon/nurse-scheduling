@@ -81,7 +81,7 @@ def week_bounds(week_id: str, report_timezone: tzinfo | None = None) -> tuple[da
     return starts_at, ends_at
 
 
-def schedule_basics_for(input_bytes: bytes) -> dict[str, str | int | float]:
+def schedule_spec_basics_for(input_bytes: bytes) -> dict[str, str | int | float]:
     """Extract bounded aggregate schedule fields without retaining YAML content."""
     try:
         schedule = _load_yaml(input_bytes)

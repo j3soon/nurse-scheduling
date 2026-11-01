@@ -337,7 +337,7 @@ evaluation, and is separate from the solver performance benchmark described in
 the backend server guide.
 
 `core/tests/ai_eval/cases/` holds the cases grouped by category, from questions
-answerable from the prompt summary through schedule edits to requests that must
+answerable from the prompt summary through Schedule Spec edits to requests that must
 be refused. Each case states criteria over the schedule a run produces, so
 grading does not depend on how the assistant reached it. Every run contacts the
 configured provider, so this is a manual tool rather than part of CI.
@@ -532,7 +532,7 @@ cleaned while the AI service is offline.
 | `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. Its stored uploads, generated ZIPs, and optimizer files remain in PostgreSQL and load again on demand. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
-| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It includes every active attachment and pending file write. New sessions, uploads, schedule updates, and queued steering that would exceed it get HTTP 429. A completed turn keeps its exchanges. Further input is refused while capacity is exhausted. Size the process above this budget plus the newest turn of each session. |
+| `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It includes every active attachment and pending file write. New sessions, uploads, Schedule Spec updates, and queued steering that would exceed it get HTTP 429. A completed turn keeps its exchanges. Further input is refused while capacity is exhausted. Size the process above this budget plus the newest turn of each session. |
 | `AI_COMPACTION_RESERVE_TOKENS` | `16384` | Output reserve used by Pi's automatic compaction threshold and summary budgets. |
 | `AI_COMPACTION_KEEP_RECENT_TOKENS` | `20000` | Estimated recent context retained after compaction. |
 | `AI_AGENT_MAX_PARALLEL_TOOLS` | `16` | Concurrent independent read-only tools. Mutating batches remain sequential. |
@@ -611,7 +611,7 @@ The authenticated LiteLLM model list controls model access.
 
 Users can switch models and reasoning while an answer streams. Each session saves
 its current choice. Authenticated session owners can read or change it through
-GET or PUT `/sessions/{session_id}/model-selection`, using `{model, reasoning}`.
+GET or PUT `/v1/sessions/{session_id}/model-selection`, using `{model, reasoning}`.
 Session creation also accepts an optional `selection`. A message without an
 explicit selection uses the session's current choice.
 An explicit message selection overrides that turn without changing the session
@@ -795,7 +795,7 @@ Run deterministic affected checks before live evaluations:
 ./scripts/test_frontend_affected.sh --base origin/dev
 ./scripts/test_frontend_e2e_affected.sh \
   web-frontend/e2e/experimental-ai-basic.spec.ts \
-  web-frontend/e2e/experimental-ai-schedule-changes.spec.ts
+  web-frontend/e2e/experimental-ai-schedule-spec-changes.spec.ts
 ```
 
 Use the PostgreSQL wrapper when persistence changes. Check that database cases

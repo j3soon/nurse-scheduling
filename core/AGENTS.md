@@ -146,12 +146,22 @@ stderr. Do not replace an explicitly selected file with a fallback.
 - A worker that cannot persist an execution outcome must relinquish its lease.
   Continue only after cleanup succeeds, otherwise stop the claim loop.
 
+## Compatibility
+
+Follow the root [compatibility policy](../docs/content/developer-guide/compatibility.md).
+Keep tagged frontend optimizer contracts behind isolated adapters. Development
+services upgrade together. Older AI APIs, sessions, histories, Python imports,
+and sandbox paths do not require compatibility. Keep database schema upgrades
+and current session recovery working.
+
 ## Experimental AI
 - AI test migration: follow the root `AGENTS.md` transition policy. Use only
   focused, human-reviewed cases in `tests/ai/` for new behavior checks.
-  Default pytest runs deselect the legacy checks that bind shipped prompts to
-  old evaluation evidence and removed prompt steps. Remove these temporary
-  `pyproject.toml` exclusions in the dedicated legacy-removal branch.
+  Default pytest discovery excludes legacy evaluation modules before import.
+  `tests/collection.py` shares that temporary selection policy with affected
+  checks, including explicit test paths. Remove it with the legacy suite in the
+  dedicated legacy-removal branch. Current unit tests must read fixture data
+  without importing the legacy evaluation runner.
   `tests/ai_eval/` and its ladder and receipt workflows below are legacy and
   are not maintenance requirements for this branch. Remove the legacy tests,
   references, and these transition instructions in the dedicated removal

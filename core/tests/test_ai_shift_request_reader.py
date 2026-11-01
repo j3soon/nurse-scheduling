@@ -22,6 +22,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -30,7 +31,14 @@ from nurse_scheduling.ai.attachment_tools.inspect_shift_requests import inspect_
 from nurse_scheduling.ai.result_context import build_result_context
 from nurse_scheduling.ai.workspace import REFERENCE_ATTACHMENT_TOOLS
 
-from .ai_eval.runner import fixture_text
+FIXTURES = {
+    "ward87": Path(__file__).parent / "testcases/real/large-ward-with-87-people-2025-11.yaml",
+    "request-audit-groups": Path(__file__).parent / "ai_eval/fixtures/request-audit-groups.yaml",
+}
+
+
+def fixture_text(fixture: str) -> str:
+    return FIXTURES[fixture].read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

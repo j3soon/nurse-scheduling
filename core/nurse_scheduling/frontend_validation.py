@@ -26,8 +26,8 @@ from typing_extensions import Self
 
 from .loader import _load_yaml
 from .models import (
-    NurseSchedulingData,
     Person,
+    ScheduleSpec,
     ShiftAffinityPreference,
     ShiftCountPreference,
     ShiftRequestPreference,
@@ -52,7 +52,7 @@ def _require_flat_string_list(value: Any, path: str) -> None:
         _require_string(item, f"{path}[{index}]")
 
 
-class _FrontendNurseSchedulingData(NurseSchedulingData):
+class _FrontendScheduleSpec(ScheduleSpec):
     """Backend schedule format constrained to shapes editable by the web UI."""
 
     @model_validator(mode="after")
@@ -129,11 +129,11 @@ class _FrontendNurseSchedulingData(NurseSchedulingData):
         return self
 
 
-def load_frontend_data(content: bytes) -> NurseSchedulingData:
+def load_frontend_data(content: bytes) -> ScheduleSpec:
     """Parse YAML with backend schedule validation and the frontend subset policy."""
-    return _FrontendNurseSchedulingData.model_validate(_load_yaml(content, reject_aliases=True))
+    return _FrontendScheduleSpec.model_validate(_load_yaml(content, reject_aliases=True))
 
 
-def validate_frontend_data(data: NurseSchedulingData) -> NurseSchedulingData:
-    """Apply the frontend subset policy to an already validated schedule."""
-    return _FrontendNurseSchedulingData.model_validate(data.model_dump(mode="python"))
+def validate_frontend_data(data: ScheduleSpec) -> ScheduleSpec:
+    """Apply the frontend subset policy to an already validated Schedule Spec."""
+    return _FrontendScheduleSpec.model_validate(data.model_dump(mode="python"))

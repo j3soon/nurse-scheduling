@@ -86,7 +86,7 @@ SCHEMA_PATHS = tuple(SCHEMA_TOPICS)
 SCHEMA_REFERENCE_GROUPS = {group: tuple(_parse_topics(reference)) for group, reference in SCHEMA_REFERENCES.items()}
 EXAMPLE_PATHS = tuple(path for path, topic in SCHEMA_TOPICS.items() if topic.example is not None)
 MODEL_TOPIC_COVERAGE = {
-    models.NurseSchedulingData: ("schedule",),
+    models.ScheduleSpec: ("schedule",),
     models.DateContainer: ("dates",),
     models.DateRange: ("dates.range",),
     models.DateGroup: ("dates.groups",),

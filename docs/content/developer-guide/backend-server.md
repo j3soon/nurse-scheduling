@@ -111,7 +111,7 @@ index, so Redis prunes them first, ordered by finish time and then job ID.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued: POST /optimize
+    [*] --> queued: POST /schedule_spec/optimize
     queued --> running: worker claims job
     queued --> cancelled: cancel
     running --> completed: result
@@ -184,7 +184,7 @@ checkpointing it outside the child process.
 | `GET` | `/info` | Check readiness and report versions, job activity, online workers, and whether authentication is required. Always public. |
 | `GET` | `/ready` | Return a minimal readiness result for routing and deployment probes. Always public. |
 | `GET` | `/optimize/options` | Return the solver choices and run-option defaults accepted by this deployment. |
-| `POST` | `/optimize` | Validate multipart input and enqueue a job. |
+| `POST` | `/schedule_spec/optimize` | Validate multipart input and enqueue a job. |
 | `GET` | `/optimize/{job_id}` | Return the current job representation. |
 | `GET` | `/optimize/{job_id}/events` | Replay and stream job events over SSE. |
 | `POST` | `/optimize/{job_id}/cancel` | Cancel a queued or running job. |
@@ -192,7 +192,7 @@ checkpointing it outside the child process.
 | `GET` | `/optimize/{job_id}/xlsx` | Download the optimized schedule XLSX artifact. |
 | `DELETE` | `/optimize/{job_id}` | Delete a terminal job and its retained data. |
 
-The `POST /optimize` response includes `backend` with the accepting API
+The `POST /schedule_spec/optimize` response includes `backend` with the accepting API
 instance's app and API versions, service name, deployment ID, instance ID, and
 claimed performance. Capture it from that response, since a separate `/info`
 request can reach another instance. Later job responses set `backend` to null.
@@ -277,9 +277,9 @@ Submit either a YAML file or a YAML string, but not both:
 ```sh
 curl -i \
   -H "Authorization: Bearer $API_AUTH_TOKEN" \
-  -F file=@core/tests/testcases/basics/01_1nurse_1shift_1day.yaml \
+  -F schedule_spec_file=@core/tests/testcases/basics/01_1nurse_1shift_1day.yaml \
   -F timeout=60 \
-  "$API_URL/optimize"
+  "$API_URL/schedule_spec/optimize"
 ```
 
 The server returns `202 Accepted`, the job representation, a `Location` header,
@@ -561,3 +561,15 @@ dedicated database:
 JOB_REDIS_TEST_URL=redis://localhost:6379/15 \
 pytest --log-cli-level=INFO tests/test_optimize_job_backends.py
 ```
+
+### Schedule Spec submission compatibility
+
+`POST /schedule_spec/optimize` accepts exactly one input: multipart
+`schedule_spec_file` or `schedule_spec_yaml`. Solver options keep their existing
+names. Assignment downloads remain under `/optimize/{job_id}/xlsx`.
+`server/api/compat.py` forwards the legacy `POST /optimize` form fields `file`
+and `yaml_content` to the current handler with the same authentication and input
+limits. Remove this adapter only when support for legacy optimizer clients ends.
+
+The development frontend submits only the current Schedule Spec form, as defined
+in the [compatibility policy](compatibility.md).

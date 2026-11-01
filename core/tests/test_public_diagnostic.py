@@ -86,7 +86,7 @@ class QueueApi:
                 headers={"Cache-Control": "no-store"},
                 json={"status": "ready", **self._identity(instance)},
             )
-        if request.method == "POST" and path == "/optimize":
+        if request.method == "POST" and path == "/schedule_spec/optimize":
             job_id = f"job-{len(self.jobs) + 1}"
             running = sum(state == "running" for state in self.jobs.values())
             state = "running" if running < self.concurrency else "queued"
@@ -487,7 +487,7 @@ def test_info_sampling_reports_mixed_backends_and_stores(tmp_path):
                     "job_store_id": f"{backend}-store",
                 },
             )
-        if request.url.path == "/optimize":
+        if request.url.path == "/schedule_spec/optimize":
             return httpx.Response(429)
         return httpx.Response(404)
 
@@ -528,7 +528,7 @@ def test_public_diagnostic_stops_submitting_after_known_job_is_missing(tmp_path)
                     "job_store_id": "production-primary",
                 },
             )
-        if request.method == "POST" and request.url.path == "/optimize":
+        if request.method == "POST" and request.url.path == "/schedule_spec/optimize":
             submissions += 1
             return httpx.Response(202, json={"id": f"job-{submissions}", "state": "running"})
         if request.method == "GET" and request.url.path.startswith("/optimize/"):

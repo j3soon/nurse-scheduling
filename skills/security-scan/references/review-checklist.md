@@ -53,7 +53,7 @@ file and line that shows the control, or the reproduction when it is missing.
 
 - E2B sandboxes have outbound Internet access disabled and receive no keys,
   database credentials, or host paths.
-- Sandbox output reaches the user only as a validated schedule proposal or a
+- Sandbox output reaches the user only as a validated Schedule Spec proposal or a
   bounded download.
 
 ## Output

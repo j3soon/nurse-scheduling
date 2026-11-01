@@ -76,7 +76,7 @@ def _build_custom_export_style_info(
         if font_color:
             style_map[key]["fontColor"] = font_color
 
-    compiled_rules = ctx.compiled_schedule.export.formatting
+    compiled_rules = ctx.compiled_schedule_spec.export.formatting
     for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
         target_people = set(compiled_rule.people)
         target_dates = set(compiled_rule.dates)
@@ -249,7 +249,7 @@ def _build_cell_annotation_rules(ctx: Context):
         return []
 
     annotation_rules = []
-    compiled_rules = ctx.compiled_schedule.export.formatting
+    compiled_rules = ctx.compiled_schedule_spec.export.formatting
     for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
         if rule.type != "cell" or not rule.when or (not rule.appendText and not rule.note):
             continue
@@ -299,7 +299,7 @@ def _iter_matching_cell_preferences(
     target_shift_types: set[int],
     condition,
 ):
-    for pref, compiled_pref in zip(ctx.scenario.preferences, ctx.compiled_schedule.preferences, strict=True):
+    for pref, compiled_pref in zip(ctx.scenario.preferences, ctx.compiled_schedule_spec.preferences, strict=True):
         if not isinstance(compiled_pref, models.CompiledShiftRequest):
             continue
         if pref.weight == 0:
@@ -334,7 +334,7 @@ def _iter_matching_cell_preferences(
 
 def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     scenario = ctx.scenario
-    dates = ctx.compiled_schedule.dates
+    dates = ctx.compiled_schedule_spec.dates
     people = scenario.people.items
     shift_types = scenario.shiftTypes.items
     export_config = scenario.export
@@ -486,7 +486,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     if prettify:
         extra_col_start = n_leading_cols + n_history_cols + len(dates) + 1
-        compiled_extra_columns = ctx.compiled_schedule.export.extra_columns
+        compiled_extra_columns = ctx.compiled_schedule_spec.export.extra_columns
         for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_column_rules, compiled_extra_columns, strict=True)):
             col_idx = extra_col_start + rule_idx
             coefficients = dict(compiled_rule.coefficients)
@@ -501,7 +501,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 )
 
         extra_row_start = n_leading_rows + len(people) + n_trailing_rows + 1
-        compiled_extra_rows = ctx.compiled_schedule.export.extra_rows
+        compiled_extra_rows = ctx.compiled_schedule_spec.export.extra_rows
         for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_row_rules, compiled_extra_rows, strict=True)):
             row_idx = extra_row_start + rule_idx
             df.iloc[row_idx, 0] = rule.header

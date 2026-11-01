@@ -25,7 +25,7 @@ from typing import Any, NamedTuple
 
 from . import exporter, preference_types
 from .context import Context
-from .loader import load_data
+from .loader import load_schedule_spec
 from .model_build_stats import ModelBuildStats, emit_model_build_stats, start_model_build_step
 from .solver_interface import SchedulePhaseProgress, ScheduleProgress, SolverStatus
 
@@ -144,13 +144,13 @@ def schedule(
     _emit_phase_progress(
         progress_callback,
         "loading_scenario",
-        "Loading schedule configuration",
+        "Loading Schedule Spec",
         progress_started_at,
     )
     logger.info("Loading scenario from file content...")
-    scenario = load_data(file_content)
+    scenario = load_schedule_spec(file_content)
 
-    _emit_phase_progress(progress_callback, "parsing_data", "Parsing schedule data", progress_started_at)
+    _emit_phase_progress(progress_callback, "parsing_data", "Parsing Schedule Spec", progress_started_at)
     logger.info("Extracting scenario data...")
     ctx = Context.from_validated(scenario)
     del scenario
@@ -329,7 +329,7 @@ def schedule(
         preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](
             ctx,
             preference,
-            ctx.compiled_schedule.preferences[i],
+            ctx.compiled_schedule_spec.preferences[i],
             i,
         )
         emit_model_build_stats(

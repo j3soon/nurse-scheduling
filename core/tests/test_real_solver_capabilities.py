@@ -382,3 +382,17 @@ def test_markdown_report_uses_requested_column_order():
         "| Selector | Available | Timeout | Cancel | Finish now | Intermediate scores | Notes |"
     )
     assert "`ortools/cp-sat` | Yes | PASS | PASS | PASS | PASS" in markdown
+
+
+def test_submission_reaches_the_current_optimizer_api():
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from nurse_scheduling.server.app import create_app
+    from nurse_scheduling.server.config import ServerSettings
+
+    testcase = Path(__file__).parent / "testcases/basics/01_1nurse_1shift_1day.yaml"
+    with TestClient(create_app(settings=ServerSettings(), start_background=False)) as client:
+        job = solver_capabilities._submit_job(client, testcase, "ortools/cp-sat", 20)
+    assert job["state"] == "queued"

@@ -28,7 +28,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from nurse_scheduling.constants import OFF, OFF_sid
-from nurse_scheduling.loader import load_data
+from nurse_scheduling.loader import load_schedule_spec
 from nurse_scheduling.models import CompiledShiftRequest, CompiledShiftTypeRequirements, CompiledShiftTypeSuccessions
 from nurse_scheduling.preference_audit import audit_staffing_and_successions
 
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 def build_result_context(schedule_yaml: str, *, workbook: bytes | None = None) -> dict[str, Any]:
     """Project compiled selectors into a portable result-reader context."""
-    data = load_data(schedule_yaml.encode())
+    data = load_schedule_spec(schedule_yaml.encode())
     context = _project_context(data, schedule_yaml)
     if workbook is not None:
         try:
@@ -62,7 +62,7 @@ def build_result_context(schedule_yaml: str, *, workbook: bytes | None = None) -
 
 
 def _project_context(data, schedule_yaml: str) -> dict[str, Any]:
-    compiled = data.compiled_schedule
+    compiled = data.compiled_schedule_spec
     people = [person.id for person in data.people.items]
     shifts = [shift.id for shift in data.shiftTypes.items]
     dates = [date.isoformat() for date in compiled.dates]
@@ -95,7 +95,7 @@ def _project_context(data, schedule_yaml: str) -> dict[str, Any]:
 def _policy_audit(data, context, path):
     if not any(
         isinstance(pref, (CompiledShiftTypeRequirements, CompiledShiftTypeSuccessions))
-        for pref in data.compiled_schedule.preferences
+        for pref in data.compiled_schedule_spec.preferences
     ):
         return None
     assignments, _, _ = _read_assignments(path, context)
@@ -117,7 +117,7 @@ def _policy_audit(data, context, path):
 def build_request_audit(schedule_yaml: str, workbook: bytes) -> dict[str, Any]:
     """Return bounded counts from the submitted snapshot or explain why they are unavailable."""
     try:
-        data = load_data(schedule_yaml.encode())
+        data = load_schedule_spec(schedule_yaml.encode())
         context = _project_context(data, schedule_yaml)
         policy = None
         with TemporaryDirectory() as directory:

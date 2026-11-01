@@ -88,8 +88,8 @@ def concrete(path: str) -> str:
 
 def submit(client: httpx.Client, url: str, address: str, timeout: int = 20, **headers: str) -> httpx.Response:
     return client.post(
-        f"{url}/optimize",
-        files={"file": ("ward.yaml", LONG_SCHEDULE.read_bytes(), "application/yaml")},
+        f"{url}/schedule_spec/optimize",
+        files={"schedule_spec_file": ("ward.yaml", LONG_SCHEDULE.read_bytes(), "application/yaml")},
         data={"timeout": str(timeout), "prettify": "false"},
         headers={"X-Forwarded-For": address, **headers},
     )
@@ -150,7 +150,7 @@ def check_api(client: httpx.Client, stack: dict[str, str]) -> None:
     response = client.get(f"{keyed_url}/optimize/options", params={"token": stack["API_TOKEN"]})
     check("api keyed: a key in the query string is refused", response.status_code == 401, str(response.status_code))
     check("api keyed: generated docs are hidden", client.get(f"{keyed_url}/openapi.json").status_code == 404)
-    check_cors(client, "api", open_url, "/optimize", "POST")
+    check_cors(client, "api", open_url, "/schedule_spec/optimize", "POST")
 
     # The scanner stands in for NGINX, which sets one forwarded address per visitor.
     created = []
@@ -191,32 +191,32 @@ def check_api(client: httpx.Client, stack: dict[str, str]) -> None:
             client.post(f"{open_url}/optimize/{job_id}/cancel")
 
     big = b"a" * (3 * 1024 * 1024)
-    response = client.post(f"{open_url}/optimize", content=big, headers={"Content-Type": "application/x-yaml"})
+    response = client.post(f"{open_url}/schedule_spec/optimize", content=big, headers={"Content-Type": "application/x-yaml"})
     check("api: an oversize declared body is refused", response.status_code == 413, str(response.status_code))
 
     def chunks() -> Iterator[bytes]:
-        boundary = b'--scan\r\nContent-Disposition: form-data; name="yaml_content"\r\n\r\n'
+        boundary = b'--scan\r\nContent-Disposition: form-data; name="schedule_spec_yaml"\r\n\r\n'
         yield boundary
         for _ in range(48):
             yield b"a" * (64 * 1024)
         yield b"\r\n--scan--\r\n"
 
     response = client.post(
-        f"{open_url}/optimize", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=scan"}
+        f"{open_url}/schedule_spec/optimize", content=chunks(), headers={"Content-Type": "multipart/form-data; boundary=scan"}
     )
     check("api: an oversize chunked body is refused", response.status_code == 413, str(response.status_code))
     bomb = "a: &a [x, x, x, x, x, x, x, x, x]\n" + "".join(
         f"{chr(98 + index)}: &{chr(98 + index)} [{', '.join([f'*{chr(97 + index)}'] * 9)}]\n" for index in range(8)
     )
-    response = client.post(f"{open_url}/optimize", data={"yaml_content": bomb})
+    response = client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": bomb})
     check("api: a YAML alias bomb is refused", response.status_code == 400, str(response.status_code))
-    response = client.post(f"{open_url}/optimize", data={"yaml_content": "[" * 5000})
+    response = client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "[" * 5000})
     check("api: deeply nested YAML is refused", response.status_code == 400, str(response.status_code))
     probes = [
-        client.post(f"{open_url}/optimize", content=b"--x\r\nbroken", headers={"Content-Type": "multipart/form-data"}),
+        client.post(f"{open_url}/schedule_spec/optimize", content=b"--x\r\nbroken", headers={"Content-Type": "multipart/form-data"}),
         client.get(f"{open_url}/optimize/{'%00' * 4}"),
-        client.post(f"{open_url}/optimize", data={"yaml_content": "a", "timeout": "1e309"}),
-        client.post(f"{open_url}/optimize", data={"yaml_content": "a", "solver": "../../bin/sh"}),
+        client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "timeout": "1e309"}),
+        client.post(f"{open_url}/schedule_spec/optimize", data={"schedule_spec_yaml": "a", "solver": "../../bin/sh"}),
     ]
     leaking = [f"{response.request.method} {response.status_code}" for response in probes if leaks_internals(response)]
     check("api: malformed requests do not reveal internals", not leaking, ", ".join(leaking))
