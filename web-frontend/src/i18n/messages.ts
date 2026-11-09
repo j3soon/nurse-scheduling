@@ -19,7 +19,7 @@
 // This code is mostly AI generated.
 
 import { en } from './en';
-import { zhTW } from './zhTW';
+import { zhTW } from './zh-TW';
 
 export type Locale = 'en' | 'zh-TW';
 export type MessageKey = keyof typeof en;

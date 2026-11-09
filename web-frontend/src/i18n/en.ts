@@ -968,5 +968,6 @@ export const en = {
   "Enter": "Enter",
   "Estimated current": "Estimated current",
   "Current": "Current",
-  "e.g., -1, -10k, ∞": "e.g., -1, -10k, ∞"
+  "e.g., -1, -10k, ∞": "e.g., -1, -10k, ∞",
+  "Language": "Language"
 } as const;

@@ -21,6 +21,7 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
+import { isLocale, localeNames } from '@/i18n/messages';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
@@ -37,7 +38,7 @@ import {
 } from '@/utils/version';
 
 export default function Home() {
-  const { t } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const router = useRouter();
   const { createNewState, loadFromYaml } = useScheduleSpec();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -141,6 +142,23 @@ export default function Home() {
         </div>
         <p className="text-lg text-gray-600 mb-8">
           {t("Welcome to the Nurse Scheduling System. Use the tabs above to navigate.")}</p>
+        <div className="mb-8 flex flex-wrap items-center justify-center gap-3">
+          <label htmlFor="interface-language" className="text-sm font-medium text-gray-700">
+            {t('Language')}
+          </label>
+          <select
+            id="interface-language"
+            value={locale}
+            onChange={event => {
+              if (isLocale(event.target.value)) setLocale(event.target.value);
+            }}
+            className="min-h-11 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {Object.entries(localeNames).map(([value, name]) => (
+              <option key={value} value={value} lang={value}>{name}</option>
+            ))}
+          </select>
+        </div>
         {!isStableReleaseVersion(CURRENT_APP_VERSION) && (
           <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-800">

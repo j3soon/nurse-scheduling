@@ -971,5 +971,6 @@ export const zhTW: Catalog = {
   "Enter": "輸入",
   "Estimated current": "目前預估的",
   "Current": "目前的",
-  "e.g., -1, -10k, ∞": "例如：-1、-10k、∞"
+  "e.g., -1, -10k, ∞": "例如：-1、-10k、∞",
+  "Language": "語言"
 };

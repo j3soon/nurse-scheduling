@@ -47,6 +47,8 @@ test.describe('Traditional Chinese interface', () => {
       await page.goto(path);
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
       await expect(page.locator('html')).toHaveAttribute('lang', 'zh-TW');
+      await expect(page).toHaveTitle('護理人員排班系統');
+      await expect(page.locator('head title')).toHaveCount(1);
     }
     await expect(page.getByRole('textbox', { name: '詢問目前的排班設定' })).toBeVisible();
     await page.goto('/people');
@@ -63,7 +65,73 @@ test.describe('Traditional Chinese interface', () => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'Nurse Scheduling System', exact: true })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+    await expect(page).toHaveTitle('Nurse Scheduling System');
     await page.reload();
     await expect(page.getByRole('button', { name: 'New Schedule Spec', exact: true })).toBeVisible();
+  });
+});
+
+test.describe('manual language selection', () => {
+  test.use({ locale: 'en-US' });
+
+  test('remembers the choice without changing Schedule Spec data or Undo/Redo history', async ({ page }) => {
+    await disableModalDialogs(page);
+    await seedMinimalScheduleSpecState(page);
+    await page.goto('/people');
+    await expect(page.getByTestId('data-table-people').getByTitle('1. Person 1', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Add Person', exact: true }).click();
+    await page.getByPlaceholder('Enter person ID', { exact: true }).fill('Nurse Kept');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(page.getByTestId('data-table-people').getByTitle('2. Nurse Kept', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '0. Home', exact: true }).click();
+    const snapshot = () => page.evaluate(() => Object.fromEntries(
+      Object.keys(localStorage).filter(key => key.startsWith('nurse-scheduling-spec'))
+        .map(key => [key, localStorage.getItem(key)]),
+    ));
+    const before = await snapshot();
+    await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+    await expect(page.getByRole('heading', { name: '護理人員排班系統', exact: true })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-TW');
+      await expect(page).toHaveTitle('護理人員排班系統');
+      await expect(page.locator('head title')).toHaveCount(1);
+    await expect(page).toHaveURL(/\/$/);
+    expect(await snapshot()).toEqual(before);
+    await page.reload();
+    await expect(page.getByRole('combobox', { name: '語言', exact: true })).toHaveValue('zh-TW');
+    await page.getByRole('button', { name: '2. 人員', exact: true }).click();
+    const people = page.getByTestId('data-table-people');
+    await expect(people.getByTitle('2. Nurse Kept', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '復原', exact: true }).click();
+    await expect(people.getByTitle('2. Nurse Kept', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: '重做', exact: true }).click();
+    await expect(people.getByTitle('2. Nurse Kept', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '0. 首頁', exact: true }).click();
+    await page.getByRole('combobox', { name: '語言', exact: true }).selectOption('en');
+    await page.reload();
+    await expect(page.getByRole('combobox', { name: 'Language', exact: true })).toHaveValue('en');
+    await expect(page).toHaveTitle('Nurse Scheduling System');
+  });
+});
+
+test.describe('language selection on a phone', () => {
+  test.use({ locale: 'en-US', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('keeps the selector and populated editing forms within the viewport', async ({ page }) => {
+    await disableModalDialogs(page);
+    await seedMinimalScheduleSpecState(page);
+    await page.reload();
+    await page.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+    const selector = page.getByRole('combobox', { name: '語言', exact: true });
+    await expect(selector).toHaveValue('zh-TW');
+    const bounds = await selector.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    await page.getByRole('button', { name: '2. 人員', exact: true }).tap();
+    await expect(page.getByTestId('data-table-people').getByTitle('1. Person 1', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '新增人員', exact: true }).tap();
+    await expect(page.getByRole('heading', { name: '新增人員', exact: true })).toBeVisible();
+    const size = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: window.innerWidth }));
+    expect(size.width).toBeLessThanOrEqual(size.viewport);
   });
 });
