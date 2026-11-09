@@ -19,6 +19,9 @@
 
 // A table component that allows reordering of rows by dragging the mouse.
 // Note that this file highly duplicates with DraggableCardList.tsx.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { ReorderButtons } from './ReorderButtons';
 import { ReactNode, useRef, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
@@ -47,6 +50,7 @@ interface DataTableProps<T> {
 }
 
 export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer, fixedLayout = false }: DataTableProps<T>) {
+  const { t } = useI18n();
   const draggedRowIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
 
@@ -167,7 +171,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                       : String(item[column.accessor])}
                     {colIndex === 0 && isDraggable && (
                       <ReorderButtons
-                        label={`${title} row ${rowIndex + 1}`}
+                        label={t("{value0} row {value1}", { value0: title, value1: rowIndex + 1 })}
                         canMoveUp={rowIndex > 0 && !getRowClassName?.(data[rowIndex - 1], rowIndex - 1).includes('non-draggable')}
                         canMoveDown={rowIndex < data.length - 1 && !getRowClassName?.(data[rowIndex + 1], rowIndex + 1).includes('non-draggable')}
                         onMove={direction => {

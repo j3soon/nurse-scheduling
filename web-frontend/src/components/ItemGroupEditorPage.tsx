@@ -20,6 +20,8 @@
 // A component for managing a list of items and groups, and the relationships between them.
 'use client';
 
+import { translator, type Translator } from '@/i18n/messages';
+import { useI18n } from '@/i18n/I18nProvider';
 import React, { useState, useEffect } from 'react';
 import { DataTable } from '@/components/DataTable';
 import { AddEditItemGroupForm } from '@/components/AddEditItemGroupForm';
@@ -34,16 +36,16 @@ import { saveScrollPosition, restoreScrollPosition } from '@/utils/scrolling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
-const getLabels = (dataType: DataType) => {
+const getLabels = (dataType: DataType, t: Translator = translator('en')) => {
   switch (dataType) {
     case DataType.DATES:
-      return { itemLabel: 'Date', itemLabelPlural: 'Dates' };
+      return { itemLabel: t("Date"), itemLabelPlural: t("Dates") };
     case DataType.PEOPLE:
-      return { itemLabel: 'Person', itemLabelPlural: 'People' };
+      return { itemLabel: t("Person"), itemLabelPlural: t("People") };
     case DataType.SHIFT_TYPES:
-      return { itemLabel: 'Shift Type', itemLabelPlural: 'Shift Types' };
+      return { itemLabel: t("Shift Type"), itemLabelPlural: t("Shift Types") };
     default:
-      return { itemLabel: 'Item', itemLabelPlural: 'Items' };
+      return { itemLabel: t("Item"), itemLabelPlural: t("Items") };
   }
 };
 
@@ -109,8 +111,9 @@ export default function ItemGroupEditorPage({
   filterItemGroups,
   renderGroupMemberSelector,
 }: ItemGroupEditorPageProps) {
+  const { t } = useI18n();
 
-  const { itemLabel, itemLabelPlural } = getLabels(dataType);
+  const { itemLabel, itemLabelPlural } = getLabels(dataType, t);
   useTabSwitchWarning(mode === Mode.ADDING || mode === Mode.EDITING || mode === Mode.INLINE_EDITING);
 
   const [draft, setDraft] = useState<{
@@ -142,17 +145,17 @@ export default function ItemGroupEditorPage({
     const trimmedId = draft.id.trim();
     const trimmedDescription = draft.description.trim();
     if (!trimmedId) {
-      setError(`${draft.isItem ? itemLabel : "Group"} ID cannot be empty`);
+      setError(t("{value0} ID cannot be empty", { value0: draft.isItem ? itemLabel : t("Group") }));
       return;
     }
 
     if (isReservedKeyword(dataType, trimmedId)) {
-      setError(`"${trimmedId}" is a reserved keyword and cannot be used as an ID`);
+      setError(t("\"{value0}\" is a reserved keyword and cannot be used as an ID", { value0: trimmedId }));
       return;
     }
 
     if (isDuplicateId(trimmedId, draft.editingId)) {
-      setError(`This ID is already used by another ${itemLabel.toLowerCase()} or group`);
+      setError(t("This ID is already used by another {value0} or group", { value0: itemLabel.toLowerCase() }));
       return;
     }
 
@@ -453,17 +456,17 @@ export default function ItemGroupEditorPage({
 
     if (field === 'id') {
       if (!value) {
-        setError(`${isItem ? itemLabel : "Group"} ID cannot be empty`);
+        setError(t("{value0} ID cannot be empty", { value0: isItem ? itemLabel : t("Group") }));
         return;
       }
 
       if (isReservedKeyword(dataType, value)) {
-        setError(`"${value}" is a reserved keyword and cannot be used as an ID`);
+        setError(t("\"{value0}\" is a reserved keyword and cannot be used as an ID", { value0: value }));
         return;
       }
 
       if (isDuplicateId(value, id)) {
-        setError(`This ID is already used by another ${isItem ? itemLabel.toLowerCase() : "group"}`);
+        setError(t("This ID is already used by another {value0}", { value0: isItem ? itemLabel.toLowerCase() : t("group") }));
         return;
       }
 
@@ -572,14 +575,14 @@ export default function ItemGroupEditorPage({
           {extraButtons}
           {!itemsReadOnly && (
             <ToggleButton
-              label={`Add ${itemLabel}`}
+              label={t("Add {value0}", { value0: itemLabel })}
               isToggled={mode === Mode.ADDING && draft.isItem}
               onToggle={() => handleStartAdding(true)}
             />
           )}
           {!groupsReadOnly && (
             <ToggleButton
-              label={`Add Group`}
+              label={t("Add Group")}
               isToggled={mode === Mode.ADDING && !draft.isItem}
               onToggle={() => handleStartAdding(false)}
             />
@@ -621,7 +624,7 @@ export default function ItemGroupEditorPage({
         />
 
         <DataTable
-          title={itemLabelPlural + ' Groups'}
+          title={itemLabelPlural + t(" Groups")}
           columns={groupColumns}
           data={groups}
           onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : handleReorderGroups}

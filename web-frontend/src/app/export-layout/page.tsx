@@ -20,6 +20,8 @@
 // The export layout page for Tab "9. Export Layout"
 'use client';
 
+import { translator, type Translator } from '@/i18n/messages';
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
@@ -150,13 +152,13 @@ const createEmptyDraft = (): DraftRule => ({
   noteText: '',
 });
 
-const getPickerDisplay = (value: string) => {
+const getPickerDisplay = (value: string, t: Translator = translator('en')) => {
   const isValidHexColor = HEX_COLOR_PATTERN.test(value);
   const hasColorInput = value.length > 0;
   const pickerValue = isValidHexColor ? value : '#ffffff';
   const pickerText = hasColorInput
     ? (isValidHexColor ? value : '(Invalid)')
-    : 'Default';
+    : t("Default");
   const pickerTextColor = (() => {
     if (hasColorInput && !isValidHexColor) return '#b91c1c';
     if (!isValidHexColor) return '#4b5563';
@@ -171,6 +173,7 @@ const getPickerDisplay = (value: string) => {
 };
 
 export default function ExportFormattingPage() {
+  const { t } = useI18n();
   const {
     effectiveExportData,
     updateExportFormatting,
@@ -195,7 +198,7 @@ export default function ExportFormattingPage() {
   const extraRows = effectiveExportData.extraRows || [];
 
   const clearAllExportLayoutEntries = () => {
-    if (confirm('Are you sure you want to clear ALL export layout entries?')) {
+    if (confirm(t("Are you sure you want to clear ALL export layout entries?"))) {
       updateExportConfig({
         formatting: [],
         extraColumns: [],
@@ -205,25 +208,25 @@ export default function ExportFormattingPage() {
   };
 
   const clearAllAndRegenerateExportLayoutEntries = () => {
-    if (confirm('Are you sure you want to clear ALL export layout entries and regenerate them?')) {
+    if (confirm(t("Are you sure you want to clear ALL export layout entries and regenerate them?"))) {
       updateExportConfig(undefined);
     }
   };
 
   const clearStyleRules = () => {
-    if (confirm('Are you sure you want to clear all export style rules?')) {
+    if (confirm(t("Are you sure you want to clear all export style rules?"))) {
       updateExportFormatting([]);
     }
   };
 
   const clearExtraColumns = () => {
-    if (confirm('Are you sure you want to clear all export extra columns?')) {
+    if (confirm(t("Are you sure you want to clear all export extra columns?"))) {
       updateExportExtraColumns([]);
     }
   };
 
   const clearExtraRows = () => {
-    if (confirm('Are you sure you want to clear all export extra rows?')) {
+    if (confirm(t("Are you sure you want to clear all export extra rows?"))) {
       updateExportExtraRows([]);
     }
   };
@@ -296,7 +299,7 @@ export default function ExportFormattingPage() {
   const validateColor = (value: string, fieldLabel: string): string | null => {
     if (!value) return null;
     if (!HEX_COLOR_PATTERN.test(value)) {
-      return `${fieldLabel} must be a valid hex color in #RRGGBB format`;
+      return t("{value0} must be a valid hex color in #RRGGBB format", { value0: fieldLabel });
     }
     return null;
   };
@@ -364,7 +367,7 @@ export default function ExportFormattingPage() {
       noteText: 'note' in rule ? rule.note?.text || '' : '',
     });
     setErrors(weightRange !== undefined && !hasValidWeightRange
-      ? { weightRangeMin: 'Weight Range must contain exactly two values' }
+      ? { weightRangeMin: t("Weight Range must contain exactly two values") }
       : {});
     setEditingTarget({ kind: 'style', index });
     setIsFormVisible(true);
@@ -433,10 +436,10 @@ export default function ExportFormattingPage() {
     label: string,
     selectedIds: string[],
     options: SelectOption[],
-    invalidMessage = `Selected ${label.toLowerCase()} are invalid for this rule type`
+    invalidMessage = t("Selected {value0} are invalid for this rule type", { value0: label.toLowerCase() })
   ) => {
     if (selectedIds.length === 0) {
-      return `Select at least one ${label.toLowerCase()}`;
+      return t("Select at least one {value0}", { value0: label.toLowerCase() });
     }
 
     const validIds = new Set(options.map(option => option.id));
@@ -457,7 +460,7 @@ export default function ExportFormattingPage() {
       if (error) nextErrors.dates = error;
     }
     if (styleUsesShiftTypes(draft.type)) {
-      const error = getSelectedOptionsError('shift types', draft.shiftTypes, shiftTypeOptions);
+      const error = getSelectedOptionsError(t("shift types"), draft.shiftTypes, shiftTypeOptions);
       if (error) nextErrors.shiftTypes = error;
     }
   };
@@ -469,24 +472,24 @@ export default function ExportFormattingPage() {
       return undefined;
     }
     if (!minInput || !maxInput) {
-      if (!minInput) nextErrors.weightRangeMin = 'Weight Range minimum is required when maximum is set';
-      if (!maxInput) nextErrors.weightRangeMax = 'Weight Range maximum is required when minimum is set';
+      if (!minInput) nextErrors.weightRangeMin = t("Weight Range minimum is required when maximum is set");
+      if (!maxInput) nextErrors.weightRangeMax = t("Weight Range maximum is required when minimum is set");
       return null;
     }
     const minWeight = parseWeightValue(minInput);
     const maxWeight = parseWeightValue(maxInput);
     if (!isValidWeightValue(minWeight) || !isValidWeightValue(maxWeight)) {
       if (!isValidWeightValue(minWeight)) {
-        nextErrors.weightRangeMin = 'Minimum Weight must be a valid number, Infinity, or -Infinity';
+        nextErrors.weightRangeMin = t("Minimum Weight must be a valid number, Infinity, or -Infinity");
       }
       if (!isValidWeightValue(maxWeight)) {
-        nextErrors.weightRangeMax = 'Maximum Weight must be a valid number, Infinity, or -Infinity';
+        nextErrors.weightRangeMax = t("Maximum Weight must be a valid number, Infinity, or -Infinity");
       }
       return null;
     }
     if (minWeight > maxWeight) {
-      nextErrors.weightRangeMin = 'Weight Range minimum must be less than or equal to maximum';
-      nextErrors.weightRangeMax = 'Weight Range minimum must be less than or equal to maximum';
+      nextErrors.weightRangeMin = t("Weight Range minimum must be less than or equal to maximum");
+      nextErrors.weightRangeMax = t("Weight Range minimum must be less than or equal to maximum");
       return null;
     }
     return [minWeight as number, maxWeight as number];
@@ -506,24 +509,24 @@ export default function ExportFormattingPage() {
     addStyleTargetErrors(nextErrors);
     const weightRange = parseOptionalWeightRange(nextErrors);
 
-    const backgroundColorError = validateColor(backgroundColor, 'Background Color');
+    const backgroundColorError = validateColor(backgroundColor, t("Background Color"));
     if (backgroundColorError) {
       nextErrors.backgroundColor = backgroundColorError;
     }
-    const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
+    const bottomBorderColorError = validateColor(bottomBorderColor, t("Bottom Border Color"));
     if (bottomBorderColorError) {
       nextErrors.bottomBorderColor = bottomBorderColorError;
     }
-    const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
+    const rightBorderColorError = validateColor(rightBorderColor, t("Right Border Color"));
     if (rightBorderColorError) {
       nextErrors.rightBorderColor = rightBorderColorError;
     }
-    const fontColorError = validateColor(fontColor, 'Font Color');
+    const fontColorError = validateColor(fontColor, t("Font Color"));
     if (fontColorError) {
       nextErrors.fontColor = fontColorError;
     }
     if (!backgroundColor && !bottomBorderColor && !rightBorderColor && !fontColor && !appendText && !noteText) {
-      nextErrors.styleFields = 'At least one style or annotation field is required';
+      nextErrors.styleFields = t("At least one style or annotation field is required");
     }
 
     if (weightRange === null || hasErrors(nextErrors)) {
@@ -606,31 +609,31 @@ export default function ExportFormattingPage() {
     const rightBorderColor = draft.rightBorderColor.trim().toLowerCase();
     const nextErrors: ExportLayoutErrors = {};
     if (!header) {
-      nextErrors.header = 'Column header is required';
+      nextErrors.header = t("Column header is required");
     }
-    const rightBorderColorError = validateColor(rightBorderColor, 'Right Border Color');
+    const rightBorderColorError = validateColor(rightBorderColor, t("Right Border Color"));
     if (rightBorderColorError) {
       nextErrors.rightBorderColor = rightBorderColorError;
     }
     if (draft.countShiftTypes.length === 0) {
-      nextErrors.countShiftTypes = 'Select at least one shift type to count';
+      nextErrors.countShiftTypes = t("Select at least one shift type to count");
     } else {
       const countShiftTypeError = getSelectedOptionsError(
-        'shift type',
+        t("shift type"),
         draft.countShiftTypes,
         shiftTypeOptions,
-        'Selected shift types are invalid for this extra column'
+        t("Selected shift types are invalid for this extra column")
       );
       if (countShiftTypeError) nextErrors.countShiftTypes = countShiftTypeError;
     }
     if (draft.countDates.length === 0) {
-      nextErrors.countDates = 'Select at least one date target to count over';
+      nextErrors.countDates = t("Select at least one date target to count over");
     } else {
       const countDatesError = getSelectedOptionsError(
-        'date target',
+        t("date target"),
         draft.countDates,
         dateOptions,
-        'Selected dates are invalid for this extra column'
+        t("Selected dates are invalid for this extra column")
       );
       if (countDatesError) nextErrors.countDates = countDatesError;
     }
@@ -695,31 +698,31 @@ export default function ExportFormattingPage() {
     const bottomBorderColor = draft.bottomBorderColor.trim().toLowerCase();
     const nextErrors: ExportLayoutErrors = {};
     if (!header) {
-      nextErrors.header = 'Row header is required';
+      nextErrors.header = t("Row header is required");
     }
-    const bottomBorderColorError = validateColor(bottomBorderColor, 'Bottom Border Color');
+    const bottomBorderColorError = validateColor(bottomBorderColor, t("Bottom Border Color"));
     if (bottomBorderColorError) {
       nextErrors.bottomBorderColor = bottomBorderColorError;
     }
     if (draft.countShiftTypes.length === 0) {
-      nextErrors.countShiftTypes = 'Select at least one shift type to count';
+      nextErrors.countShiftTypes = t("Select at least one shift type to count");
     } else {
       const countShiftTypeError = getSelectedOptionsError(
-        'shift type',
+        t("shift type"),
         draft.countShiftTypes,
         shiftTypeOptions,
-        'Selected shift types are invalid for this extra row'
+        t("Selected shift types are invalid for this extra row")
       );
       if (countShiftTypeError) nextErrors.countShiftTypes = countShiftTypeError;
     }
     if (draft.countPeople.length === 0) {
-      nextErrors.countPeople = 'Select at least one people target to count over';
+      nextErrors.countPeople = t("Select at least one people target to count over");
     } else {
       const countPeopleError = getSelectedOptionsError(
-        'people target',
+        t("people target"),
         draft.countPeople,
         peopleOptions,
-        'Selected people are invalid for this extra row'
+        t("Selected people are invalid for this extra row")
       );
       if (countPeopleError) nextErrors.countPeople = countPeopleError;
     }
@@ -798,7 +801,7 @@ export default function ExportFormattingPage() {
   const renderColorField = (field: ColorField, label: string) => {
     const value = draft[field];
     const error = errors[field];
-    const { pickerValue, pickerText, pickerTextColor } = getPickerDisplay(value);
+    const { pickerValue, pickerText, pickerTextColor } = getPickerDisplay(value, t);
     return (
       <div className="space-y-1">
         <label className="block text-sm font-medium text-gray-700">{label}</label>
@@ -815,7 +818,7 @@ export default function ExportFormattingPage() {
               className={`h-9 w-28 rounded border bg-white cursor-pointer ${
                 error ? 'border-red-300' : 'border-gray-300'
               }`}
-              title={`Choose ${label.toLowerCase()}`}
+              title={t("Choose {value0}", { value0: label.toLowerCase() })}
             />
             <span
               className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[11px]"
@@ -836,7 +839,7 @@ export default function ExportFormattingPage() {
             className={`w-28 px-2 py-1.5 text-sm border rounded-md font-mono ${
               error ? 'border-red-300 focus:border-red-500 focus:ring-red-200' : 'border-gray-300'
             }`}
-            title={`Enter ${label.toLowerCase()} in hex`}
+            title={t("Enter {value0} in hex", { value0: label.toLowerCase() })}
           />
         </div>
         {renderErrorMessages(error)}
@@ -861,8 +864,7 @@ export default function ExportFormattingPage() {
           <Link href={href} className="text-blue-600 hover:text-blue-800 underline">
             {hrefLabel}
           </Link>{' '}
-          tab first.
-        </div>
+          {t("tab first.")}</div>
       ) : (
         <CheckboxList
           items={options}
@@ -949,37 +951,37 @@ export default function ExportFormattingPage() {
   const renderStyleTargetRows = () => (
     <div className="space-y-6">
       {styleUsesPeople(draft.type) && renderCheckboxes(
-        'People *',
+        t("People *"),
         peopleOptions,
         draft.people,
         (id) => toggleDraftArrayField('people', id),
-        'No people available. Please set up people in the',
+        t("No people available. Please set up people in the"),
         '/people',
-        'People',
+        t("People"),
         false,
         errors.people
       )}
 
       {styleUsesDates(draft.type) && renderCheckboxes(
-        'Dates *',
+        t("Dates *"),
         dateOptions,
         draft.dates,
         (id) => toggleDraftArrayField('dates', id),
-        'No dates available. Please set up dates in the',
+        t("No dates available. Please set up dates in the"),
         '/dates',
-        'Dates',
+        t("Dates"),
         true,
         errors.dates
       )}
 
       {styleUsesShiftTypes(draft.type) && renderCheckboxes(
-        'Shift Types *',
+        t("Shift Types *"),
         shiftTypeOptions,
         draft.shiftTypes,
         (id) => toggleDraftArrayField('shiftTypes', id),
-        'No shift types available. Please set up shift types in the',
+        t("No shift types available. Please set up shift types in the"),
         '/shift-types',
-        'Shift Types',
+        t("Shift Types"),
         false,
         errors.shiftTypes
       )}
@@ -994,7 +996,7 @@ export default function ExportFormattingPage() {
     return (
       <div className="space-y-4 pt-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Append Text</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">{t("Append Text")}</label>
           <input
             type="text"
             value={draft.appendText}
@@ -1008,7 +1010,7 @@ export default function ExportFormattingPage() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Note Text</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">{t("Note Text")}</label>
           <input
             type="text"
             value={draft.noteText}
@@ -1032,33 +1034,32 @@ export default function ExportFormattingPage() {
     return (
       <div className="space-y-4 border-t border-gray-200 pt-6">
         <div>
-          <h3 className="text-sm font-medium text-gray-700">When (optional)</h3>
+          <h3 className="text-sm font-medium text-gray-700">{t("When (optional)")}</h3>
           <p className="text-xs text-gray-500 mt-1">
-            Limits this cell rule to matching shift request preferences. Leave empty to match all selected cells.
-          </p>
+            {t("Limits this cell rule to matching shift request preferences. Leave empty to match all selected cells.")}</p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Satisfied</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">{t("Satisfied")}</label>
           <select
             value={draft.satisfied}
             onChange={(e) => setDraft(prev => ({ ...prev, satisfied: e.target.value as DraftRule['satisfied'] }))}
             className="px-3 py-2 border border-gray-300 rounded-md w-full"
           >
-            <option value="">Any</option>
-            <option value="true">true</option>
-            <option value="false">false</option>
+            <option value="">{t("Any")}</option>
+            <option value="true">{t("true")}</option>
+            <option value="false">{t("false")}</option>
           </select>
         </div>
 
         {renderCheckboxes(
-          'Request Shape',
-          REQUEST_SHAPE_OPTIONS,
+          t("Request Shape"),
+          REQUEST_SHAPE_OPTIONS.map(option => ({ ...option, description: t(option.description ?? option.id) })),
           draft.requestShape,
           (id) => toggleDraftArrayField('requestShape', id),
-          'No request shape options available.',
+          t("No request shape options available."),
           '/shift-requests',
-          'Shift Requests',
+          t("Shift Requests"),
           false,
           errors.requestShape
         )}
@@ -1071,8 +1072,8 @@ export default function ExportFormattingPage() {
               setDraft(prev => ({ ...prev, weightRangeMin: value }));
             }}
             error={errors.weightRangeMin}
-            label="Minimum Weight (inclusive)"
-            placeholder="-Infinity"
+            label={t("Minimum Weight (inclusive)")}
+            placeholder={t("-Infinity")}
           />
           <WeightInput
             value={draft.weightRangeMax}
@@ -1081,8 +1082,8 @@ export default function ExportFormattingPage() {
               setDraft(prev => ({ ...prev, weightRangeMax: value }));
             }}
             error={errors.weightRangeMax}
-            label="Maximum Weight (inclusive)"
-            placeholder="Infinity"
+            label={t("Maximum Weight (inclusive)")}
+            placeholder={t("Infinity")}
           />
         </div>
       </div>
@@ -1093,11 +1094,11 @@ export default function ExportFormattingPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Export Layout</h1>
-          <PageDocumentationLink href={DOCUMENTATION_URLS.exportLayout} label="Export Layout" />
+          <h1 className="text-3xl font-bold text-gray-800">{t("Export Layout")}</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.exportLayout} label={t("Export Layout")} />
         </div>
         <ToggleButton
-          label="Add Export Rule"
+          label={t("Add Export Rule")}
           isToggled={isFormVisible}
           onToggle={() => {
             if (isFormVisible) {
@@ -1113,64 +1114,56 @@ export default function ExportFormattingPage() {
         <div className="flex items-start gap-2">
           <FiAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
           <p>
-            This page is experimental. Saving any entry pins the layout, so the default layout stops
-            auto-updating as shift types and date groups change. Use Clear All and Regenerate to restore
-            auto-updates.
-          </p>
+            {t("This page is experimental. Saving any entry pins the layout, so the default layout stops auto-updating as shift types and date groups change. Use Clear All and Regenerate to restore auto-updates.")}</p>
         </div>
       </div>
 
       <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-800">Clear Data</h3>
-          <p className="text-sm text-gray-600 mt-1">Remove or regenerate export layout entries with targeted operations</p>
+          <h3 className="text-lg font-semibold text-gray-800">{t("Clear Data")}</h3>
+          <p className="text-sm text-gray-600 mt-1">{t("Remove or regenerate export layout entries with targeted operations")}</p>
         </div>
         <div className="px-4 py-3">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <button
               onClick={clearAllExportLayoutEntries}
               className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center gap-2"
-              title="Clear all export layout entries completely"
+              title={t("Clear all export layout entries completely")}
             >
               <FiTrash2 className="h-4 w-4" />
-              Clear All
-            </button>
+              {t("Clear All")}</button>
 
             <button
               onClick={clearAllAndRegenerateExportLayoutEntries}
               className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors flex items-center gap-2"
-              title="Clear all export layout entries and regenerate count entries from current shift types"
+              title={t("Clear all export layout entries and regenerate count entries from current shift types")}
             >
               <FiRefreshCw className="h-4 w-4" />
-              Clear All and Regenerate
-            </button>
+              {t("Clear All and Regenerate")}</button>
 
             <button
               onClick={clearStyleRules}
               className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors flex items-center gap-2"
-              title="Clear all export style rules"
+              title={t("Clear all export style rules")}
             >
               <FiTrash2 className="h-4 w-4" />
-              Clear Style Rules
-            </button>
+              {t("Clear Style Rules")}</button>
 
             <button
               onClick={clearExtraColumns}
               className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors flex items-center gap-2"
-              title="Clear all export extra columns"
+              title={t("Clear all export extra columns")}
             >
               <FiTrash2 className="h-4 w-4" />
-              Clear Extra Columns
-            </button>
+              {t("Clear Extra Columns")}</button>
 
             <button
               onClick={clearExtraRows}
               className="px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md transition-colors flex items-center gap-2"
-              title="Clear all export extra rows"
+              title={t("Clear all export extra rows")}
             >
               <FiTrash2 className="h-4 w-4" />
-              Clear Extra Rows
-            </button>
+              {t("Clear Extra Rows")}</button>
           </div>
         </div>
       </div>
@@ -1179,23 +1172,23 @@ export default function ExportFormattingPage() {
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
-              {editingTarget !== null ? 'Edit Export Rule' : 'Add Export Rule'}
+              {editingTarget !== null ? t("Edit Export Rule") : t("Add Export Rule")}
             </h2>
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{t("Description")}</label>
                 <input
                   type="text"
                   value={draft.description}
                   onChange={(e) => setDraft(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Optional note for this export rule"
+                  placeholder={t("Optional note for this export rule")}
                   className="px-3 py-2 border border-gray-300 rounded-md w-full"
                 />
               </div>
 
               <div className="flex flex-wrap items-start gap-4">
                 <div className="w-full min-w-0 sm:w-auto sm:min-w-[180px]">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Rule Kind</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">{t("Rule Kind")}</label>
                   <select
                     value={draft.kind}
                     onChange={(e) => {
@@ -1214,16 +1207,16 @@ export default function ExportFormattingPage() {
                     }}
                     className="px-3 py-2 border border-gray-300 rounded-md w-full"
                   >
-                    <option value="style">Style</option>
-                    <option value="extra column">Extra Column</option>
-                    <option value="extra row">Extra Row</option>
+                    <option value="style">{t("Style")}</option>
+                    <option value="extra column">{t("Extra Column")}</option>
+                    <option value="extra row">{t("Extra Row")}</option>
                   </select>
                 </div>
 
                 {draft.kind === 'style' ? (
                   <>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[180px]">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">{t("Type")}</label>
                       <select
                         value={draft.type}
                         onChange={(e) => {
@@ -1238,33 +1231,33 @@ export default function ExportFormattingPage() {
                         }}
                         className="px-3 py-2 border border-gray-300 rounded-md w-full"
                       >
-                        <option value="people header">people header</option>
-                        <option value="row">row</option>
-                        <option value="date header">date header</option>
-                        <option value="column">column</option>
-                        <option value="history header">history header</option>
-                        <option value="history">history</option>
-                        <option value="cell">cell</option>
+                        <option value="people header">{t("people header")}</option>
+                        <option value="row">{t("row")}</option>
+                        <option value="date header">{t("date header")}</option>
+                        <option value="column">{t("column")}</option>
+                        <option value="history header">{t("history header")}</option>
+                        <option value="history">{t("history")}</option>
+                        <option value="cell">{t("cell")}</option>
                       </select>
                     </div>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
-                      {renderColorField('backgroundColor', 'Background Color')}
+                      {renderColorField('backgroundColor', t("Background Color"))}
                     </div>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
-                      {renderColorField('bottomBorderColor', 'Bottom Border Color')}
+                      {renderColorField('bottomBorderColor', t("Bottom Border Color"))}
                     </div>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
-                      {renderColorField('rightBorderColor', 'Right Border Color')}
+                      {renderColorField('rightBorderColor', t("Right Border Color"))}
                     </div>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
-                      {renderColorField('fontColor', 'Font Color')}
+                      {renderColorField('fontColor', t("Font Color"))}
                     </div>
                   </>
                 ) : (
                   <>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[280px]">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        {draft.kind === 'extra column' ? 'Column Header' : 'Row Header'}
+                        {draft.kind === 'extra column' ? t("Column Header") : t("Row Header")}
                       </label>
                       <input
                         type="text"
@@ -1273,15 +1266,15 @@ export default function ExportFormattingPage() {
                           clearError('header');
                           setDraft(prev => ({ ...prev, header: e.target.value }));
                         }}
-                        placeholder={draft.kind === 'extra column' ? 'OFF (Weekend)' : 'Day Count'}
+                        placeholder={draft.kind === 'extra column' ? t("OFF (Weekend)") : t("Day Count")}
                         className={inputClassName(Boolean(errors.header))}
                       />
                       {renderErrorMessages(errors.header)}
                     </div>
                     <div className="w-full min-w-0 sm:w-auto sm:min-w-[260px]">
                       {draft.kind === 'extra column'
-                        ? renderColorField('rightBorderColor', 'Right Border Color')
-                        : renderColorField('bottomBorderColor', 'Bottom Border Color')}
+                        ? renderColorField('rightBorderColor', t("Right Border Color"))
+                        : renderColorField('bottomBorderColor', t("Bottom Border Color"))}
                     </div>
                   </>
                 )}
@@ -1297,13 +1290,13 @@ export default function ExportFormattingPage() {
               ) : (
                 <div className="space-y-6">
                   {renderCheckboxes(
-                    'Count Shift Types *',
+                    t("Count Shift Types *"),
                     shiftTypeOptions,
                     draft.countShiftTypes,
                     (id) => toggleDraftArrayField('countShiftTypes', id),
-                    'No shift types available. Please set up shift types in the',
+                    t("No shift types available. Please set up shift types in the"),
                     '/shift-types',
-                    'Shift Types',
+                    t("Shift Types"),
                     false,
                     errors.countShiftTypes
                   )}
@@ -1320,24 +1313,24 @@ export default function ExportFormattingPage() {
                   )}
                   {draft.kind === 'extra column'
                     ? renderCheckboxes(
-                        'Count Dates *',
+                        t("Count Dates *"),
                         dateOptions,
                         draft.countDates,
                         (id) => toggleDraftArrayField('countDates', id),
-                        'No dates available. Please set up dates in the',
+                        t("No dates available. Please set up dates in the"),
                         '/dates',
-                        'Dates',
+                        t("Dates"),
                         false,
                         errors.countDates
                       )
                     : renderCheckboxes(
-                        'Count People *',
+                        t("Count People *"),
                         peopleOptions,
                         draft.countPeople,
                         (id) => toggleDraftArrayField('countPeople', id),
-                        'No people available. Please set up people in the',
+                        t("No people available. Please set up people in the"),
                         '/people',
-                        'People',
+                        t("People"),
                         false,
                         errors.countPeople
                       )}
@@ -1351,13 +1344,12 @@ export default function ExportFormattingPage() {
                     onClick={handleCancel}
                     className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                   >
-                    Cancel
-                  </button>
+                    {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    {editingTarget !== null ? 'Update' : 'Add'}
+                    {editingTarget !== null ? t("Update") : t("Add")}
                   </button>
                 </div>
               </div>
@@ -1368,9 +1360,9 @@ export default function ExportFormattingPage() {
 
       <div className="space-y-6">
         <DraggableCardList
-          title="Style Rules"
+          title={t("Style Rules")}
           items={formattingRules}
-          emptyMessage='No style rules defined yet. Click "Add Export Rule" to get started.'
+          emptyMessage={t("No style rules defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditStyle}
           onDuplicate={handleDuplicateStyleRule}
           onDelete={deleteStyleRule}
@@ -1382,75 +1374,74 @@ export default function ExportFormattingPage() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
                 <div>
-                  <span className="font-medium">Type:</span> {rule.type}
+                  <span className="font-medium">{t("Type:")}</span> {t(rule.type)}
                 </div>
                 {'people' in rule && rule.people.length > 0 && (
                   <div>
-                    <span className="font-medium">People:</span> {rule.people.join(', ')}
+                    <span className="font-medium">{t("People:")}</span> {rule.people.join(', ')}
                   </div>
                 )}
                 {'dates' in rule && rule.dates.length > 0 && (
                   <div>
-                    <span className="font-medium">Dates:</span> {rule.dates.join(', ')}
+                    <span className="font-medium">{t("Dates:")}</span> {rule.dates.join(', ')}
                   </div>
                 )}
                 {'shiftTypes' in rule && rule.shiftTypes.length > 0 && (
                   <div>
-                    <span className="font-medium">Shift Types:</span> {rule.shiftTypes.join(', ')}
+                    <span className="font-medium">{t("Shift Types:")}</span> {rule.shiftTypes.join(', ')}
                   </div>
                 )}
                 {rule.backgroundColor && (
                   <div>
-                    <span className="font-medium">Background:</span> {rule.backgroundColor}
+                    <span className="font-medium">{t("Background:")}</span> {rule.backgroundColor}
                   </div>
                 )}
                 {rule.bottomBorderColor && (
                   <div>
-                    <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+                    <span className="font-medium">{t("Bottom Border:")}</span> {rule.bottomBorderColor}
                   </div>
                 )}
                 {rule.rightBorderColor && (
                   <div>
-                    <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                    <span className="font-medium">{t("Right Border:")}</span> {rule.rightBorderColor}
                   </div>
                 )}
                 {rule.fontColor && (
                   <div>
-                    <span className="font-medium">Font:</span> {rule.fontColor}
+                    <span className="font-medium">{t("Font:")}</span> {rule.fontColor}
                   </div>
                 )}
                 {'appendText' in rule && rule.appendText && (
                   <div>
-                    <span className="font-medium">Append Text:</span> {rule.appendText}
+                    <span className="font-medium">{t("Append Text:")}</span> {rule.appendText}
                   </div>
                 )}
                 {'note' in rule && rule.note && (
                   <div>
-                    <span className="font-medium">Note:</span> {rule.note.text}
+                    <span className="font-medium">{t("Note:")}</span> {rule.note.text}
                   </div>
                 )}
                 {'when' in rule && rule.when && (
                   <div className="md:col-span-2 mt-2 rounded-md bg-gray-50 border-l-2 border-blue-200 px-3 py-2">
-                    <div className="font-bold text-gray-800 mb-1">When:</div>
+                    <div className="font-bold text-gray-800 mb-1">{t("When:")}</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1">
                       <div>
-                        <span className="font-medium">Preference:</span> shift request
-                      </div>
+                        <span className="font-medium">{t("Preference:")}</span>{t(" shift request")}</div>
                       {rule.when.preference.requestShape && (
                         <div>
-                          <span className="font-medium">Request Shape:</span>{' '}
+                          <span className="font-medium">{t("Request Shape:")}</span>{' '}
                           {rule.when.preference.requestShape.join(', ')}
                         </div>
                       )}
                       {rule.when.preference.satisfied !== undefined && (
                         <div>
-                          <span className="font-medium">Satisfied:</span>{' '}
+                          <span className="font-medium">{t("Satisfied:")}</span>{' '}
                           {String(rule.when.preference.satisfied)}
                         </div>
                       )}
                       {rule.when.preference.weightRange && (
                         <div>
-                          <span className="font-medium">Weight Range (inclusive):</span>{' '}
+                          <span className="font-medium">{t("Weight Range (inclusive):")}</span>{' '}
                           {rule.when.preference.weightRange.join(' to ')}
                         </div>
                       )}
@@ -1463,9 +1454,9 @@ export default function ExportFormattingPage() {
         />
 
         <DraggableCardList
-          title="Extra Columns"
+          title={t("Extra Columns")}
           items={extraColumns}
-          emptyMessage='No extra columns defined yet. Click "Add Export Rule" to get started.'
+          emptyMessage={t("No extra columns defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditExtraColumn}
           onDuplicate={handleDuplicateExtraColumn}
           onDelete={deleteExtraColumn}
@@ -1477,26 +1468,26 @@ export default function ExportFormattingPage() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
                 <div>
-                  <span className="font-medium">Header:</span> {rule.header}
+                  <span className="font-medium">{t("Header:")}</span> {rule.header}
                 </div>
                 <div>
-                  <span className="font-medium">Type:</span> {rule.type}
+                  <span className="font-medium">{t("Type:")}</span> {t(rule.type)}
                 </div>
                 <div>
-                  <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+                  <span className="font-medium">{t("Count Shift Types:")}</span> {rule.countShiftTypes.join(', ')}
                 </div>
                 {rule.countShiftTypeCoefficients && (
                   <div>
-                    <span className="font-medium">Coefficients:</span>{' '}
+                    <span className="font-medium">{t("Coefficients:")}</span>{' '}
                     {rule.countShiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
                   </div>
                 )}
                 <div>
-                  <span className="font-medium">Count Dates:</span> {rule.countDates.join(', ')}
+                  <span className="font-medium">{t("Count Dates:")}</span> {rule.countDates.join(', ')}
                 </div>
                 {rule.rightBorderColor && (
                   <div>
-                    <span className="font-medium">Right Border:</span> {rule.rightBorderColor}
+                    <span className="font-medium">{t("Right Border:")}</span> {rule.rightBorderColor}
                   </div>
                 )}
               </div>
@@ -1505,9 +1496,9 @@ export default function ExportFormattingPage() {
         />
 
         <DraggableCardList
-          title="Extra Rows"
+          title={t("Extra Rows")}
           items={extraRows}
-          emptyMessage='No extra rows defined yet. Click "Add Export Rule" to get started.'
+          emptyMessage={t("No extra rows defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditExtraRow}
           onDuplicate={handleDuplicateExtraRow}
           onDelete={deleteExtraRow}
@@ -1519,20 +1510,20 @@ export default function ExportFormattingPage() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm text-gray-600">
                 <div>
-                  <span className="font-medium">Header:</span> {rule.header}
+                  <span className="font-medium">{t("Header:")}</span> {rule.header}
                 </div>
                 <div>
-                  <span className="font-medium">Type:</span> {rule.type}
+                  <span className="font-medium">{t("Type:")}</span> {t(rule.type)}
                 </div>
                 <div>
-                  <span className="font-medium">Count Shift Types:</span> {rule.countShiftTypes.join(', ')}
+                  <span className="font-medium">{t("Count Shift Types:")}</span> {rule.countShiftTypes.join(', ')}
                 </div>
                 <div>
-                  <span className="font-medium">Count People:</span> {rule.countPeople.join(', ')}
+                  <span className="font-medium">{t("Count People:")}</span> {rule.countPeople.join(', ')}
                 </div>
                 {rule.bottomBorderColor && (
                   <div>
-                    <span className="font-medium">Bottom Border:</span> {rule.bottomBorderColor}
+                    <span className="font-medium">{t("Bottom Border:")}</span> {rule.bottomBorderColor}
                   </div>
                 )}
               </div>

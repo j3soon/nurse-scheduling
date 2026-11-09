@@ -18,6 +18,9 @@
  */
 
 // A form input component for adding and editing item values and descriptions.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { FiAlertCircle } from 'react-icons/fi';
 
 interface FormInputProps {
@@ -49,6 +52,7 @@ export function FormInput({
   actionText,
   children
 }: FormInputProps) {
+  const { t } = useI18n();
   return (
     <div className="space-y-4">
       <div>
@@ -93,8 +97,7 @@ export function FormInput({
             onClick={onCancel}
             className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
           >
-            Cancel
-          </button>
+            {t("Cancel")}</button>
           <button
             onClick={onAction}
             className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"

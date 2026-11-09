@@ -20,6 +20,7 @@
 // The shift type requirements management page for Tab "4. Shift Type Requirements"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
@@ -194,6 +195,7 @@ function buildRequirementCoverageWarning(
 }
 
 export default function ShiftTypeRequirementsPage() {
+  const { t } = useI18n();
   const {
     getPreferencesByType,
     updatePreferencesByType,
@@ -290,7 +292,7 @@ export default function ShiftTypeRequirementsPage() {
     const newErrors: ShiftTypeRequirementErrors = {};
 
     if (formData.shift_type.length === 0) {
-      newErrors.shift_type = 'At least one shift type must be selected';
+      newErrors.shift_type = t("At least one shift type must be selected");
     }
 
     const coefficientValidation = validateCoefficientPairs(
@@ -305,43 +307,43 @@ export default function ShiftTypeRequirementsPage() {
       newErrors.shift_type_coefficients = coefficientValidation.overlapError;
       newErrors.shift_type_coefficients_by_id = {};
     } else if (formData.shift_type.length > 1) {
-      newErrors.shift_type = 'Select exactly one shift type or group';
+      newErrors.shift_type = t("Select exactly one shift type or group");
       newErrors.shift_type_coefficients_by_id = {};
     }
 
     if (formData.qualified_people.length === 0) {
-      newErrors.qualified_people = 'At least one person must be selected';
+      newErrors.qualified_people = t("At least one person must be selected");
     }
 
     if (formData.date.length === 0) {
-      newErrors.date = 'At least one date must be selected';
+      newErrors.date = t("At least one date must be selected");
     }
 
     if (formData.required_num_people === '') {
-      newErrors.required_num_people = 'Required number of people must be a valid number';
+      newErrors.required_num_people = t("Required number of people must be a valid number");
     } else if (!isValidNumberValue(formData.required_num_people)) {
-      newErrors.required_num_people = 'Required number of people must be a valid number';
+      newErrors.required_num_people = t("Required number of people must be a valid number");
     } else if (typeof formData.required_num_people === 'number' && formData.required_num_people < 0) {
-      newErrors.required_num_people = 'Required number of people must be at least 0';
+      newErrors.required_num_people = t("Required number of people must be at least 0");
     }
 
     if (formData.preferred_num_people !== undefined && formData.preferred_num_people !== '') {
       if (!isValidNumberValue(formData.preferred_num_people)) {
-        newErrors.preferred_num_people = 'Preferred number of people must be a valid number';
+        newErrors.preferred_num_people = t("Preferred number of people must be a valid number");
       } else if (typeof formData.preferred_num_people === 'number') {
         if (formData.preferred_num_people < 1) {
-          newErrors.preferred_num_people = 'Preferred number of people must be at least 1';
+          newErrors.preferred_num_people = t("Preferred number of people must be at least 1");
         } else if (typeof formData.required_num_people === 'number' && formData.preferred_num_people < formData.required_num_people) {
-          newErrors.preferred_num_people = 'Preferred number of people must be greater than required number of people';
+          newErrors.preferred_num_people = t("Preferred number of people must be greater than required number of people");
         }
       }
     }
 
     if (preferredNumPeopleDiffersFromRequired(formData)) {
       if (!isValidWeightValue(formData.weight)) {
-        newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+        newErrors.weight = t("Weight must be a valid number, Infinity, or -Infinity");
       } else if (typeof formData.weight === 'number' && formData.weight > 0) {
-        newErrors.weight = 'Weight must be 0 or less (including -Infinity)';
+        newErrors.weight = t("Weight must be 0 or less (including -Infinity)");
       }
     }
 
@@ -486,15 +488,15 @@ export default function ShiftTypeRequirementsPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Shift Type Requirements</h1>
+          <h1 className="text-3xl font-bold text-gray-800">{t("Shift Type Requirements")}</h1>
           <PageDocumentationLink
             href={DOCUMENTATION_URLS.shiftTypeRequirements}
-            label="Shift Type Requirements"
+            label={t("Shift Type Requirements")}
           />
         </div>
         <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
-            label="Add Requirement"
+            label={t("Add Requirement")}
             isToggled={isFormVisible}
             onToggle={() => {
               if (isFormVisible) {
@@ -511,13 +513,11 @@ export default function ShiftTypeRequirementsPage() {
         <div className="mb-6 bg-amber-50 border border-amber-300 rounded-lg p-4 text-sm text-amber-900">
           <div className="flex items-center gap-2 font-semibold text-amber-950">
             <FiAlertCircle className="h-5 w-5" />
-            Requirement coverage warnings
-          </div>
+            {t("Requirement coverage warnings")}</div>
           {coverageWarning.undefinedShiftTypes.length > 0 && (
             <div className="mt-2">
               <p>
-                Undefined staffing requirements: {coverageWarning.undefinedPairsCount} date/shift type pairs have no requirement, so the solver may assign an arbitrary number of people.
-              </p>
+                {t("Undefined staffing requirements: ")}{coverageWarning.undefinedPairsCount}{t(" date/shift type pairs have no requirement, so the solver may assign an arbitrary number of people.")}</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {coverageWarning.undefinedShiftTypes.map(entry => (
                   <li key={entry.shiftTypeId}>
@@ -530,8 +530,7 @@ export default function ShiftTypeRequirementsPage() {
           {coverageWarning.duplicateCells.length > 0 && (
             <div className="mt-2">
               <p>
-                Duplicate staffing requirements: {coverageWarning.duplicateCells.length} date/shift type pairs are covered by more than one requirement. The solver will apply all matching requirements.
-              </p>
+                {t("Duplicate staffing requirements: ")}{coverageWarning.duplicateCells.length}{t(" date/shift type pairs are covered by more than one requirement. The solver will apply all matching requirements.")}</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {coverageWarning.duplicateCells.slice(0, warningExamplesLimit).map(cell => (
                   <li key={cell}>{cell}</li>
@@ -550,37 +549,33 @@ export default function ShiftTypeRequirementsPage() {
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
-              {editingIndex !== null ? 'Edit Requirement' : 'Add New Requirement'}
+              {editingIndex !== null ? t("Edit Requirement") : t("Add New Requirement")}
             </h2>
 
             <div className="space-y-6">
               {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description (optional)
-                </label>
+                  {t("Description (optional)")}</label>
                 <input
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                   className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
-                  placeholder="e.g., Night shifts need senior nurses"
+                  placeholder={t("e.g., Night shifts need senior nurses")}
                 />
               </div>
 
               {/* Shift Types */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Shift Types *
-                </label>
+                  {t("Shift Types *")}</label>
                 {shiftTypeRequirementOptions.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No shift types available. Please set up shift types in the{' '}
+                    {t("No shift types available. Please set up shift types in the")}{' '}
                     <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
-                      Shift Types
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("Shift Types")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <CheckboxList
                     items={shiftTypeRequirementOptions}
@@ -603,8 +598,7 @@ export default function ShiftTypeRequirementsPage() {
               <div className="flex flex-col gap-4 sm:flex-row">
                 <div className="min-w-0 flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Required Number of People *
-                  </label>
+                    {t("Required Number of People *")}</label>
                   <NumberInput
                     min="0"
                     value={formData.required_num_people}
@@ -644,8 +638,7 @@ export default function ShiftTypeRequirementsPage() {
 
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Preferred Number of People (optional)
-                  </label>
+                    {t("Preferred Number of People (optional)")}</label>
                   <NumberInput
                     min="1"
                     value={formData.preferred_num_people ?? formData.required_num_people}
@@ -667,7 +660,7 @@ export default function ShiftTypeRequirementsPage() {
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                         : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                     }`}
-                    placeholder="Will automatically be set to required number of people if left empty"
+                    placeholder={t("Will automatically be set to required number of people if left empty")}
                   />
                   {errors.preferred_num_people && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -686,7 +679,7 @@ export default function ShiftTypeRequirementsPage() {
                   shiftTypeEntries={shiftTypeEntries}
                   shiftTypeData={shiftTypeData}
                   errorsById={errors.shift_type_coefficients_by_id}
-                  label="Shift Type"
+                  label={t("Shift Type")}
                   onChange={(coefficients, changedShiftTypeId) => {
                     setFormData(prev => ({
                       ...prev,
@@ -718,16 +711,13 @@ export default function ShiftTypeRequirementsPage() {
               {/* Qualified People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Qualified People *
-                </label>
+                  {t("Qualified People *")}</label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No people available. Please set up people in the{' '}
+                    {t("No people available. Please set up people in the")}{' '}
                     <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
-                      People
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("People")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <CheckboxList
                     items={[
@@ -756,17 +746,14 @@ export default function ShiftTypeRequirementsPage() {
               {/* Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Dates *
-                </label>
+                  {t("Dates *")}</label>
                 <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                      No dates available. Please set up dates in the{' '}
+                      {t("No dates available. Please set up dates in the")}{' '}
                       <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
-                        Dates
-                      </Link>{' '}
-                      tab first.
-                    </div>
+                        {t("Dates")}</Link>{' '}
+                      {t("tab first.")}</div>
                   ) : (
                     <CheckboxList
                       items={[
@@ -802,16 +789,14 @@ export default function ShiftTypeRequirementsPage() {
                     setFormData(prev => ({ ...prev, weight: value }));
                   }}
                   error={errors.weight}
-                  placeholder="e.g., -1, -10, ∞"
+                  placeholder={t("e.g., -1, -10, ∞")}
                 />
               ) : (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Weight (priority)
-                  </label>
+                    {t("Weight (priority)")}</label>
                   <div className="text-sm text-gray-500 italic">
-                    Weight is not needed when the preferred number of people equals the required number.
-                  </div>
+                    {t("Weight is not needed when the preferred number of people equals the required number.")}</div>
                 </div>
               )}
 
@@ -823,13 +808,12 @@ export default function ShiftTypeRequirementsPage() {
                     onClick={handleCancel}
                     className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                   >
-                    Cancel
-                  </button>
+                    {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    {editingIndex !== null ? 'Update' : 'Add'}
+                    {editingIndex !== null ? t("Update") : t("Add")}
                   </button>
                 </div>
               </div>
@@ -840,9 +824,9 @@ export default function ShiftTypeRequirementsPage() {
 
       {/* Requirements List */}
       <DraggableCardList
-        title="Current Requirements"
+        title={t("Current Requirements")}
         items={shiftTypeRequirements}
-        emptyMessage='No requirements defined yet. Click "Add Requirement" to get started.'
+        emptyMessage={t("No requirements defined yet. Click \"Add Requirement\" to get started.")}
         onEdit={handleStartEdit}
         onDuplicate={handleDuplicate}
         onDelete={handleDelete}
@@ -864,32 +848,32 @@ export default function ShiftTypeRequirementsPage() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
                 <div>
-                  <span className="font-medium">Shift Types:</span>{' '}
+                  <span className="font-medium">{t("Shift Types:")}</span>{' '}
                   {shiftType.join(', ')}
                 </div>
                 {requirement.shiftTypeCoefficients && (
                   <div>
-                    <span className="font-medium">Coefficients:</span>{' '}
+                    <span className="font-medium">{t("Coefficients:")}</span>{' '}
                     {requirement.shiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
                   </div>
                 )}
                 <div>
-                  <span className="font-medium">Required:</span> {requirement.requiredNumPeople}
+                  <span className="font-medium">{t("Required:")}</span> {requirement.requiredNumPeople}
                   {requirement.preferredNumPeople && (
-                    <span> (Preferred: {requirement.preferredNumPeople})</span>
+                    <span>{t(" (Preferred: ")}{requirement.preferredNumPeople})</span>
                   )}
                 </div>
                 {requirement.preferredNumPeople !== undefined && requirement.preferredNumPeople !== requirement.requiredNumPeople && (
                   <div>
-                    <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(requirement.weight)}
+                    <span className="font-medium">{t("Weight:")}</span> {getWeightWithPositivePrefix(requirement.weight)}
                   </div>
                 )}
                 <div className="md:col-span-2 lg:col-span-3">
-                  <span className="font-medium">Qualified:</span>{' '}
+                  <span className="font-medium">{t("Qualified:")}</span>{' '}
                   {qualifiedPeople.join(', ')}
                 </div>
                 <div className="md:col-span-2 lg:col-span-3">
-                  <span className="font-medium">Dates:</span>{' '}
+                  <span className="font-medium">{t("Dates:")}</span>{' '}
                   {date.join(', ')}
                 </div>
               </div>

@@ -21,6 +21,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useId, useState, useEffect } from 'react';
 import {
   CartesianGrid,
@@ -73,14 +74,14 @@ const RANGE_PRESETS: Array<{
   { value: 'last-50', label: 'Last 50', pointCount: 50 },
 ];
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, {
+function formatNumber(value: number, locale = 'en'): string {
+  return new Intl.NumberFormat(locale, {
     maximumFractionDigits: 2,
   }).format(value);
 }
 
-function formatCompactNumber(value: number): string {
-  return new Intl.NumberFormat(undefined, {
+function formatCompactNumber(value: number, locale = 'en'): string {
+  return new Intl.NumberFormat(locale, {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value);
@@ -123,6 +124,7 @@ function OptimizationProgressTooltip({
   active,
   payload,
 }: TooltipContentProps<TooltipValueType, number | string>) {
+  const { t, locale } = useI18n();
   const point = payload?.[0]?.payload as OptimizationProgressPoint | undefined;
 
   if (!active || !point) {
@@ -131,33 +133,31 @@ function OptimizationProgressTooltip({
 
   return (
     <div className="min-w-52 rounded-lg border border-gray-200 bg-white/95 px-3 py-2.5 text-xs shadow-lg backdrop-blur-sm">
-      <p className="mb-2 font-semibold text-gray-900">{formatElapsedSeconds(point.elapsedSeconds)} elapsed</p>
+      <p className="mb-2 font-semibold text-gray-900">{formatElapsedSeconds(point.elapsedSeconds)}{t(" elapsed")}</p>
       <dl className="space-y-1.5">
         <div className="flex items-center justify-between gap-5">
           <dt className="flex items-center gap-1.5 text-gray-500">
             <span className="h-2 w-2 rounded-full bg-blue-600" />
-            Score
-          </dt>
-          <dd className="font-semibold tabular-nums text-blue-700">{formatNumber(point.currentBestScore)}</dd>
+            {t("Score")}</dt>
+          <dd className="font-semibold tabular-nums text-blue-700">{formatNumber(point.currentBestScore, locale)}</dd>
         </div>
         <div className="flex items-center justify-between gap-5">
           <dt className="flex items-center gap-1.5 text-gray-500">
             <span className="h-2 w-2 rounded-full bg-amber-600" />
-            Comments
-          </dt>
+            {t("Comments")}</dt>
           <dd className="font-semibold tabular-nums text-amber-700">
-            {typeof point.commentCount === 'number' ? formatNumber(point.commentCount) : 'N/A'}
+            {typeof point.commentCount === 'number' ? formatNumber(point.commentCount, locale) : 'N/A'}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-5">
-          <dt className="text-gray-500">Solution</dt>
+          <dt className="text-gray-500">{t("Solution")}</dt>
           <dd className="font-medium text-gray-800">
             {point.solutionIndex !== undefined && point.solutionIndex !== null ? `#${point.solutionIndex}` : 'N/A'}
           </dd>
         </div>
         {point.source && (
           <div className="border-t border-gray-100 pt-1.5">
-            <dt className="sr-only">Source</dt>
+            <dt className="sr-only">{t("Source")}</dt>
             <dd className="max-w-64 break-words text-gray-500">{point.source}</dd>
           </div>
         )}
@@ -170,6 +170,7 @@ export default function OptimizationProgressChart({
   points,
   isActive = false,
 }: OptimizationProgressChartProps) {
+  const { t, locale } = useI18n();
   const syncId = useId();
   const latestElapsedSeconds = points.at(-1)?.elapsedSeconds ?? 0;
   const [liveElapsedSeconds, setLiveElapsedSeconds] = useState(latestElapsedSeconds);
@@ -213,10 +214,9 @@ export default function OptimizationProgressChart({
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-gradient-to-b from-white to-gray-50/70 shadow-sm" data-testid="optimization-progress-chart">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
         <div>
-          <h3 className="text-sm font-semibold text-gray-900">Incumbent Progress</h3>
+          <h3 className="text-sm font-semibold text-gray-900">{t("Incumbent Progress")}</h3>
           <p className="mt-0.5 text-xs text-gray-500">
-            Higher scores are better. Hover to inspect a solution.
-          </p>
+            {t("Higher scores are better. Hover to inspect a solution.")}</p>
         </div>
         <button
           type="button"
@@ -224,19 +224,19 @@ export default function OptimizationProgressChart({
           onClick={() => setShowComments(current => !current)}
           className="rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
         >
-          {showComments ? 'Hide comments' : 'Show comments'}
+          {showComments ? t("Hide comments") : t("Show comments")}
         </button>
       </div>
 
       <div
         role="img"
-        aria-label="Optimization progress chart"
+        aria-label={t("Optimization progress chart")}
         className="select-none px-2 pt-3 outline-none [&_.recharts-wrapper]:select-none [&_.recharts-wrapper]:outline-none [&_svg]:select-none [&_svg]:outline-none [&_text]:select-none"
         onMouseDown={event => event.preventDefault()}
       >
         <div className="flex items-center justify-between px-2">
-          <p className="text-xs font-semibold text-blue-700">Score</p>
-          {!showDots && <p className="text-[11px] text-gray-400">Points hidden · hover to inspect</p>}
+          <p className="text-xs font-semibold text-blue-700">{t("Score")}</p>
+          {!showDots && <p className="text-[11px] text-gray-400">{t("Points hidden · hover to inspect")}</p>}
         </div>
         <div style={{ height: SCORE_CHART_HEIGHT }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -265,7 +265,7 @@ export default function OptimizationProgressChart({
               <YAxis
                 domain={['auto', 'auto']}
                 tickCount={5}
-                tickFormatter={formatCompactNumber}
+                tickFormatter={(value: number) => formatCompactNumber(value, locale)}
                 tick={{ fill: SCORE_COLOR, fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
@@ -295,7 +295,7 @@ export default function OptimizationProgressChart({
                   fill={SCORE_COLOR}
                   stroke="#ffffff"
                   strokeWidth={2}
-                  aria-label="Latest score"
+                  aria-label={t("Latest score")}
                 />
               )}
             </ComposedChart>
@@ -303,7 +303,7 @@ export default function OptimizationProgressChart({
         </div>
 
         {showComments && <div className="border-t border-gray-100 pt-2">
-          <p className="px-2 text-xs font-semibold text-amber-700">Comments</p>
+          <p className="px-2 text-xs font-semibold text-amber-700">{t("Comments")}</p>
           <div style={{ height: COMMENT_CHART_HEIGHT }}>
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart
@@ -331,7 +331,7 @@ export default function OptimizationProgressChart({
                   domain={['auto', 'auto']}
                   allowDecimals={false}
                   tickCount={4}
-                  tickFormatter={formatCompactNumber}
+                  tickFormatter={(value: number) => formatCompactNumber(value, locale)}
                   tick={{ fill: COMMENT_COLOR, fontSize: 11 }}
                   tickLine={false}
                   axisLine={false}
@@ -362,7 +362,7 @@ export default function OptimizationProgressChart({
                     fill={COMMENT_COLOR}
                     stroke="#ffffff"
                     strokeWidth={2}
-                    aria-label="Latest comments"
+                    aria-label={t("Latest comments")}
                   />
                 )}
               </ComposedChart>
@@ -372,7 +372,7 @@ export default function OptimizationProgressChart({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 border-t border-gray-100 bg-white/70 px-4 py-2">
-        <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">Range</span>
+        <span className="mr-1 text-[11px] font-medium uppercase tracking-wide text-gray-400">{t("Range")}</span>
         {RANGE_PRESETS.map(preset => (
           <button
             key={preset.value}
@@ -385,7 +385,7 @@ export default function OptimizationProgressChart({
                 : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
             }`}
           >
-            {preset.label}
+            {t(preset.label)}
           </button>
         ))}
       </div>

@@ -20,6 +20,7 @@
 // A component for the navigation top bar, side buttons, and keyboard shortcuts
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight, FiRotateCcw, FiRotateCw } from 'react-icons/fi';
@@ -53,6 +54,7 @@ const TABS: NavTab[] = [
 ];
 
 export default function Navigation() {
+  const { t } = useI18n();
   const router = useRouter();
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
@@ -65,12 +67,12 @@ export default function Navigation() {
       return;
     }
 
-    if (hasTabSwitchWarningActive() && !confirm('You have unsaved edits. Leave this page without saving?')) {
+    if (hasTabSwitchWarningActive() && !confirm(t("You have unsaved edits. Leave this page without saving?"))) {
       return;
     }
 
     router.push(TABS[index].path);
-  }, [currentTabIndex, hasTabSwitchWarningActive, router]);
+  }, [currentTabIndex, hasTabSwitchWarningActive, router, t]);
 
   const tabStripRef = useRef<HTMLDivElement>(null);
   const hasCenteredTabRef = useRef(false);
@@ -238,7 +240,7 @@ export default function Navigation() {
                     key={tab.path}
                     onClick={() => navigateToTab(index)}
                     aria-current={pathname === tab.path ? 'page' : undefined}
-                    title={showCustomExportIndicator ? CUSTOM_EXPORT_LAYOUT_TOOLTIP : undefined}
+                    title={showCustomExportIndicator ? t(CUSTOM_EXPORT_LAYOUT_TOOLTIP) : undefined}
                     className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
                       pathname === tab.path
                         ? 'border-blue-500 text-blue-600'
@@ -252,7 +254,7 @@ export default function Navigation() {
                         className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
                       />
                     )}
-                    {tab.name}
+                    {t(tab.name)}
                   </button>
                 );
               })}
@@ -265,7 +267,7 @@ export default function Navigation() {
             <button
               key={edge}
               type="button"
-              aria-label={`Scroll tabs ${edge}`}
+              aria-label={t("Scroll tabs {value0}", { value0: t(edge) })}
               aria-controls="navigation-tabs"
               onClick={() => scrollTabs(direction)}
               className={`absolute top-1 ${edge === 'left' ? 'left-0' : 'right-0'} flex h-11 w-7 items-center justify-center rounded bg-white/95 text-gray-500 shadow-sm hover:bg-gray-100 hover:text-gray-700`}
@@ -277,8 +279,8 @@ export default function Navigation() {
         {/* Keep Undo and Redo outside the scrolling strip, so phones without a keyboard can reach them. */}
         <div className="flex shrink-0 items-center border-l border-gray-200 px-1 sm:px-2">
           {[
-            { label: 'Undo', shortcut: 'Ctrl+Z or Cmd+Z', onClick: undo, enabled: canUndo, Icon: FiRotateCcw },
-            { label: 'Redo', shortcut: 'Ctrl+Y or Cmd+Y', onClick: redo, enabled: canRedo, Icon: FiRotateCw },
+            { label: t("Undo"), shortcut: 'Ctrl+Z or Cmd+Z', onClick: undo, enabled: canUndo, Icon: FiRotateCcw },
+            { label: t("Redo"), shortcut: 'Ctrl+Y or Cmd+Y', onClick: redo, enabled: canRedo, Icon: FiRotateCw },
           ].map(({ label, shortcut, onClick, enabled, Icon }) => (
             <button
               key={label}
@@ -300,7 +302,7 @@ export default function Navigation() {
         <button
           onClick={navigatePrevious}
           className="hidden sm:block fixed left-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
-          title="Previous tab (←)"
+          title={t("Previous tab (←)")}
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -313,7 +315,7 @@ export default function Navigation() {
         <button
           onClick={navigateNext}
           className="hidden sm:block fixed right-0 top-1/2 transform -translate-y-1/2 p-3 transition-all duration-200 z-10 hover:scale-110 group cursor-pointer"
-          title="Next tab (→)"
+          title={t("Next tab (→)")}
         >
           <svg className="w-8 h-8 text-gray-400 group-hover:text-gray-600 transition-colors duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

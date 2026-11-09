@@ -290,6 +290,15 @@ To test specific source files from the repository root, run:
 ./scripts/test_frontend_affected.sh web-frontend/src/path/to/file.ts
 ```
 
+## Localization
+
+Use `useI18n()` for interface messages and locale formatting. Add English messages
+in `src/i18n/en.ts` and preserve named placeholders in each translation. Translate
+constant display labels where they render. Keep identifiers, saved Schedule Spec
+values, backend protocols, user content, XLSX labels, and chat exports unchanged.
+Pass a translator to shared presentation helpers. Their default stays English for
+exports and other callers. Changing language must preserve mounted component state.
+
 ## TypeScript And React Style
 - Mark a file written entirely by an AI coding agent immediately after the license
   block, using `// This test is mostly AI generated.` in a test and

@@ -19,6 +19,9 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { useCallback, useMemo, useState } from 'react';
 import {
   CalendarDayButton,
@@ -49,6 +52,7 @@ export default function DateRangeCalendarPicker({
   onChange,
   onActiveEndpointChange,
 }: DateRangeCalendarPickerProps) {
+  const { t, locale } = useI18n();
   const {
     activeMonth: calendarMonth,
     setActiveMonth: setCalendarMonth,
@@ -67,7 +71,7 @@ export default function DateRangeCalendarPicker({
   }, []);
   const { disableTextSelection } = useMouseDragLifecycle(resetDragState);
 
-  const suggestedMonthLabel = formatMonthYear(calendarMonth);
+  const suggestedMonthLabel = formatMonthYear(calendarMonth, locale);
   const previewRange = useMemo<DateRange>(() => {
     const anchorDate = dragAnchorDate ?? clickAnchorDate;
     if (!anchorDate || !hoverDate) {
@@ -184,7 +188,7 @@ export default function DateRangeCalendarPicker({
           onClick={handleUseSuggestedMonth}
           className="mt-4 w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50"
         >
-          Use full {suggestedMonthLabel}
+          {t("Use full ")}{suggestedMonthLabel}
         </button>
       )}
     />

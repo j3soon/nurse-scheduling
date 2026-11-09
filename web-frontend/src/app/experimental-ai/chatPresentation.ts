@@ -19,6 +19,7 @@
 
 // This code is mostly AI generated.
 
+import { translator, type Translator } from '@/i18n/messages';
 import type { ActivityEntry, CompactionActivity } from './AssistantActivity';
 import type { ChatMessage, ChatMessageContent } from './chatTranscript';
 
@@ -168,26 +169,26 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
   return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
 }
 
-export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>): string {
-  if (entry.kind === 'notice') return 'App notice';
-  if (entry.kind === 'compaction' && entry.invalidated) return 'Conversation summary discarded';
+export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>, t: Translator = translator('en')): string {
+  if (entry.kind === 'notice') return t("App notice");
+  if (entry.kind === 'compaction' && entry.invalidated) return t("Conversation summary discarded");
   if (entry.kind === 'compaction') return ({
-    running: 'Summarizing conversation', completed: 'Conversation summarized',
-    failed: 'Summarization failed', interrupted: 'Summarization interrupted',
-    skipped: 'No compaction needed',
+    running: t("Summarizing conversation"), completed: t("Conversation summarized"),
+    failed: t("Summarization failed"), interrupted: t("Summarization interrupted"),
+    skipped: t("No compaction needed"),
   }[entry.state]) + (entry.characters === undefined ? ''
-    : `${(entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : ''} · ${formatCharacterCount(entry.characters)} characters`);
-  if (entry.kind === 'reasoning') return `Reasoning · ${formatCharacterCount(characterCount(entry.text))} characters`;
-  if (entry.kind === 'schedule-spec-change') return 'Schedule Spec edit';
-  if (entry.kind === 'schedule-spec-check') return entry.ok ? 'Schedule Spec check passed' : 'Schedule Spec check failed';
-  if (entry.kind === 'schedule-spec-applied') return entry.browserApplied === false ? 'Saved in this chat' : 'Applied to your Schedule Spec';
+    : t("{value0} · {value1} characters", { value0: (entry.step ?? 1) > 1 ? ` · pass ${entry.step}` : '', value1: formatCharacterCount(entry.characters) }));
+  if (entry.kind === 'reasoning') return t("Reasoning · {value0} characters", { value0: formatCharacterCount(characterCount(entry.text)) });
+  if (entry.kind === 'schedule-spec-change') return t("Schedule Spec edit");
+  if (entry.kind === 'schedule-spec-check') return entry.ok ? t("Schedule Spec check passed") : t("Schedule Spec check failed");
+  if (entry.kind === 'schedule-spec-applied') return entry.browserApplied === false ? t("Saved in this chat") : t("Applied to your Schedule Spec");
   if (entry.argumentsCharacters !== undefined) {
-    const label = entry.state === 'preparing' ? 'Preparing tool calls' : `${entry.name} · ${entry.state}`;
-    return `${label} · ${formatCharacterCount(entry.argumentsCharacters)} characters`;
+    const label = entry.state === 'preparing' ? t("Preparing tool calls") : t("{value0} · {value1}", { value0: entry.name, value1: entry.state });
+    return t("{value0} · {value1} characters", { value0: label, value1: formatCharacterCount(entry.argumentsCharacters) });
   }
-  if (entry.state === 'running') return `${entry.name} · running`;
-  if (entry.state === 'interrupted') return `${entry.name} · interrupted`;
-  return entry.ok ? entry.name : `${entry.name} · failed`;
+  if (entry.state === 'running') return t("{value0} · running", { value0: entry.name });
+  if (entry.state === 'interrupted') return t("{value0} · interrupted", { value0: entry.name });
+  return entry.ok ? entry.name : t("{value0} · failed", { value0: entry.name });
 }
 
 export function scheduleSpecChangeLines(beforeText: string, afterText: string): { removed: string[]; added: string[] } {
@@ -206,20 +207,20 @@ export function scheduleSpecChangeLines(beforeText: string, afterText: string): 
     added: after.slice(prefix, after.length - suffix),
   };
 }
-export function retentionLabel(seconds: number): string {
+export function retentionLabel(seconds: number, t: Translator = translator('en')): string {
   if (seconds % 86400 === 0) {
     const days = seconds / 86400;
-    return `${days} ${days === 1 ? 'day' : 'days'}`;
+    return t("{value0} {value1}", { value0: days, value1: t(days === 1 ? 'day' : 'days') });
   }
   if (seconds % 3600 === 0) {
     const hours = seconds / 3600;
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    return t("{value0} {value1}", { value0: hours, value1: t(hours === 1 ? 'hour' : 'hours') });
   }
-  return `${seconds.toLocaleString()} seconds`;
+  return t("{value0} seconds", { value0: seconds.toLocaleString() });
 }
 
-export function formatSessionExpiration(timestamp: number): string {
-  return new Date(timestamp).toLocaleString([], {
+export function formatSessionExpiration(timestamp: number, locale?: string): string {
+  return new Date(timestamp).toLocaleString(locale, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -230,13 +231,13 @@ export function formatSessionExpiration(timestamp: number): string {
   });
 }
 
-export function formatResponseTime(timestamp: number): string {
+export function formatResponseTime(timestamp: number, locale?: string): string {
   const completed = new Date(timestamp);
   const now = new Date();
   const sameDate = completed.getFullYear() === now.getFullYear()
     && completed.getMonth() === now.getMonth()
     && completed.getDate() === now.getDate();
-  return completed.toLocaleString([], sameDate
+  return completed.toLocaleString(locale, sameDate
     ? { hour: 'numeric', minute: '2-digit' }
     : { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
@@ -261,13 +262,13 @@ export function messageUploadedFileLines(message: ChatMessageContent): string[] 
   }
 }
 
-export function messageLabel(message: ChatMessageContent): string {
-  if (message.role === 'system') return 'System';
-  if (message.role === 'assistant') return 'Assistant';
-  if (message.role === 'optimizer') return 'Optimizer';
-  const topic = message.title ? ` - ${message.title}` : '';
-  if (message.source === 'app') return `User · App${topic}`;
-  if (message.source === 'status') return `User · Status${topic}`;
-  if (message.source === 'optimizer') return 'User · Optimizer';
-  return 'User';
+export function messageLabel(message: ChatMessageContent, t: Translator = translator('en')): string {
+  if (message.role === 'system') return t("System");
+  if (message.role === 'assistant') return t("Assistant");
+  if (message.role === 'optimizer') return t("Optimizer");
+  const topic = message.title ? t(" - {value0}", { value0: t(message.title) }) : '';
+  if (message.source === 'app') return t("User · App{value0}", { value0: topic });
+  if (message.source === 'status') return t("User · Status{value0}", { value0: topic });
+  if (message.source === 'optimizer') return t("User · Optimizer");
+  return t("User");
 }

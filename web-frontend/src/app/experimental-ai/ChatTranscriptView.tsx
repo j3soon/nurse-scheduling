@@ -19,6 +19,9 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import '../../../../core/nurse_scheduling/ai/chat_styles.css';
 
 import { FiDownload } from 'react-icons/fi';
@@ -33,9 +36,10 @@ import { parseOptimizerMessage } from './optimizerMessage';
 import type { ChatMessage } from './chatTranscript';
 
 function ThinkingIndicator() {
+  const { t } = useI18n();
   return (
-    <span role="status" aria-label="Thinking" className="thinking">
-      <span>Thinking</span>
+    <span role="status" aria-label={t("Thinking")} className="thinking">
+      <span>{t("Thinking")}</span>
       <span aria-hidden="true" className="thinking-dots">
         {[0, 1, 2].map(index => (
           <span
@@ -85,18 +89,19 @@ export function ChatTranscriptView({
   sessionExpiresAt,
   sessionRetentionSeconds,
 }: ChatTranscriptViewProps) {
+  const { t, locale } = useI18n();
   const bubbles = transcriptConversation(messages).map((part, index) => ({
     message: part, key: `${part.id}-${index}`,
   }));
   return (
       <section
-        aria-label="Chat messages"
+        aria-label={t("Chat messages")}
         aria-live="polite"
         className="chat mb-4 min-h-80"
       >
         {messages.length === 0 && (
           <div className="flex min-h-72 items-center justify-center text-center text-gray-500">
-            <p>Try asking “Who is available on the first date?”</p>
+            <p>{t("Try asking “Who is available on the first date?”")}</p>
           </div>
         )}
         {bubbles.map(({ message, key }) => {
@@ -114,21 +119,21 @@ export function ChatTranscriptView({
               key={key}
               className={classes}
             >
-              <p className="label">{notice ? 'App notice'
-                : summary ? summary.invalidated ? 'Discarded conversation summary' : 'User · Conversation summary' : messageLabel(message)}</p>
+              <p className="label">{notice ? t("App notice")
+                : summary ? summary.invalidated ? t("Discarded conversation summary") : t("User · Conversation summary") : messageLabel(message, t)}</p>
               {/* Messages reach the model by default, so only exceptions get a status line. */}
               {(notice || summary?.invalidated || message.role === 'optimizer' || message.compacted) && (
                 <p className="message-status">
-                  {summary?.invalidated ? 'Omitted from future model context.'
-                    : message.compacted ? 'Compacted out of context.' : 'Not sent to AI.'}
+                  {summary?.invalidated ? t("Omitted from future model context.")
+                    : message.compacted ? t("Compacted out of context.") : t("Not sent to AI.")}
                 </p>
               )}
               {summary && <details className="system-prompt">
-                <summary className="collapsed-summary">Conversation summary</summary>
+                <summary className="collapsed-summary">{t("Conversation summary")}</summary>
                 <CompactionSummary entry={summary} />
               </details>}
               {uploads.length > 0 && (
-                <ul aria-label="Uploaded files in this message" className="attachments">
+                <ul aria-label={t("Uploaded files in this message")} className="attachments">
                   {uploads.map((file, index) => <li key={index}>{file}</li>)}
                 </ul>
               )}
@@ -145,12 +150,12 @@ export function ChatTranscriptView({
                 <p className="context-content">{message.content}</p>
               ) : message.role === 'assistant' && !message.content && message.status === 'pending' ? (
                 message.activity?.some(entry => entry.kind === 'compaction' && entry.state === 'running') ? null
-                  : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">Steering…</p> : <ThinkingIndicator />
+                  : steeringAssistantId === message.id ? <p className="text-xs text-gray-500">{t("Steering…")}</p> : <ThinkingIndicator />
               ) : message.role === 'system' ? (
-                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={t("{count} characters", { count: characterCount(message.content).toLocaleString(locale) })} text={message.content} />
               ) : message.source !== undefined ? (
                 // The label names the topic, so the exact text starts collapsed.
-                <CollapsedText summary={`${characterCount(message.content).toLocaleString('en-US')} characters`} text={message.content} />
+                <CollapsedText summary={t("{count} characters", { count: characterCount(message.content).toLocaleString(locale) })} text={message.content} />
               ) : message.role === 'user' ? (
                 <p className="plain-content">{message.content}</p>
               ) : optimizer ? (
@@ -177,7 +182,7 @@ export function ChatTranscriptView({
                   className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
                 >
                   <FiDownload aria-hidden="true" className="h-4 w-4" />
-                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : 'Download schedule'}
+                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : t("Download schedule")}
                 </button>
               )}
               {message.downloadId && (
@@ -185,39 +190,37 @@ export function ChatTranscriptView({
                   <button type="button" onClick={() => void downloadGeneratedFiles(message.downloadId!)}
                     disabled={removingDownloadId === message.downloadId}
                     className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-                    Download files (ZIP)
-                  </button>
+                    {t("Download files (ZIP)")}</button>
                   <button type="button" onClick={() => void removeGeneratedFiles(message.downloadId!)}
                     disabled={removingDownloadId !== null || conversationUnavailable}
-                    title="Remove this ZIP from the chat to free session storage."
+                    title={t("Remove this ZIP from the chat to free session storage.")}
                     className="rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50">
-                    {removingDownloadId === message.downloadId ? 'Removing...' : 'Remove ZIP'}
+                    {removingDownloadId === message.downloadId ? 'Removing...' : t("Remove ZIP")}
                   </button>
                 </div>
               )}
               {showCosts && message.costSummary && <CostDetails summary={message.costSummary} calls={message.providerCalls ?? []}
                 running={message.status === 'pending'} />}
               {showModels && message.modelSelection && <div className="model-selection">
-                {message.modelSelection.model} · {message.modelSelection.reasoning === 'default' ? 'Default reasoning' : message.modelSelection.reasoning}
+                {message.modelSelection.model} · {message.modelSelection.reasoning === 'default' ? t("Default reasoning") : message.modelSelection.reasoning}
               </div>}
               {timestamp !== undefined && (
                 <time
                   dateTime={new Date(timestamp).toISOString()}
-                  title={new Date(timestamp).toLocaleString()}
+                  title={new Date(timestamp).toLocaleString(locale)}
                   className="message-time"
                 >
-                  {formatResponseTime(timestamp)}
+                  {formatResponseTime(timestamp, locale)}
                   {message.responseStartedAt !== undefined && message.responseCompletedAt !== undefined && (
                     <> · {formatResponseDuration(message.responseStartedAt, message.responseCompletedAt)}</>
                   )}
                 </time>
               )}
               {message.role === 'assistant' && message.status === 'stopped' && (
-                <p className="stopped">Stopped before completion.</p>
+                <p className="stopped">{t("Stopped before completion.")}</p>
               )}
               {message.truncated && <p className="truncated">
-                A response reached the output token limit. Tool calls in that response were not executed.
-              </p>}
+                {t("A response reached the output token limit. Tool calls in that response were not executed.")}</p>}
               {message.status === 'failed' && message.failureReason && !message.activity?.some(entry => (
                 entry.kind === 'response' && entry.text === message.failureReason
               )) && (
@@ -226,8 +229,8 @@ export function ChatTranscriptView({
               {message.role === 'assistant' && message.status === 'failed' && !conversationUnavailable && (
                 <p className="failure">
                   {message.unsentFiles
-                    ? `This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach ${message.unsentFiles.length ? message.unsentFiles.join(', ') : 'the files'} again, then send the question.`
-                    : 'This response failed before completion. Send a new message to continue.'}
+                    ? t("This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach {value0} again, then send the question.", { value0: message.unsentFiles.length ? message.unsentFiles.join(', ') : 'the files' })
+                    : t("This response failed before completion. Send a new message to continue.")}
                 </p>
               )}
             </article>
@@ -235,15 +238,15 @@ export function ChatTranscriptView({
         })}
         {activeSessionId !== null && sessionExpiresAt !== null && (
           <p className="pt-1 text-center text-[0.6875rem] text-gray-400">
-            Chat expires at{' '}
+            {t("Chat expires at")}{' '}
             <time
               dateTime={new Date(sessionExpiresAt).toISOString()}
-              aria-label="Chat expiration"
+              aria-label={t("Chat expiration")}
               className="font-medium"
             >
-              {formatSessionExpiration(sessionExpiresAt)}
+              {formatSessionExpiration(sessionExpiresAt, locale)}
             </time>
-            {' '}· Each new message extends the chat for another {retentionLabel(sessionRetentionSeconds)}.
+            {' '}{t("· Each new message extends the chat for another ")}{retentionLabel(sessionRetentionSeconds, t)}.
           </p>
         )}
       </section>

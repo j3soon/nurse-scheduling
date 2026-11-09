@@ -20,6 +20,7 @@
 // The people management page for Tab "2. People"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState } from 'react';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import ItemGroupEditorPage from '@/components/ItemGroupEditorPage';
@@ -32,6 +33,7 @@ import { DOCUMENTATION_URLS } from '@/constants/urls';
 const MAX_UPLOADED_PEOPLE = 1000;
 
 export default function PeoplePage() {
+  const { t } = useI18n();
   const {
     peopleData,
     // Get functions to pass as props
@@ -50,7 +52,7 @@ export default function PeoplePage() {
 
   const bulkAddPeople = (names: string[]) => {
     if (names.length === 0) {
-      alert('No people names found in the uploaded file.');
+      alert(t("No people names found in the uploaded file."));
       return;
     }
 
@@ -61,7 +63,7 @@ export default function PeoplePage() {
     // First, add items in the order specified by names
     for (const name of names) {
       if (usedIds.has(name)) {
-        alert(`Duplicate person name "${name}" found in the uploaded list. Please remove duplicates.`);
+        alert(t("Duplicate person name \"{value0}\" found in the uploaded list. Please remove duplicates.", { value0: name }));
         return;
       }
       usedIds.add(name);
@@ -102,7 +104,7 @@ export default function PeoplePage() {
     // This is a bit of a hack, but it works because reorderItems
     // calls updateData which handles the state update properly
     reorderItems(DataType.PEOPLE, updatedPeopleData, updatedPeopleData.items);
-    alert(`Successfully uploaded ${names.length} people: ${existingReorderedCount} existing people reordered, ${newlyAddedCount} new people added, ${existingMovedToEndCount} existing people moved to end.`);
+    alert(t("Successfully uploaded {value0} people: {value1} existing people reordered, {value2} new people added, {value3} existing people moved to end.", { value0: names.length, value1: existingReorderedCount, value2: newlyAddedCount, value3: existingMovedToEndCount }));
   };
 
   const [mode, setMode] = useState<Mode>(Mode.NORMAL);
@@ -112,7 +114,7 @@ export default function PeoplePage() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       if (!content) {
-        alert('No content found in the uploaded file.');
+        alert(t("No content found in the uploaded file."));
         return;
       }
 
@@ -123,7 +125,7 @@ export default function PeoplePage() {
         .filter(name => name.length > 0 && !name.startsWith('#')); // Remove empty lines and comments
 
       if (names.length > MAX_UPLOADED_PEOPLE) {
-        alert(`Uploaded file contains ${names.length} people, which exceeds the maximum of ${MAX_UPLOADED_PEOPLE}. Please split the file and upload fewer names at a time.`);
+        alert(t("Uploaded file contains {value0} people, which exceeds the maximum of {value1}. Please split the file and upload fewer names at a time.", { value0: names.length, value1: MAX_UPLOADED_PEOPLE }));
         return;
       }
 
@@ -147,7 +149,7 @@ export default function PeoplePage() {
 
   return (
     <ItemGroupEditorPage
-      title="People Management"
+      title={t("People Management")}
       documentationHref={DOCUMENTATION_URLS.people}
       data={peopleData}
       dataType={DataType.PEOPLE}

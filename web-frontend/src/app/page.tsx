@@ -20,6 +20,7 @@
 // The home page for Tab "0. Home"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { FiChevronDown, FiCheck } from 'react-icons/fi';
@@ -36,6 +37,7 @@ import {
 } from '@/utils/version';
 
 export default function Home() {
+  const { t } = useI18n();
   const router = useRouter();
   const { createNewState, loadFromYaml } = useScheduleSpec();
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -107,12 +109,12 @@ export default function Home() {
         createNewState();
       } else {
         const response = await fetch('/examples/large-ward-with-87-people-2025-11.yaml');
-        if (!response.ok) throw new Error('The example Schedule Spec could not be loaded.');
+        if (!response.ok) throw new Error(t("The example Schedule Spec could not be loaded."));
         loadFromYaml(yaml.load(await response.text()));
       }
       setShowConfirmDialog(false);
     } catch (error) {
-      setNewScheduleSpecError(error instanceof Error ? error.message : 'The Schedule Spec could not be created.');
+      setNewScheduleSpecError(error instanceof Error ? error.message : t("The Schedule Spec could not be created."));
     } finally {
       setIsCreatingScheduleSpec(false);
     }
@@ -134,17 +136,15 @@ export default function Home() {
         {/* Phones scale the title with the screen width. It stays on one line from 340px wide, */}
         {/* even with wide system fonts such as DejaVu Sans on Linux. */}
         <div className="mb-8 flex items-center justify-center gap-2 sm:gap-3">
-          <h1 className="text-[length:min(1.5rem,5.3vw)] font-bold text-gray-800 sm:text-4xl">Nurse Scheduling System</h1>
-          <PageDocumentationLink href={DOCUMENTATION_URLS.home} label="Home" />
+          <h1 className="text-[length:min(1.5rem,5.3vw)] font-bold text-gray-800 sm:text-4xl">{t("Nurse Scheduling System")}</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.home} label={t("Home")} />
         </div>
         <p className="text-lg text-gray-600 mb-8">
-          Welcome to the Nurse Scheduling System. Use the tabs above to navigate.
-        </p>
+          {t("Welcome to the Nurse Scheduling System. Use the tabs above to navigate.")}</p>
         {!isStableReleaseVersion(CURRENT_APP_VERSION) && (
           <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-800">
-              This is a development build. For best compatibility with saved YAML, use a versioned release.
-            </p>
+              {t("This is a development build. For best compatibility with saved YAML, use a versioned release.")}</p>
           </div>
         )}
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -153,12 +153,11 @@ export default function Home() {
               onClick={() => handleStartNew('empty')}
               className="flex-1 rounded-l-lg bg-blue-600 px-6 py-3 text-white transition-colors hover:bg-blue-700"
             >
-              New Schedule Spec
-            </button>
+              {t("New Schedule Spec")}</button>
             <button
               type="button"
               onClick={() => setIsNewScheduleSpecMenuOpen(previous => !previous)}
-              aria-label="Choose new Schedule Spec type"
+              aria-label={t("Choose new Schedule Spec type")}
               aria-expanded={isNewScheduleSpecMenuOpen}
               className="rounded-r-lg border-l border-blue-500 bg-blue-600 px-3 py-3 text-white transition-colors hover:bg-blue-700"
             >
@@ -171,16 +170,16 @@ export default function Home() {
                   onClick={() => handleStartNew('empty')}
                   className="block w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-50"
                 >
-                  <span className="block font-medium">Empty Schedule Spec</span>
-                  <span className="block text-xs text-gray-500">Start without people or shift types.</span>
+                  <span className="block font-medium">{t("Empty Schedule Spec")}</span>
+                  <span className="block text-xs text-gray-500">{t("Start without people or shift types.")}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleStartNew('example')}
                   className="block w-full border-t border-gray-100 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50"
                 >
-                  <span className="block font-medium">87-person example</span>
-                  <span className="block text-xs text-gray-500">Load the realistic November 2025 testcase.</span>
+                  <span className="block font-medium">{t("87-person example")}</span>
+                  <span className="block text-xs text-gray-500">{t("Load the realistic November 2025 testcase.")}</span>
                 </button>
               </div>
             )}
@@ -189,8 +188,7 @@ export default function Home() {
             onClick={() => router.push('/dates')}
             className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
-            Continue
-          </button>
+            {t("Continue")}</button>
         </div>
       </div>
 
@@ -201,7 +199,7 @@ export default function Home() {
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-full shadow-sm hover:shadow"
         >
-          <span className="text-gray-400">Build:</span>
+          <span className="text-gray-400">{t("Build:")}</span>
           <span className={`font-semibold ${getBuildLabelColor(currentBuild?.label || '')}`}>
             {currentBuild?.label || 'loading...'}
           </span>
@@ -225,7 +223,7 @@ export default function Home() {
             ))}
             {currentBuild?.label === 'unknown' && (
               <div className="px-3 py-2 text-sm flex items-center gap-2 bg-orange-50 border-t border-gray-100 rounded-b-lg">
-                <span className={`font-medium w-14 text-left ${getBuildLabelColor('unknown')}`}>unknown</span>
+                <span className={`font-medium w-14 text-left ${getBuildLabelColor('unknown')}`}>{t("unknown")}</span>
                 <span className="text-gray-400 text-xs truncate flex-1 text-left">{currentOrigin}</span>
                 <FiCheck className="w-4 h-4 text-orange-600" />
               </div>
@@ -238,11 +236,11 @@ export default function Home() {
       {showConfirmDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4 text-gray-800">Confirm Reset</h2>
+            <h2 className="text-xl font-bold mb-4 text-gray-800">{t("Confirm Reset")}</h2>
             <p className="text-gray-600 mb-6">
               {newScheduleSpecKind === 'empty'
-                ? 'Start an empty Schedule Spec? This will reset all your current data.'
-                : 'Load the 87-person example? This will reset all your current data.'}
+                ? t("Start an empty Schedule Spec? This will reset all your current data.")
+                : t("Load the 87-person example? This will reset all your current data.")}
             </p>
             {newScheduleSpecError && <p className="mb-4 text-sm text-red-700" role="alert">{newScheduleSpecError}</p>}
             <div className="flex justify-end gap-4">
@@ -251,14 +249,13 @@ export default function Home() {
                 disabled={isCreatingScheduleSpec}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800 disabled:opacity-50"
               >
-                Cancel
-              </button>
+                {t("Cancel")}</button>
               <button
                 onClick={confirmStartNew}
                 disabled={isCreatingScheduleSpec}
                 className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:cursor-wait disabled:opacity-50"
               >
-                {isCreatingScheduleSpec ? 'Loading…' : newScheduleSpecKind === 'empty' ? 'Create empty Schedule Spec' : 'Load example'}
+                {isCreatingScheduleSpec ? t("Loading…") : newScheduleSpecKind === 'empty' ? t("Create empty Schedule Spec") : t("Load example")}
               </button>
             </div>
           </div>

@@ -20,6 +20,7 @@
 // The shift counts management page for Tab "7. Shift Counts"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
@@ -71,6 +72,7 @@ interface ShiftCountErrors {
 }
 
 export default function ShiftCountsPage() {
+  const { t } = useI18n();
   const {
     getPreferencesByType,
     updatePreferencesByType,
@@ -160,15 +162,15 @@ export default function ShiftCountsPage() {
     const newCoefficientErrors: {[shiftTypeId: string]: string} = {};
 
     if (formData.person.length === 0) {
-      newErrors.person = 'At least one person must be selected';
+      newErrors.person = t("At least one person must be selected");
     }
 
     if (formData.count_dates.length === 0) {
-      newErrors.count_dates = 'At least one date must be selected';
+      newErrors.count_dates = t("At least one date must be selected");
     }
 
     if (formData.count_shift_types.length === 0) {
-      newErrors.count_shift_types = 'At least one shift type must be selected';
+      newErrors.count_shift_types = t("At least one shift type must be selected");
     }
 
     const coefficientValidation = validateCoefficientPairs(
@@ -185,19 +187,19 @@ export default function ShiftCountsPage() {
     }
 
     if (!SUPPORTED_EXPRESSIONS.includes(formData.expression)) {
-      newErrors.expression = 'Please select a valid expression';
+      newErrors.expression = t("Please select a valid expression");
     }
 
     if (typeof formData.target !== 'number' || !Number.isInteger(formData.target) || formData.target < 0) {
-      newErrors.target = 'Target must be a non-negative integer';
+      newErrors.target = t("Target must be a non-negative integer");
     }
 
     if (!isValidWeightValue(formData.weight)) {
-      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+      newErrors.weight = t("Weight must be a valid number, Infinity, or -Infinity");
     } else {
       // Additional check for |x - T|^2 expression: weight must be non-positive
       if (formData.expression === '|x - T|^2' && !isWeightNonPositive(formData.weight)) {
-        newErrors.weight = 'Weight must be non-positive for shift count with "|x - T|^2"';
+        newErrors.weight = t("Weight must be non-positive for shift count with \"|x - T|^2\"");
       }
     }
 
@@ -340,12 +342,12 @@ export default function ShiftCountsPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Shift Counts</h1>
-          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftCounts} label="Shift Counts" />
+          <h1 className="text-3xl font-bold text-gray-800">{t("Shift Counts")}</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftCounts} label={t("Shift Counts")} />
         </div>
         <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
-            label="Add Shift Count"
+            label={t("Add Shift Count")}
             isToggled={isFormVisible}
             onToggle={() => {
               if (isFormVisible) {
@@ -363,37 +365,33 @@ export default function ShiftCountsPage() {
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
-              {editingIndex !== null ? 'Edit Shift Count' : 'Add New Shift Count'}
+              {editingIndex !== null ? t("Edit Shift Count") : t("Add New Shift Count")}
             </h2>
 
             <div className="space-y-6">
               {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description (optional)
-                </label>
+                  {t("Description (optional)")}</label>
                 <input
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                   className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
-                  placeholder="e.g., Working shifts should be close to the average"
+                  placeholder={t("e.g., Working shifts should be close to the average")}
                 />
               </div>
 
               {/* People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  People *
-                </label>
+                  {t("People *")}</label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No people available. Please set up people in the{' '}
+                    {t("No people available. Please set up people in the")}{' '}
                     <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
-                      People
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("People")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <CheckboxList
                     items={[
@@ -422,17 +420,14 @@ export default function ShiftCountsPage() {
               {/* Count Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Dates *
-                </label>
+                  {t("Count Dates *")}</label>
                 <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                      No dates available. Please set up dates in the{' '}
+                      {t("No dates available. Please set up dates in the")}{' '}
                       <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
-                        Dates
-                      </Link>{' '}
-                      tab first.
-                    </div>
+                        {t("Dates")}</Link>{' '}
+                      {t("tab first.")}</div>
                   ) : (
                     <CheckboxList
                       items={[
@@ -462,16 +457,13 @@ export default function ShiftCountsPage() {
               {/* Count Shift Types */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Count Shift Types *
-                </label>
+                  {t("Count Shift Types *")}</label>
                 {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No shift types available. Please set up shift types in the{' '}
+                    {t("No shift types available. Please set up shift types in the")}{' '}
                     <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
-                      Shift Types
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("Shift Types")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <CheckboxList
                     items={[
@@ -528,8 +520,7 @@ export default function ShiftCountsPage() {
               <div className="flex flex-col gap-4 sm:flex-row">
                 <div className="min-w-0 flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Expression *
-                  </label>
+                    {t("Expression *")}</label>
                   <select
                     value={formData.expression}
                     onChange={(e) => {
@@ -556,8 +547,7 @@ export default function ShiftCountsPage() {
 
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Target Value *
-                  </label>
+                    {t("Target Value *")}</label>
                   <NumberInput
                     min="0"
                     step="1"
@@ -581,7 +571,7 @@ export default function ShiftCountsPage() {
                         ? 'border-red-300 focus:border-red-500 focus:ring-red-200'
                         : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200'
                     }`}
-                    placeholder="e.g., 5"
+                    placeholder={t("e.g., 5")}
                   />
                   {errors.target && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -600,7 +590,7 @@ export default function ShiftCountsPage() {
                   setFormData(prev => ({ ...prev, weight: value }));
                 }}
                 error={errors.weight}
-                placeholder="e.g., -1, -10, ∞"
+                placeholder={t("e.g., -1, -10, ∞")}
               />
 
               {/* Action Buttons */}
@@ -611,13 +601,12 @@ export default function ShiftCountsPage() {
                     onClick={handleCancel}
                     className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                   >
-                    Cancel
-                  </button>
+                    {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    {editingIndex !== null ? 'Update' : 'Add'}
+                    {editingIndex !== null ? t("Update") : t("Add")}
                   </button>
                 </div>
               </div>
@@ -628,9 +617,9 @@ export default function ShiftCountsPage() {
 
       {/* Shift Counts List */}
       <DraggableCardList
-        title="Current Shift Counts"
+        title={t("Current Shift Counts")}
         items={shiftCounts}
-        emptyMessage='No shift counts defined yet. Click "Add Shift Count" to get started.'
+        emptyMessage={t("No shift counts defined yet. Click \"Add Shift Count\" to get started.")}
         onEdit={handleStartEdit}
         onDuplicate={handleDuplicate}
         onDelete={handleDelete}
@@ -642,26 +631,26 @@ export default function ShiftCountsPage() {
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
               <div>
-                <span className="font-medium">People:</span>{' '}
+                <span className="font-medium">{t("People:")}</span>{' '}
                 {shiftCount.person.join(', ')}
               </div>
               <div>
-                <span className="font-medium">Expression:</span> <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
+                <span className="font-medium">{t("Expression:")}</span> <code className="px-1.5 py-0.5 bg-gray-100 rounded text-sm font-mono">{shiftCount.expression.replace('T', shiftCount.target.toString())}</code>
               </div>
               <div>
-                <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(shiftCount.weight)}
+                <span className="font-medium">{t("Weight:")}</span> {getWeightWithPositivePrefix(shiftCount.weight)}
               </div>
               <div className="md:col-span-2 lg:col-span-3">
-                <span className="font-medium">Count Dates:</span>{' '}
+                <span className="font-medium">{t("Count Dates:")}</span>{' '}
                 {shiftCount.countDates.join(', ')}
               </div>
               <div className="md:col-span-2 lg:col-span-3">
-                <span className="font-medium">Count Shift Types:</span>{' '}
+                <span className="font-medium">{t("Count Shift Types:")}</span>{' '}
                 {shiftCount.countShiftTypes.join(', ')}
               </div>
               {shiftCount.countShiftTypeCoefficients && (
                 <div className="md:col-span-2 lg:col-span-3">
-                  <span className="font-medium">Coefficients:</span>{' '}
+                  <span className="font-medium">{t("Coefficients:")}</span>{' '}
                   {shiftCount.countShiftTypeCoefficients.map(([id, coefficient]) => `[${id}, ${coefficient}]`).join(', ')}
                 </div>
               )}

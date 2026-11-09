@@ -19,6 +19,9 @@
 
 // A list component that allows reordering of card items by dragging.
 // Note that this file highly duplicates with DataTable.tsx.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { ReorderButtons } from './ReorderButtons';
 import { ReactNode, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
@@ -45,6 +48,7 @@ export function DraggableCardList<T>({
   onDelete,
   onReorder,
 }: DraggableCardListProps<T>) {
+  const { t } = useI18n();
   const [dragOverState, setDragOverState] = useState<{ index: number; insertAfter: boolean } | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
@@ -125,7 +129,7 @@ export function DraggableCardList<T>({
                   <div className="flex flex-wrap items-center justify-end gap-2 sm:ml-4">
                     {isDraggable && (
                       <ReorderButtons
-                        label={`${title} item ${index + 1}`}
+                        label={t("{value0} item {value1}", { value0: title, value1: index + 1 })}
                         canMoveUp={index > 0}
                         canMoveDown={index < items.length - 1}
                         onMove={direction => {
@@ -141,24 +145,21 @@ export function DraggableCardList<T>({
                       className="text-blue-600 hover:text-blue-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                     >
                       <FiEdit2 className="h-4 w-4" />
-                      Edit
-                    </button>
+                      {t("Edit")}</button>
                     {onDuplicate && (
                       <button
                         onClick={() => onDuplicate(index)}
                         className="text-indigo-600 hover:text-indigo-800 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                       >
                         <FiCopy className="h-4 w-4" />
-                        Duplicate
-                      </button>
+                        {t("Duplicate")}</button>
                     )}
                     <button
                       onClick={() => onDelete(index)}
                       className="text-red-600 hover:text-red-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
                     >
                       <FiTrash2 className="h-4 w-4" />
-                      Delete
-                    </button>
+                      {t("Delete")}</button>
                   </div>
                 </div>
               </div>

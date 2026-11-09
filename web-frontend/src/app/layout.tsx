@@ -20,6 +20,7 @@
 // The layout for the entire app
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
+import { I18nProvider } from "@/i18n/I18nProvider";
 import Navigation from "@/components/Navigation";
 import FeedbackWidget from "@/components/FeedbackWidget";
 import Footer from "@/components/Footer";
@@ -29,8 +30,6 @@ import { UnsavedEditingStateProvider } from "@/utils/unsavedEditingState";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nurse Scheduling System",
-  description: "A user-friendly web app to automate the nurse scheduling task.",
   icons: {
     icon: "/favicon.svg",
   },
@@ -62,6 +61,7 @@ export default function RootLayout({
             gtag('config', '${process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}');
           `}
         </Script>
+        <I18nProvider>
         <UnsavedEditingStateProvider>
           <ScheduleSpecProvider>
             <VersionWarningBanner />
@@ -73,6 +73,7 @@ export default function RootLayout({
             <FeedbackWidget />
           </ScheduleSpecProvider>
         </UnsavedEditingStateProvider>
+        </I18nProvider>
       </body>
     </html>
   );

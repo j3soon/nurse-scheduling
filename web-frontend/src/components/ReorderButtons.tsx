@@ -19,6 +19,9 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { FiArrowDown, FiArrowLeft, FiArrowRight, FiArrowUp } from 'react-icons/fi';
 
 interface ReorderButtonsProps {
@@ -30,6 +33,7 @@ interface ReorderButtonsProps {
 }
 
 export function ReorderButtons({ label, onMove, canMoveUp, canMoveDown, horizontal = false }: ReorderButtonsProps) {
+  const { t } = useI18n();
   const Back = horizontal ? FiArrowLeft : FiArrowUp;
   const Forward = horizontal ? FiArrowRight : FiArrowDown;
   // A lone movable entry has nowhere to go, so two disabled buttons would only add clutter.
@@ -43,7 +47,7 @@ export function ReorderButtons({ label, onMove, canMoveUp, canMoveDown, horizont
           <button
             key={direction}
             type="button"
-            aria-label={`Move ${label} ${action}`}
+            aria-label={t("Move {value0} {value1}", { value0: label, value1: t(action) })}
             disabled={direction === -1 ? !canMoveUp : !canMoveDown}
             onClick={event => { event.stopPropagation(); onMove(direction); }}
             className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:text-gray-300"

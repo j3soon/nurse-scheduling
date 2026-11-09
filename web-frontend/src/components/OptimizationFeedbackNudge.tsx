@@ -19,6 +19,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState } from 'react';
 import * as Sentry from '@sentry/nextjs';
 import { FiThumbsDown, FiThumbsUp } from 'react-icons/fi';
@@ -45,6 +46,7 @@ export default function OptimizationFeedbackNudge({
   anonymized,
   result,
 }: OptimizationFeedbackNudgeProps) {
+  const { t } = useI18n();
   const [rating, setRating] = useState<OptimizationRating | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
@@ -60,8 +62,8 @@ export default function OptimizationFeedbackNudge({
       await Sentry.sendFeedback(
         {
           message: nextRating === 'up'
-            ? 'Optimization result rated useful.'
-            : 'Optimization result rated not useful.',
+            ? t("Optimization result rated useful.")
+            : t("Optimization result rated not useful."),
           source: 'optimization-result-rating',
         },
         {
@@ -89,7 +91,7 @@ export default function OptimizationFeedbackNudge({
       );
       setRating(nextRating);
     } catch {
-      setSubmissionError('Feedback could not be sent. It may be blocked by a browser extension or network setting. Please try again.');
+      setSubmissionError(t("Feedback could not be sent. It may be blocked by a browser extension or network setting. Please try again."));
     } finally {
       setIsSubmitting(false);
     }
@@ -98,11 +100,10 @@ export default function OptimizationFeedbackNudge({
   if (rating !== null) {
     return (
       <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700">
-        <p className="font-medium">Thanks for your feedback.</p>
+        <p className="font-medium">{t("Thanks for your feedback.")}</p>
         {rating === 'down' && (
           <p className="mt-1 text-gray-600">
-            Please tell us what went wrong using the Feedback button in the lower-right corner.
-          </p>
+            {t("Please tell us what went wrong using the Feedback button in the lower-right corner.")}</p>
         )}
       </div>
     );
@@ -111,28 +112,26 @@ export default function OptimizationFeedbackNudge({
   return (
     <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm font-medium text-gray-700">Was this optimization result useful?</p>
+        <p className="text-sm font-medium text-gray-700">{t("Was this optimization result useful?")}</p>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => void submitRating('up')}
             disabled={isSubmitting}
-            aria-label="Yes, this optimization result was useful"
+            aria-label={t("Yes, this optimization result was useful")}
             className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:border-green-300 hover:bg-green-50 hover:text-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
           >
             <FiThumbsUp className="h-4 w-4" aria-hidden="true" />
-            Yes
-          </button>
+            {t("Yes")}</button>
           <button
             type="button"
             onClick={() => void submitRating('down')}
             disabled={isSubmitting}
-            aria-label="No, this optimization result was not useful"
+            aria-label={t("No, this optimization result was not useful")}
             className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
           >
             <FiThumbsDown className="h-4 w-4" aria-hidden="true" />
-            No
-          </button>
+            {t("No")}</button>
         </div>
       </div>
       {submissionError && (

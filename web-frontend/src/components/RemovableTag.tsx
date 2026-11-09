@@ -18,6 +18,10 @@
  */
 
 // A tag component that can be removed by clicking a button.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
+
 interface RemovableTagProps {
   id: string;
   description?: string;
@@ -54,6 +58,7 @@ export function RemovableTag({
   isDragging = false,
   isDragOver = false,
 }: RemovableTagProps) {
+  const { t } = useI18n();
   const baseClasses = "inline-flex items-center text-xs rounded";
   const variantClasses = variant === 'blue'
     ? "bg-blue-100 text-blue-800"
@@ -106,7 +111,7 @@ export function RemovableTag({
         <button
           onClick={onRemove}
           className="flex items-center justify-center px-1 py-0.5 text-blue-600 hover:text-red-600 hover:bg-red-100 rounded-l transition-colors"
-          title={`Remove "${id}"`}
+          title={t("Remove \"{value0}\"", { value0: id })}
         >
           ×
         </button>

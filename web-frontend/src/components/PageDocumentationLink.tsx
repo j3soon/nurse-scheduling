@@ -17,6 +17,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { FiHelpCircle } from 'react-icons/fi';
 
 interface PageDocumentationLinkProps {
@@ -25,14 +28,15 @@ interface PageDocumentationLinkProps {
 }
 
 export default function PageDocumentationLink({ href, label }: PageDocumentationLinkProps) {
+  const { t } = useI18n();
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
       className="shrink-0 text-gray-500 transition-colors hover:text-gray-700"
-      aria-label={`${label} documentation`}
-      title={`Open ${label} documentation in a new tab`}
+      aria-label={t("{value0} documentation", { value0: label })}
+      title={t("Open {value0} documentation in a new tab", { value0: label })}
     >
       <FiHelpCircle className="h-6 w-6" />
     </a>

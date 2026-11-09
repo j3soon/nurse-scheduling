@@ -21,6 +21,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { FiCheck, FiCopy } from 'react-icons/fi';
 import Markdown, { type Components } from 'react-markdown';
@@ -31,6 +32,7 @@ import remarkGfm from 'remark-gfm';
 // https://github.com/remarkjs/react-markdown#security
 
 function CodeBlock({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const preRef = useRef<HTMLPreElement>(null);
   const copiedResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,8 +62,8 @@ function CodeBlock({ children }: { children: ReactNode }) {
         data-live-action="copy-code"
         type="button"
         onClick={copy}
-        aria-label={copied ? 'Copied' : 'Copy code'}
-        title={copied ? 'Copied' : 'Copy code'}
+        aria-label={copied ? t("Copied") : t("Copy code")}
+        title={copied ? t("Copied") : t("Copy code")}
         className="absolute right-2 top-2 rounded-md border border-gray-600 bg-gray-800 p-1.5 text-gray-200 hover:bg-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
       >
         {copied ? <FiCheck aria-hidden="true" className="h-4 w-4" /> : <FiCopy aria-hidden="true" className="h-4 w-4" />}

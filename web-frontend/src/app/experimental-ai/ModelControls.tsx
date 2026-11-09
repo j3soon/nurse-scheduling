@@ -19,6 +19,9 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useRef, useState } from 'react';
 import { getModels, getSessionModelSelection, updateSessionModelSelection, type AvailableModel, type ModelSelection } from './aiClient';
 
@@ -33,6 +36,7 @@ export function ModelControls({
   runActive?: boolean;
   onChange: (selection: ModelSelection | undefined) => void;
 }) {
+  const { t } = useI18n();
   const [models, setModels] = useState<AvailableModel[]>([]);
   const [selection, setSelection] = useState<ModelSelection>();
   const [savedLock, setSavedLock] = useState(false);
@@ -73,7 +77,7 @@ export function ModelControls({
       const saved = pending ?? current ?? choices.current.get(scope);
       const selected = result.models.find(item => item.id === saved?.model)
         ?? result.models.find(item => item.id === result.default_model) ?? result.models[0];
-      if (!selected) throw new Error('No compatible chat models are available to this AI key.');
+      if (!selected) throw new Error(t("No compatible chat models are available to this AI key."));
       const reasoning = selected.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : selected.default_reasoning;
       let next = { model: selected.id, reasoning };
       if (sessionId && pending) {
@@ -95,11 +99,11 @@ export function ModelControls({
     }).catch((failure: unknown) => {
       if (!controller.signal.aborted) {
         setSaving(false);
-        setError(failure instanceof Error ? failure.message : 'Could not load AI models.');
+        setError(failure instanceof Error ? failure.message : t("Could not load AI models."));
       }
     });
     return () => { controller.abort(); generation.current += 1; };
-  }, [endpoint, token, sessionId, scope, requestScope, onChange]);
+  }, [endpoint, token, sessionId, scope, requestScope, onChange, t]);
 
   useEffect(() => {
     if (!sessionId || lockReads === 0) return;
@@ -140,34 +144,32 @@ export function ModelControls({
     }).catch((failure: unknown) => {
       if (generation.current === currentGeneration && change === latestChange.current) {
         setSaving(false);
-        setError(failure instanceof Error ? failure.message : 'Could not save the model choice.');
+        setError(failure instanceof Error ? failure.message : t("Could not save the model choice."));
       }
     });
   };
   return <div className="flex flex-wrap items-center gap-3 px-2 text-xs text-gray-700">
-    <label className="flex min-w-0 max-w-full items-center gap-2">Model
-      <select aria-label="AI model" className="min-w-0 max-w-64 rounded-lg border border-gray-300 bg-white p-2"
+    <label className="flex min-w-0 max-w-full items-center gap-2">{t("Model")}<select aria-label={t("AI model")} className="min-w-0 max-w-64 rounded-lg border border-gray-300 bg-white p-2"
         disabled={disabled || locked || !ready || !!error} value={selection?.model ?? ''}
         onChange={event => {
           const target = models.find(item => item.id === event.target.value)!;
           const saved = choices.current.get(`${scope}\n${target.id}`);
           select({ model: target.id, reasoning: target.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : target.default_reasoning });
         }}>
-        {!selection && <option value="">Loading models…</option>}
+        {!selection && <option value="">{t("Loading models…")}</option>}
         {models.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
     </label>
-    {model && model.reasoning_options.length > 1 && <label className="flex items-center gap-2">Reasoning
-      <select aria-label="Reasoning" className="rounded-lg border border-gray-300 bg-white p-2"
+    {model && model.reasoning_options.length > 1 && <label className="flex items-center gap-2">{t("Reasoning")}<select aria-label={t("Reasoning")} className="rounded-lg border border-gray-300 bg-white p-2"
         disabled={disabled || !ready || !!error} value={selection?.reasoning}
         onChange={event => select({ model: model.id, reasoning: event.target.value })}>
-        {model.reasoning_options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+        {model.reasoning_options.map(option => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
       </select>
     </label>}
-    {error && <span role="alert">{error} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>Retry</button></span>}
-    {saving && <span role="status">Saving model choice…</span>}
+    {error && <span role="alert">{t(error)} <button type="button" className="underline" onClick={() => setReload(value => value + 1)}>{t("Retry")}</button></span>}
+    {saving && <span role="status">{t("Saving model choice…")}</span>}
     <span className="text-gray-500">{locked
-      ? 'Model fixed for this conversation. Reasoning changes apply to future runs.'
-      : 'Choose a model before the first message.'}</span>
+      ? t("Model fixed for this conversation. Reasoning changes apply to future runs.")
+      : t("Choose a model before the first message.")}</span>
   </div>;
 }

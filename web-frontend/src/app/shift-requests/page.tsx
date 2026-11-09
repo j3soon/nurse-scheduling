@@ -20,6 +20,7 @@
 // The shift requests management page for Tab "5. Shift Requests"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
@@ -39,6 +40,7 @@ import { DataType } from '@/types/scheduling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 
 export default function ShiftRequestsPage() {
+  const { t, locale } = useI18n();
   const {
     dateData,
     peopleData,
@@ -205,7 +207,7 @@ export default function ShiftRequestsPage() {
   // Function to measure and sync column widths
   const syncColumnWidths = () => {
     if (tableRef.current) {
-      const headerCells = tableRef.current.querySelectorAll('thead th');
+      const headerCells = tableRef.current.querySelectorAll("thead th");
       const widths = Array.from(headerCells).map(cell => cell.getBoundingClientRect().width);
       setColumnWidths(widths);
     }
@@ -372,7 +374,7 @@ export default function ShiftRequestsPage() {
     const newErrors: {[key: string]: string} = {};
 
     if (!isValidWeightValue(addFormData.weight)) {
-      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+      newErrors.weight = t("Weight must be a valid number, Infinity, or -Infinity");
     }
 
     setErrors(newErrors);
@@ -382,27 +384,27 @@ export default function ShiftRequestsPage() {
   const getQuickAddStatus = (): { text: string; tone: 'neutral' | 'warning' | 'error' } => {
     if (addFormData.shiftTypes.length === 0) {
       return {
-        text: 'Drag over cells to clear existing requests or history. Empty cells will not change.',
+        text: t("Drag over cells to clear existing requests or history. Empty cells will not change."),
         tone: 'warning',
       };
     }
 
     if (!isValidWeightValue(addFormData.weight)) {
       return {
-        text: 'Enter a valid weight before dragging over cells to apply preferences.',
+        text: t("Enter a valid weight before dragging over cells to apply preferences."),
         tone: 'error',
       };
     }
 
     if (addFormData.weight === 0) {
       return {
-        text: `Drag over cells to remove ${addFormData.shiftTypes.join(', ')}. Empty cells without it will not change.`,
+        text: t("Drag over cells to remove {value0}. Empty cells without it will not change.", { value0: addFormData.shiftTypes.join(', ') }),
         tone: 'warning',
       };
     }
 
     return {
-      text: `Drag over cells to apply ${addFormData.shiftTypes.join(', ')} with weight ${getWeightDisplayLabel(addFormData.weight as number)}.`,
+      text: t("Drag over cells to apply {value0} with weight {value1}.", { value0: addFormData.shiftTypes.join(', '), value1: getWeightDisplayLabel(addFormData.weight as number) }),
       tone: 'neutral',
     };
   };
@@ -414,7 +416,7 @@ export default function ShiftRequestsPage() {
   } => {
     // Validate weight is valid
     if (!validateWeight()) {
-      return { isValid: false, error: 'Weight must be a valid number, Infinity, or -Infinity.' };
+      return { isValid: false, error: t("Weight must be a valid number, Infinity, or -Infinity.") };
     }
 
     // Validate CSV shape - should have people count + 0 rows (header + people rows)
@@ -422,7 +424,7 @@ export default function ShiftRequestsPage() {
     const expectedDateCount = dateData.items.length;
 
     if (csvData.length !== expectedPeopleCount + 0) {
-      return { isValid: false, error: `CSV should have ${expectedPeopleCount + 0} rows (1 header + ${expectedPeopleCount} people), but has ${csvData.length} rows.` };
+      return { isValid: false, error: t("CSV should have {value0} rows (1 header + {value1} people), but has {value2} rows.", { value0: expectedPeopleCount + 0, value1: expectedPeopleCount, value2: csvData.length }) };
     }
 
     // Create a map of valid person IDs for quick lookup
@@ -433,18 +435,18 @@ export default function ShiftRequestsPage() {
     // Validate that the first column contains a valid person ID (allow out-of-order)
     for (let i = 0; i < csvData.length; i++) {
       if (csvData[i].length !== expectedDateCount + 1) {
-        return { isValid: false, error: `Row ${i + 1} should have ${expectedDateCount + 1} columns (dates), but has ${csvData[i].length} columns.` };
+        return { isValid: false, error: t("Row {value0} should have {value1} columns (dates), but has {value2} columns.", { value0: i + 1, value1: expectedDateCount + 1, value2: csvData[i].length }) };
       }
 
       const personId = csvData[i][0].trim();
       if (!validPersonIds.has(personId)) {
         const validPersonList = Array.from(validPersonIds).join(', ');
-        return { isValid: false, error: `Row ${i + 1} has invalid person ID "${personId}". Valid person IDs: ${validPersonList}` };
+        return { isValid: false, error: t("Row {value0} has invalid person ID \"{value1}\". Valid person IDs: {value2}", { value0: i + 1, value1: personId, value2: validPersonList }) };
       }
 
       // Check for duplicate person IDs in the CSV
       if (personRowMap.has(personId)) {
-        return { isValid: false, error: `Duplicate person ID "${personId}" found at row ${i + 1}. Person was already seen at row ${personRowMap.get(personId)! + 1}.` };
+        return { isValid: false, error: t("Duplicate person ID \"{value0}\" found at row {value1}. Person was already seen at row {value2}.", { value0: personId, value1: i + 1, value2: personRowMap.get(personId)! + 1 }) };
       }
 
       personRowMap.set(personId, i);
@@ -453,7 +455,7 @@ export default function ShiftRequestsPage() {
     // Validate that all expected people are present in the CSV
     for (const person of peopleData.items) {
       if (!personRowMap.has(person.id)) {
-        return { isValid: false, error: `Missing person "${person.id}" in CSV data. All people must be included.` };
+        return { isValid: false, error: t("Missing person \"{value0}\" in CSV data. All people must be included.", { value0: person.id }) };
       }
     }
 
@@ -474,7 +476,7 @@ export default function ShiftRequestsPage() {
 
         // Validate shift type
         if (!validShiftTypes.includes(cellValue)) {
-          return { isValid: false, error: `Invalid shift type "${cellValue}" at row ${r + 1}, column ${c + 1}. Valid shift types: ${validShiftTypes.join(', ')}` };
+          return { isValid: false, error: t("Invalid shift type \"{value0}\" at row {value1}, column {value2}. Valid shift types: {value3}", { value0: cellValue, value1: r + 1, value2: c + 1, value3: validShiftTypes.join(', ') }) };
         }
 
         validatedData.push({
@@ -543,7 +545,7 @@ export default function ShiftRequestsPage() {
     const expectedPeopleCount = peopleData.items.length;
 
     if (csvData.length !== expectedPeopleCount) {
-      return { isValid: false, error: `CSV should have ${expectedPeopleCount} rows (one per person), but has ${csvData.length} rows.` };
+      return { isValid: false, error: t("CSV should have {value0} rows (one per person), but has {value1} rows.", { value0: expectedPeopleCount, value1: csvData.length }) };
     }
 
     // Create a map of valid person IDs for quick lookup
@@ -554,18 +556,18 @@ export default function ShiftRequestsPage() {
     // Validate that the first column contains a valid person ID (allow out-of-order)
     for (let i = 0; i < csvData.length; i++) {
       if (csvData[i].length !== 3) {
-        return { isValid: false, error: `Row ${i + 1} should have 3 columns (name, shift type, repetition count), but has ${csvData[i].length} columns.` };
+        return { isValid: false, error: t("Row {value0} should have 3 columns (name, shift type, repetition count), but has {value1} columns.", { value0: i + 1, value1: csvData[i].length }) };
       }
 
       const personId = csvData[i][0].trim();
       if (!validPersonIds.has(personId)) {
         const validPersonList = Array.from(validPersonIds).join(', ');
-        return { isValid: false, error: `Row ${i + 1} has invalid person ID "${personId}". Valid person IDs: ${validPersonList}` };
+        return { isValid: false, error: t("Row {value0} has invalid person ID \"{value1}\". Valid person IDs: {value2}", { value0: i + 1, value1: personId, value2: validPersonList }) };
       }
 
       // Check for duplicate person IDs in the CSV
       if (personRowMap.has(personId)) {
-        return { isValid: false, error: `Duplicate person ID "${personId}" found at row ${i + 1}. Person was already seen at row ${personRowMap.get(personId)! + 1}.` };
+        return { isValid: false, error: t("Duplicate person ID \"{value0}\" found at row {value1}. Person was already seen at row {value2}.", { value0: personId, value1: i + 1, value2: personRowMap.get(personId)! + 1 }) };
       }
 
       personRowMap.set(personId, i);
@@ -574,7 +576,7 @@ export default function ShiftRequestsPage() {
     // Validate that all expected people are present in the CSV
     for (const person of peopleData.items) {
       if (!personRowMap.has(person.id)) {
-        return { isValid: false, error: `Missing person "${person.id}" in CSV data. All people must be included.` };
+        return { isValid: false, error: t("Missing person \"{value0}\" in CSV data. All people must be included.", { value0: person.id }) };
       }
     }
 
@@ -593,13 +595,13 @@ export default function ShiftRequestsPage() {
 
       // Validate shift type exists
       if (!validShiftTypes.includes(shiftTypeId)) {
-        return { isValid: false, error: `Invalid shift type "${shiftTypeId}" at row ${i + 1}. Valid shift types: ${validShiftTypes.join(', ')}` };
+        return { isValid: false, error: t("Invalid shift type \"{value0}\" at row {value1}. Valid shift types: {value2}", { value0: shiftTypeId, value1: i + 1, value2: validShiftTypes.join(', ') }) };
       }
 
       // Validate repetition count is a non-negative integer
       const repetitionCount = Number(repetitionStr);
       if (!/^\d+$/.test(repetitionStr) || !Number.isSafeInteger(repetitionCount)) {
-        return { isValid: false, error: `Invalid repetition count '${repetitionStr}' for person '${personId}' at row ${i + 1}. Must be a non-negative integer.` };
+        return { isValid: false, error: t("Invalid repetition count '{value0}' for person '{value1}' at row {value2}. Must be a non-negative integer.", { value0: repetitionStr, value1: personId, value2: i + 1 }) };
       }
 
       validatedData.push({ personId, shiftTypeId, repetitionCount });
@@ -657,7 +659,7 @@ export default function ShiftRequestsPage() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       if (!content) {
-        alert('No content found in the uploaded file.');
+        alert(t("No content found in the uploaded file."));
         return;
       }
 
@@ -672,20 +674,20 @@ export default function ShiftRequestsPage() {
         const validation = validateShiftRequestCsvData(csvData);
 
         if (!validation.isValid) {
-          alert(`CSV validation failed: ${validation.error}`);
+          alert(t("CSV validation failed: {value0}", { value0: validation.error }));
           return;
         }
 
         if (validation.validatedData && validation.validatedData.length > 0) {
           // Process the validated data
           processShiftRequestCsvData(validation.validatedData);
-          alert(`Successfully processed CSV file with ${validation.validatedData.length} shift preferences!`);
+          alert(t("Successfully processed CSV file with {value0} shift preferences!", { value0: validation.validatedData.length }));
         } else {
-          alert('No valid shift preferences found in CSV file.');
+          alert(t("No valid shift preferences found in CSV file."));
         }
       } catch (error) {
         console.error('Error processing shift-requests CSV file:', error);
-        alert('Error processing shift-requests CSV file. Please check the file format.');
+        alert(t("Error processing shift-requests CSV file. Please check the file format."));
       }
     };
 
@@ -697,7 +699,7 @@ export default function ShiftRequestsPage() {
     reader.onload = (e) => {
       const content = e.target?.result as string;
       if (!content) {
-        alert('No content found in the uploaded file.');
+        alert(t("No content found in the uploaded file."));
         return;
       }
 
@@ -712,20 +714,20 @@ export default function ShiftRequestsPage() {
         const validation = validatePeopleHistoryCsvData(csvData);
 
         if (!validation.isValid) {
-          alert(`CSV validation failed: ${validation.error}`);
+          alert(t("CSV validation failed: {value0}", { value0: validation.error }));
           return;
         }
 
         if (validation.validatedData && validation.validatedData.length > 0) {
           // Process the validated data
           processPeopleHistoryCsvData(validation.validatedData);
-          alert(`Successfully processed ${validation.validatedData.length} shift type entries from people history CSV!`);
+          alert(t("Successfully processed {value0} shift type entries from people history CSV!", { value0: validation.validatedData.length }));
         } else {
-          alert('No valid entries found in the people history CSV file.');
+          alert(t("No valid entries found in the people history CSV file."));
         }
       } catch (error) {
         console.error('Error processing people-history CSV file:', error);
-        alert('Error processing people-history CSV file. Please check the file format.');
+        alert(t("Error processing people-history CSV file. Please check the file format."));
       }
     };
 
@@ -755,7 +757,7 @@ export default function ShiftRequestsPage() {
 
   // Clear functions for different types of requests and history
   const clearAllPeopleHistory = () => {
-    if (!confirm('Are you sure you want to clear all people history?')) {
+    if (!confirm(t("Are you sure you want to clear all people history?"))) {
       return;
     }
 
@@ -771,7 +773,7 @@ export default function ShiftRequestsPage() {
   };
 
   const clearIndividualPersonDateRequests = () => {
-    if (!confirm('Are you sure you want to clear all requests between individual people and individual dates?')) {
+    if (!confirm(t("Are you sure you want to clear all requests between individual people and individual dates?"))) {
       return;
     }
 
@@ -792,7 +794,7 @@ export default function ShiftRequestsPage() {
   };
 
   const clearGroupToIndividualDateRequests = () => {
-    if (!confirm('Are you sure you want to clear all requests between people groups and individual dates?')) {
+    if (!confirm(t("Are you sure you want to clear all requests between people groups and individual dates?"))) {
       return;
     }
 
@@ -813,7 +815,7 @@ export default function ShiftRequestsPage() {
   };
 
   const clearIndividualPersonToDateGroupRequests = () => {
-    if (!confirm('Are you sure you want to clear all requests between individual people and date groups?')) {
+    if (!confirm(t("Are you sure you want to clear all requests between individual people and date groups?"))) {
       return;
     }
 
@@ -834,7 +836,7 @@ export default function ShiftRequestsPage() {
   };
 
   const clearGroupToGroupRequests = () => {
-    if (!confirm('Are you sure you want to clear all requests between people groups and date groups?')) {
+    if (!confirm(t("Are you sure you want to clear all requests between people groups and date groups?"))) {
       return;
     }
 
@@ -855,7 +857,7 @@ export default function ShiftRequestsPage() {
   };
 
   const clearAllRequests = () => {
-    if (!confirm('Are you sure you want to clear ALL shift requests?')) {
+    if (!confirm(t("Are you sure you want to clear ALL shift requests?"))) {
       return;
     }
     updateShiftRequestPreferences([]);
@@ -1217,7 +1219,7 @@ export default function ShiftRequestsPage() {
       } else {
         if (addFormData.shiftTypes.length > 1) {
           setErrors({
-            shiftTypes: 'Cannot set history to multiple shift types.'
+            shiftTypes: t("Cannot set history to multiple shift types.")
           });
           return;
         }
@@ -1308,17 +1310,16 @@ export default function ShiftRequestsPage() {
           className={`sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 shadow-sm`}
           style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
         >
-          People
-        </th>
+          {t("People")}</th>
         {/* History columns */}
         {Array.from({ length: historyColumnsCount }, (_, index) => (
           <th
             key={`history-${index}`}
             className="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 bg-amber-100"
-            title={`History position H-${historyColumnsCount - index}`}
+            title={t("History position H-{value0}", { value0: historyColumnsCount - index })}
             style={isSticky && columnWidths[columnIndex] ? { width: `${columnWidths[columnIndex++]}px`, minWidth: `${columnWidths[columnIndex-1]}px`, maxWidth: `${columnWidths[columnIndex-1]}px` } : {}}
           >
-            <div className="whitespace-nowrap">H-{historyColumnsCount - index}</div>
+            <div className="whitespace-nowrap">{t("H-")}{historyColumnsCount - index}</div>
           </th>
         ))}
         {getCombinedDateEntries().map((dateEntry) => {
@@ -1344,7 +1345,7 @@ export default function ShiftRequestsPage() {
                 {dateEntry.id}
                 {dateData.items.find(item => item.id === dateEntry.id) && (
                   <span className="ml-1">
-                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })}
+                    {dateStrToDate(dateEntry.id, dateData.range!).toLocaleDateString(locale, { weekday: 'short', timeZone: 'UTC' })}
                   </span>
                 )}
               </div>
@@ -1391,7 +1392,7 @@ export default function ShiftRequestsPage() {
               {/* Compact Shift Types */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Shift Types:</span>
+                  <span className="text-sm font-medium text-gray-700 whitespace-nowrap">{t("Shift Types:")}</span>
                   <div className="flex-1">
                     <CheckboxList
                       items={getAllShiftTypes().map(shiftType => ({
@@ -1422,7 +1423,7 @@ export default function ShiftRequestsPage() {
 
               {/* Inline Weight */}
               <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Weight:</label>
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">{t("Weight:")}</label>
                 <div className="flex items-center gap-1">
                   <input
                     type="text"
@@ -1433,7 +1434,7 @@ export default function ShiftRequestsPage() {
                         setErrors(prev => ({ ...prev, weight: '' }));
                       }
                     }}
-                    placeholder="±#"
+                    placeholder={t("±#")}
                     className={`w-16 px-2 py-1 text-sm border rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-center ${
                       errors.weight ? 'border-red-300 bg-red-50' : 'border-gray-300'
                     }`}
@@ -1448,7 +1449,7 @@ export default function ShiftRequestsPage() {
                         }
                       }}
                       className="px-1 py-0.5 text-xs bg-green-100 text-green-700 hover:bg-green-200 border border-green-300 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-green-200"
-                      title="Set to positive infinity (∞)"
+                      title={t("Set to positive infinity (∞)")}
                     >
                       +∞
                     </button>
@@ -1461,7 +1462,7 @@ export default function ShiftRequestsPage() {
                         }
                       }}
                       className="px-1 py-0.5 text-xs bg-red-100 text-red-700 hover:bg-red-200 border border-red-300 rounded transition-colors focus:outline-none focus:ring-1 focus:ring-red-200"
-                      title="Set to negative infinity (-∞)"
+                      title={t("Set to negative infinity (-∞)")}
                     >
                       -∞
                     </button>
@@ -1511,12 +1512,12 @@ export default function ShiftRequestsPage() {
       )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Shift Requests</h1>
-          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftRequests} label="Shift Requests" />
+          <h1 className="text-3xl font-bold text-gray-800">{t("Shift Requests")}</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.shiftRequests} label={t("Shift Requests")} />
         </div>
         <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
-            label="Quick Add Preference"
+            label={t("Quick Add Preference")}
             isToggled={isAddMode}
             onToggle={() => {
               if (isAddMode) {
@@ -1535,28 +1536,22 @@ export default function ShiftRequestsPage() {
           <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
             {(!dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0) ? (
               <>
-                Please set up your dates first by visiting the{' '}
+                {t("Please set up your dates first by visiting the")}{' '}
                 <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
-                  Dates
-                </Link>{' '}
-                tab.
-              </>
+                  {t("Dates")}</Link>{' '}
+                {t("tab.")}</>
             ) : peopleData.items.length === 0 ? (
               <>
-                Please set up your people first by visiting the{' '}
+                {t("Please set up your people first by visiting the")}{' '}
                 <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
-                  People
-                </Link>{' '}
-                tab.
-              </>
+                  {t("People")}</Link>{' '}
+                {t("tab.")}</>
             ) : (
               <>
-                Please set up your shift types first by visiting the{' '}
+                {t("Please set up your shift types first by visiting the")}{' '}
                 <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
-                  Shift Types
-                </Link>{' '}
-                tab.
-              </>
+                  {t("Shift Types")}</Link>{' '}
+                {t("tab.")}</>
             )}
           </div>
         </div>
@@ -1567,8 +1562,7 @@ export default function ShiftRequestsPage() {
           <div className="px-6 py-4">
             <div className="flex flex-col items-start justify-between gap-3 mb-4 sm:flex-row sm:items-center">
               <h2 className="text-lg font-semibold text-gray-800">
-                Add Shift Preference
-              </h2>
+                {t("Add Shift Preference")}</h2>
               <div className="flex flex-wrap gap-2">
                 <UploadButton
                   onFileUpload={processPeopleHistoryFile}
@@ -1622,7 +1616,7 @@ export default function ShiftRequestsPage() {
                     }));
                     setErrors(prev => ({ ...prev, shiftTypes: '' }));
                   }}
-                  label="Shift Types (select multiple to set preferences for each)"
+                  label={t("Shift Types (select multiple to set preferences for each)")}
                 />
                 {errors.shiftTypes && (
                   <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
@@ -1643,7 +1637,7 @@ export default function ShiftRequestsPage() {
                   }
                 }}
                 error={errors.weight}
-                placeholder="Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)"
+                placeholder={t("Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)")}
               />
             </div>
           </div>
@@ -1656,8 +1650,8 @@ export default function ShiftRequestsPage() {
           {/* Clear Data Section */}
           <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-800">Clear Data</h3>
-              <p className="text-sm text-gray-600 mt-1">Remove different types of data with targeted clear operations</p>
+              <h3 className="text-lg font-semibold text-gray-800">{t("Clear Data")}</h3>
+              <p className="text-sm text-gray-600 mt-1">{t("Remove different types of data with targeted clear operations")}</p>
             </div>
             <div className="px-4 py-3">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1665,61 +1659,55 @@ export default function ShiftRequestsPage() {
                 <button
                   onClick={clearAllPeopleHistory}
                   className="px-4 py-2 text-sm font-medium text-amber-800 bg-amber-50 hover:bg-amber-100 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift history entries for all people"
+                  title={t("Clear all shift history entries for all people")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear All People History
-                </button>
+                  {t("Clear All People History")}</button>
 
                 {/* Clear All Requests */}
                 <button
                   onClick={clearAllRequests}
                   className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift requests completely"
+                  title={t("Clear all shift requests completely")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear All Requests
-                </button>
+                  {t("Clear All Requests")}</button>
 
                 {/* Clear Person Individual-to-Individual Date Requests */}
                 <button
                   onClick={clearIndividualPersonDateRequests}
                   className="px-4 py-2 text-sm font-medium text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift requests between individual people and individual dates"
+                  title={t("Clear all shift requests between individual people and individual dates")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear Person Individual-to-Individual Date Requests
-                </button>
+                  {t("Clear Person Individual-to-Individual Date Requests")}</button>
 
                 {/* Clear People Group-to-Individual Date Requests */}
                 <button
                   onClick={clearGroupToIndividualDateRequests}
                   className="px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift requests between people groups and individual dates"
+                  title={t("Clear all shift requests between people groups and individual dates")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear People Group-to-Individual Date Requests
-                </button>
+                  {t("Clear People Group-to-Individual Date Requests")}</button>
 
                 {/* Clear Person Individual-to-Group Dates Requests */}
                 <button
                   onClick={clearIndividualPersonToDateGroupRequests}
                   className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift requests between individual people and date groups"
+                  title={t("Clear all shift requests between individual people and date groups")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear Person Individual-to-Group Dates Requests
-                </button>
+                  {t("Clear Person Individual-to-Group Dates Requests")}</button>
 
                 {/* Clear People Group-to-Group Dates Requests */}
                 <button
                   onClick={clearGroupToGroupRequests}
                   className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors flex items-center gap-2"
-                  title="Clear all shift requests between people groups and date groups"
+                  title={t("Clear all shift requests between people groups and date groups")}
                 >
                   <FiTrash2 className="h-4 w-4" />
-                  Clear People Group-to-Group Dates Requests
-                </button>
+                  {t("Clear People Group-to-Group Dates Requests")}</button>
               </div>
             </div>
           </div>
@@ -1727,7 +1715,7 @@ export default function ShiftRequestsPage() {
           {/* Shift Requests Table */}
           <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-800">Shift Preference Matrix</h3>
+              <h3 className="text-lg font-semibold text-gray-800">{t("Shift Preference Matrix")}</h3>
             </div>
 
             <div ref={mainScrollContainerRef} className="overflow-x-auto">
@@ -1798,8 +1786,8 @@ export default function ShiftRequestsPage() {
                             onMouseDown={(e) => isClickable && handleCellMouseDown(SelectedCellType.HISTORY, personEntry.id, index, e)}
                             onMouseUp={(e) => isClickable && handleCellMouseUp(e)}
                             title={isClickable ? (isAddMode
-                              ? `Click or drag to set history position H-${historyColumnsCount - index} to ${addFormData.shiftTypes.length > 0 ? addFormData.shiftTypes[0] : 'clear'}`
-                              : `Click to edit history position H-${historyColumnsCount - index}`) : ''}
+                              ? t("Click or drag to set history position H-{value0} to {value1}", { value0: historyColumnsCount - index, value1: addFormData.shiftTypes.length > 0 ? addFormData.shiftTypes[0] : 'clear' })
+                              : t("Click to edit history position H-{value0}", { value0: historyColumnsCount - index })) : ''}
                           >
                             <div className={`text-sm font-medium ${isClickable ? 'text-gray-900' : 'text-gray-300'}`}>
                               {!isClickable ? '' : (historyValue || '—')}
@@ -1835,8 +1823,8 @@ export default function ShiftRequestsPage() {
                               backgroundColor: display?.color || undefined
                             }}
                             title={isAddMode
-                              ? `Click or drag to update preferences for ${personEntry.id} on date ${dateEntry.id}`
-                              : `Click to update preferences for ${personEntry.id} on date ${dateEntry.id}`}
+                              ? t("Click or drag to update preferences for {value0} on date {value1}", { value0: personEntry.id, value1: dateEntry.id })
+                              : t("Click to update preferences for {value0} on date {value1}", { value0: personEntry.id, value1: dateEntry.id })}
                             onClick={() => !isAddMode && handleCellClick(personEntry.id, dateEntry.id)}
                             onMouseEnter={() => handleCellMouseEnter(SelectedCellType.PREFERENCE, personEntry.id, dateEntry.id)}
                             onMouseDown={(e) => handleCellMouseDown(SelectedCellType.PREFERENCE, personEntry.id, dateEntry.id, e)}
@@ -1858,8 +1846,7 @@ export default function ShiftRequestsPage() {
                                   })}
                                   {remainingCount > 0 && (
                                     <div className="text-[10px] font-medium opacity-75 px-0.5">
-                                      +{remainingCount} more
-                                    </div>
+                                      +{remainingCount}{t(" more")}</div>
                                   )}
                                 </>
                               );
@@ -1878,14 +1865,13 @@ export default function ShiftRequestsPage() {
           {/* Current Shift Requests */}
           <div className="mt-6 bg-blue-50 shadow-md rounded-lg overflow-hidden border border-blue-200">
             <div className="px-6 py-4 border-b border-blue-200 bg-blue-100">
-              <h3 className="text-lg font-semibold text-blue-800">Current Shift Requests</h3>
-              <p className="text-sm text-blue-600 mt-1">Auto-computed from the preference matrix above</p>
+              <h3 className="text-lg font-semibold text-blue-800">{t("Current Shift Requests")}</h3>
+              <p className="text-sm text-blue-600 mt-1">{t("Auto-computed from the preference matrix above")}</p>
             </div>
 
             {shiftRequestPreferences.length === 0 ? (
               <div className="px-6 py-8 text-center text-blue-500">
-                No shift requests defined yet. Click on any cell in the matrix above to add preferences.
-              </div>
+                {t("No shift requests defined yet. Click on any cell in the matrix above to add preferences.")}</div>
             ) : (
               <div className="divide-y divide-blue-200">
                 {shiftRequestPreferences.map((preference, index) => {
@@ -1899,32 +1885,32 @@ export default function ShiftRequestsPage() {
                         <div className="flex-1">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm text-blue-600">
                             <div>
-                              <span className="font-medium">Person:</span>{' '}
+                              <span className="font-medium">{t("Person:")}</span>{' '}
                               <span className="text-blue-900">{preference.person}</span>
                               {person?.description && (
                                 <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                               )}
                             </div>
                             <div>
-                              <span className="font-medium">Date:</span>{' '}
+                              <span className="font-medium">{t("Date:")}</span>{' '}
                               <span className="text-blue-900">
                                 {preference.date.join(', ')}
                               </span>
                             </div>
                             <div>
-                              <span className="font-medium">Shift Type:</span>{' '}
+                              <span className="font-medium">{t("Shift Type:")}</span>{' '}
                               <span className="text-blue-900">{preference.shiftType}</span>
                               {shiftType?.description && (
                                 <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
                               )}
                             </div>
                             <div>
-                              <span className="font-medium">Weight:</span>{' '}
+                              <span className="font-medium">{t("Weight:")}</span>{' '}
                               <span className={`font-medium ${preference.weight > 0 ? 'text-green-600' : preference.weight < 0 ? 'text-red-600' : 'text-blue-900'}`}>
                                 {preference.weight > 0 ? '+' : ''}{preference.weight}
                               </span>
                               <div className="text-xs text-blue-500 mt-1">
-                                {preference.weight > 0 ? 'Wants this shift' : preference.weight < 0 ? 'Wants to avoid' : 'Neutral'}
+                                {preference.weight > 0 ? t("Wants this shift") : preference.weight < 0 ? t("Wants to avoid") : t("Neutral")}
                               </div>
                             </div>
                           </div>
@@ -1940,14 +1926,13 @@ export default function ShiftRequestsPage() {
           {/* Current People History */}
           <div className="mt-6 bg-blue-50 shadow-md rounded-lg overflow-hidden border border-blue-200">
             <div className="px-6 py-4 border-b border-blue-200 bg-blue-100">
-              <h3 className="text-lg font-semibold text-blue-800">Current People History</h3>
-              <p className="text-sm text-blue-600 mt-1">Auto-computed from the history matrix above</p>
+              <h3 className="text-lg font-semibold text-blue-800">{t("Current People History")}</h3>
+              <p className="text-sm text-blue-600 mt-1">{t("Auto-computed from the history matrix above")}</p>
             </div>
 
             {peopleData.items.every(person => person.history!.length === 0) ? (
               <div className="px-6 py-8 text-center text-blue-500">
-                No history entries defined yet. Click on any history cell in the matrix above to add entries.
-              </div>
+                {t("No history entries defined yet. Click on any history cell in the matrix above to add entries.")}</div>
             ) : (
               <div className="divide-y divide-blue-200">
                 {peopleData.items.map((person) => {
@@ -1959,7 +1944,7 @@ export default function ShiftRequestsPage() {
                         <div className="flex-1">
                           <div className="mb-3">
                             <div className="text-sm font-medium text-blue-800">
-                              Person: <span className="text-blue-900">{person.id}</span>
+                              {t("Person: ")}<span className="text-blue-900">{person.id}</span>
                             </div>
                             {person.description && (
                               <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
@@ -1972,7 +1957,7 @@ export default function ShiftRequestsPage() {
 
                               return (
                                 <div key={index} className="text-sm text-blue-600">
-                                  <span className="font-medium">H-{historyPosition}:</span>{' '}
+                                  <span className="font-medium">{t("H-")}{historyPosition}:</span>{' '}
                                   <span className="text-blue-900">{shiftTypeId || '—'}</span>
                                   {shiftType?.description && (
                                     <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
@@ -1988,8 +1973,7 @@ export default function ShiftRequestsPage() {
                             className="text-blue-600 hover:text-blue-900 flex items-center gap-1 text-sm"
                           >
                             <FiEdit2 className="h-4 w-4" />
-                            Edit
-                          </button>
+                            {t("Edit")}</button>
                         </div>
                       </div>
                     </div>
@@ -2038,17 +2022,16 @@ export default function ShiftRequestsPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-sm w-full mx-4">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-800">
-                Edit History - {historyEditState.personId}
+                {t("Edit History - ")}{historyEditState.personId}
               </h3>
               <p className="text-sm text-gray-600 mt-1">
-                Position H-{historyColumnsCount - historyEditState.historyIndex}
+                {t("Position H-")}{historyColumnsCount - historyEditState.historyIndex}
               </p>
             </div>
 
             <div className="px-6 py-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Shift Type:
-              </label>
+                {t("Shift Type:")}</label>
               <select
                 value={(() => {
                   const person = peopleData.items.find(p => p.id === historyEditState.personId);
@@ -2062,7 +2045,7 @@ export default function ShiftRequestsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 autoFocus
               >
-                <option value="">-- Clear --</option>
+                <option value="">{t("-- Clear --")}</option>
                 {shiftTypeData.items.map((shiftType) => (
                   <option key={shiftType.id} value={shiftType.id}>
                     {shiftType.id} - {shiftType.description}
@@ -2076,8 +2059,7 @@ export default function ShiftRequestsPage() {
                 onClick={closeHistoryEditor}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
               >
-                Cancel
-              </button>
+                {t("Cancel")}</button>
             </div>
           </div>
         </div>

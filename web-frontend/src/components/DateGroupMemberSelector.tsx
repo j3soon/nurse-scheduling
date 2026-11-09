@@ -21,6 +21,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   CalendarDayButton,
@@ -46,6 +47,7 @@ export function DateGroupMemberSelector({
   selectedIds,
   onToggle,
 }: DateGroupMemberSelectorProps) {
+  const { t } = useI18n();
   const [view, setView] = useState<'calendar' | 'list'>('calendar');
   const {
     activeMonth,
@@ -96,7 +98,7 @@ export function DateGroupMemberSelector({
         items={items}
         selectedIds={selectedIds}
         onToggle={onToggle}
-        label="Members"
+        label={t("Members")}
       />
     );
   }
@@ -147,7 +149,7 @@ export function DateGroupMemberSelector({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-medium text-gray-700">Members</h3>
+        <h3 className="text-sm font-medium text-gray-700">{t("Members")}</h3>
         <div className="inline-flex rounded-md border border-gray-200 bg-gray-50 p-0.5">
           {(['calendar', 'list'] as const).map(option => (
             <button
@@ -161,7 +163,7 @@ export function DateGroupMemberSelector({
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              {option === 'calendar' ? 'Calendar view' : 'List view'}
+              {option === 'calendar' ? t("Calendar view") : t("List view")}
             </button>
           ))}
         </div>
@@ -211,7 +213,7 @@ export function DateGroupMemberSelector({
           items={otherItems}
           selectedIds={selectedIds}
           onToggle={onToggle}
-          label="Other dates"
+          label={t("Other dates")}
         />
       )}
     </div>

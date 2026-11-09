@@ -19,6 +19,9 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useState } from 'react';
 import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { addMonths, formatMonthYear, getCalendarMonthDates, isSameMonth, startOfMonth, WEEKDAY_LABELS } from '@/utils/calendar';
@@ -149,6 +152,7 @@ export function CalendarMonthView({
   renderDay,
   footer,
 }: CalendarMonthViewProps) {
+  const { t, locale } = useI18n();
   const calendarDates = getCalendarMonthDates(activeMonth);
 
   return (
@@ -156,17 +160,17 @@ export function CalendarMonthView({
       <div className="flex items-center justify-between border-b border-gray-200 pb-2">
         <button
           type="button"
-          aria-label="Previous month"
+          aria-label={t("Previous month")}
           disabled={isPreviousMonthDisabled}
           onClick={() => onActiveMonthChange(addMonths(activeMonth, -1))}
           className="rounded-md p-2 text-gray-600 hover:bg-white hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
         >
           <FiChevronLeft className="h-5 w-5" />
         </button>
-        <div className="text-sm font-semibold text-gray-900">{formatMonthYear(activeMonth)}</div>
+        <div className="text-sm font-semibold text-gray-900">{formatMonthYear(activeMonth, locale)}</div>
         <button
           type="button"
-          aria-label="Next month"
+          aria-label={t("Next month")}
           disabled={isNextMonthDisabled}
           onClick={() => onActiveMonthChange(addMonths(activeMonth, 1))}
           className="rounded-md p-2 text-gray-600 hover:bg-white hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
@@ -177,7 +181,7 @@ export function CalendarMonthView({
 
       <div className="mt-3 grid grid-cols-7 gap-1 text-center text-xs font-medium text-gray-500">
         {WEEKDAY_LABELS.map(dayName => (
-          <div key={dayName}>{dayName}</div>
+          <div key={t(dayName)}>{t(dayName)}</div>
         ))}
       </div>
       <div data-testid="calendar-month-grid" className="mt-2 grid grid-cols-7" onMouseLeave={onGridMouseLeave}>

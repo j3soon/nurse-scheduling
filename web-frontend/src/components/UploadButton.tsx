@@ -17,6 +17,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useRef } from 'react';
 import { FiUpload } from 'react-icons/fi';
 
@@ -39,13 +42,14 @@ export default function UploadButton({
   disabled = false,
   icon = <FiUpload className="h-4 w-4" />
 }: UploadButtonProps) {
+  const { t } = useI18n();
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const validateFile = (file: File): boolean => {
     const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
     if (!acceptedFileTypes.includes(fileExtension)) {
-      alert(`Please upload a file with one of these extensions: ${acceptedFileTypes.join(', ')}`);
+      alert(t("Please upload a file with one of these extensions: {value0}", { value0: acceptedFileTypes.join(', ') }));
       return false;
     }
     return true;
@@ -90,7 +94,7 @@ export default function UploadButton({
     const file = files[0];
 
     if (!file) {
-      alert('No file was dropped.');
+      alert(t("No file was dropped."));
       return;
     }
 

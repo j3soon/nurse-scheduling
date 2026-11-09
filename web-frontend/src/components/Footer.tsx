@@ -19,6 +19,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { usePathname } from 'next/navigation';
 import AppVersionText from '@/components/AppVersionText';
 import {
@@ -34,6 +35,7 @@ import {
 import { CURRENT_APP_VERSION } from '@/utils/version';
 
 export default function Footer() {
+  const { t } = useI18n();
   const pathname = usePathname();
   if (pathname === '/experimental-ai') return null;
 
@@ -41,22 +43,22 @@ export default function Footer() {
     // The bottom padding on phones keeps the floating Feedback button clear of the text.
     <footer className="px-6 pt-6 pb-20 sm:pb-6" style={{ textAlign: 'center', marginTop: '2rem', fontSize: '0.875rem', color: 'gray' }}>
       <div>
-        <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Copyright ©</a>{' '}
+        <a href={GITHUB_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("Copyright ©")}</a>{' '}
         <a href={GITHUB_CODE_FREQUENCY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">2023-{new Date().getFullYear()}</a>{' '}
-        <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Johnson Sun</a> &{' '}
-        <a href={GITHUB_CONTRIBUTORS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Contributors</a>.{' '}
-        <a href={GITHUB_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Privacy Policy</a>.
+        <a href={GITHUB_AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("Johnson Sun")}</a> &{' '}
+        <a href={GITHUB_CONTRIBUTORS_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("Contributors")}</a>.{' '}
+        <a href={GITHUB_PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("Privacy Policy")}</a>.
       </div>
       <div>
-        <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">Nurse Scheduling Project</a>{' '}
+        <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("Nurse Scheduling Project")}</a>{' '}
         <AppVersionText
           version={CURRENT_APP_VERSION}
           versionHref={GITHUB_TAGS_URL}
           versionClassName="footer-link"
           commitClassName="footer-link"
         />
-        .{' '}Licensed under{' '}
-        <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">AGPL-3.0</a>.
+        .{' '}{t("Licensed under")}{' '}
+        <a href={AGPL_LICENSE_URL} target="_blank" rel="noopener noreferrer" className="footer-link">{t("AGPL-3.0")}</a>.
       </div>
     </footer>
   );

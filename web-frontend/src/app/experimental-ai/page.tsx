@@ -21,6 +21,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import * as Sentry from '@sentry/nextjs';
 import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
@@ -191,6 +192,7 @@ function fileExtension(filename: string): string {
 }
 
 function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[] }) {
+  const { t } = useI18n();
   const firstTime = points[0].elapsedSeconds;
   const lastTime = points[points.length - 1].elapsedSeconds;
   let minimum = points[0].currentBestScore;
@@ -206,13 +208,14 @@ function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[]
     return `${x},${y}`;
   }).join(' ');
   return (
-    <svg role="img" aria-label="Optimization score trend" viewBox="0 0 112 28" className="h-7 w-28 shrink-0">
+    <svg role="img" aria-label={t("Optimization score trend")} viewBox="0 0 112 28" className="h-7 w-28 shrink-0">
       <polyline points={path} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
     </svg>
   );
 }
 
 export default function ExperimentalAiPage() {
+  const { t, locale } = useI18n();
   const {
     dateData,
     peopleData,
@@ -279,11 +282,11 @@ export default function ExperimentalAiPage() {
       setAuthRequired(true);
       setAuthRejected(true);
       setIsEditingAuthToken(true);
-      setError('AI credentials were rejected. Enter the current AI token and try again.');
+      setError(t("AI credentials were rejected. Enter the current AI token and try again."));
       return;
     }
     setError(requestError instanceof Error ? requestError.message : fallback);
-  }, []);
+  }, [t]);
 
   const resetChatUi = useCallback(() => {
     setDownloadingOptimizationId(null);
@@ -434,12 +437,12 @@ export default function ExperimentalAiPage() {
           setServerStatus(unauthorized ? 'unauthorized' : 'offline');
           if (unauthorized) setAuthRequired(true);
           setCapabilitiesError(
-            `Could not load AI capabilities from ${aiEndpoint}. Check that the AI backend is reachable from this browser.`,
+            t("Could not load AI capabilities from {value0}. Check that the AI backend is reachable from this browser.", { value0: aiEndpoint }),
           );
         }
       });
     return () => capabilitiesController.abort();
-  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds]);
+  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds, t]);
 
   useEffect(() => () => {
       speechRecognitionRef.current?.stop();
@@ -632,7 +635,7 @@ export default function ExperimentalAiPage() {
   const activateAiEndpoint = (requestedEndpoint: string) => {
     const endpoint = requestedEndpoint === '/ai' ? requestedEndpoint : normalizeAiEndpoint(requestedEndpoint);
     if (!endpoint) {
-      setServerError('Enter a valid HTTP or HTTPS AI server URL.');
+      setServerError(t("Enter a valid HTTP or HTTPS AI server URL."));
       return;
     }
     const token = authTokensRef.current[endpoint] ?? null;
@@ -662,7 +665,7 @@ export default function ExperimentalAiPage() {
   };
 
   const discardDraft = () => {
-    if ((draft.trim() || selectedAttachments.length) && !window.confirm('Discard the draft and pending attachments?')) return false;
+    if ((draft.trim() || selectedAttachments.length) && !window.confirm(t("Discard the draft and pending attachments?"))) return false;
     selectedAttachments.forEach(attachment => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     });
@@ -684,7 +687,7 @@ export default function ExperimentalAiPage() {
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
       optimizationDownloadUrlRef.current = null;
     } catch {
-      setError('The saved chat could not be opened from browser storage.');
+      setError(t("The saved chat could not be opened from browser storage."));
     }
   };
 
@@ -706,17 +709,17 @@ export default function ExperimentalAiPage() {
   const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
     if (!fileCapability.enabled) {
-      setError('File attachments are unavailable.');
+      setError(t("File attachments are unavailable."));
       return;
     }
     if (uploadedFiles.length + selectedAttachments.length + files.length > fileCapability.max_files) {
-      setError(`Keep at most ${fileCapability.max_files} files in this chat. Remove unused uploads first.`);
+      setError(t("Keep at most {value0} files in this chat. Remove unused uploads first.", { value0: fileCapability.max_files }));
       return;
     }
-    const megabytes = (bytes: number) => (bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    const megabytes = (bytes: number) => (bytes / 1_000_000).toLocaleString(locale, { maximumFractionDigits: 1 });
     const maxFileBytes = fileCapability.max_bytes_per_file;
     if (files.some(file => file.size > maxFileBytes)) {
-      setError(`Each file must be ${megabytes(maxFileBytes)} MB or smaller.`);
+      setError(t("Each file must be {value0} MB or smaller.", { value0: megabytes(maxFileBytes) }));
       return;
     }
 
@@ -724,7 +727,7 @@ export default function ExperimentalAiPage() {
       + selectedAttachments.reduce((total, attachment) => total + attachment.file.size, 0)
       + files.reduce((total, file) => total + file.size, 0);
     if (totalBytes > fileCapability.max_bytes_per_session) {
-      setError(`Files in this chat must total ${megabytes(fileCapability.max_bytes_per_session)} MB or less. Remove unused uploads first.`);
+      setError(t("Files in this chat must total {value0} MB or less. Remove unused uploads first.", { value0: megabytes(fileCapability.max_bytes_per_session) }));
       return;
     }
     setError(null);
@@ -769,7 +772,7 @@ export default function ExperimentalAiPage() {
       link.click();
       link.remove();
     } catch (downloadError) {
-      reportRequestError(downloadError, 'The generated files could not be downloaded.');
+      reportRequestError(downloadError, t("The generated files could not be downloaded."));
     }
   };
 
@@ -786,12 +789,12 @@ export default function ExperimentalAiPage() {
       chatExportFrameRef.current?.remove();
       const frame = document.createElement('iframe');
       frame.hidden = true;
-      frame.title = 'Chat export download';
+      frame.title = t("Chat export download");
       let initialized = false;
       const failed = () => {
         if (chatExportFrameRef.current !== frame || !session.ownsConversation()) return;
         setChatExportNotice(null);
-        reportRequestError(new Error('The chat download could not start. Please try Export Chat again.'), 'The chat could not be exported.');
+        reportRequestError(new Error(t("The chat download could not start. Please try Export Chat again.")), t("The chat could not be exported."));
       };
       frame.onload = () => {
         if (!initialized) {
@@ -807,9 +810,9 @@ export default function ExperimentalAiPage() {
       frame.src = 'about:blank';
       chatExportFrameRef.current = frame;
       document.body.appendChild(frame);
-      setChatExportNotice('Chat download requested. Check your browser’s downloads.');
+      setChatExportNotice(t("Chat download requested. Check your browser’s downloads."));
     } catch (exportError) {
-      if (session.ownsConversation()) reportRequestError(exportError, 'The chat could not be exported.');
+      if (session.ownsConversation()) reportRequestError(exportError, t("The chat could not be exported."));
     } finally {
       if (session.ownsConversation()) setIsExportingChat(false);
     }
@@ -839,7 +842,7 @@ export default function ExperimentalAiPage() {
       link.click();
       link.remove();
     } catch (downloadError) {
-      if (ownsConversation()) reportRequestError(downloadError, 'The schedule could not be downloaded.');
+      if (ownsConversation()) reportRequestError(downloadError, t("The schedule could not be downloaded."));
     } finally {
       if (ownsConversation()) setDownloadingOptimizationId(null);
     }
@@ -855,7 +858,7 @@ export default function ExperimentalAiPage() {
     } catch (cancelError) {
       if (session.ownsConversation()) {
         setCancellingOptimizationId(current => current === jobId ? null : current);
-        reportRequestError(cancelError, 'The optimizer could not be cancelled.');
+        reportRequestError(cancelError, t("The optimizer could not be cancelled."));
       }
     }
   };
@@ -869,7 +872,7 @@ export default function ExperimentalAiPage() {
     } catch (finishError) {
       if (session.ownsConversation()) {
         setFinishingOptimizationId(current => current === jobId ? null : current);
-        reportRequestError(finishError, 'The optimizer could not finish early.');
+        reportRequestError(finishError, t("The optimizer could not finish early."));
       }
     }
   };
@@ -901,7 +904,7 @@ export default function ExperimentalAiPage() {
     };
     recognition.onerror = event => {
       if (!BENIGN_SPEECH_ERRORS.has(event?.error ?? '')) {
-        setError('Speech recognition stopped before it could transcribe audio.');
+        setError(t("Speech recognition stopped before it could transcribe audio."));
       }
       setIsListening(false);
     };
@@ -913,7 +916,7 @@ export default function ExperimentalAiPage() {
     } catch {
       speechRecognitionRef.current = null;
       setIsListening(false);
-      setError('Speech recognition could not start in this browser.');
+      setError(t("Speech recognition could not start in this browser."));
     }
   };
   const credentialsMissing = authRequired && authToken === null;
@@ -949,30 +952,27 @@ export default function ExperimentalAiPage() {
   const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
-  const tokenDescription = `${contextUsage?.estimated !== false ? 'Estimated current' : 'Current'} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.`;
+  const tokenDescription = t("{value0} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.", { value0: contextUsage?.estimated !== false ? 'Estimated current' : 'Current' });
   const contextDescription = contextUsage?.usedTokens !== undefined
     ? tokenDescription
-    : 'The AI server has not reported context tokens.';
+    : t("The AI server has not reported context tokens.");
 
   // Reserve space for the fixed history and file panels on wide screens.
   return (
     <main className={`mx-auto flex min-h-[calc(100dvh-3.5rem)] max-w-5xl min-w-0 flex-col px-2 pt-4 sm:px-6 sm:pt-8 xl:max-w-[min(64rem,calc(100vw-36rem))]`} style={{ paddingBottom: composerHeight + keyboardInset + 56 }}>
       <div className="mb-6">
         <div className="mb-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-900">Schedule AI Chat</h1>
-          <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label="Experimental AI" />
+          <h1 className="text-3xl font-bold text-gray-900">{t("Schedule AI Chat")}</h1>
+          <PageDocumentationLink href={DOCUMENTATION_URLS.experimentalAi} label={t("Experimental AI")} />
           <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
-            Experimental
-          </span>
+            {t("Experimental")}</span>
         </div>
         <p className="text-sm text-gray-600">
-          Ask questions about the Schedule Spec currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.
-        </p>
+          {t("Ask questions about the Schedule Spec currently open in this browser, or request a change. You can attach files for the assistant to inspect in its temporary workspace.")}</p>
         {trimmedHistoryCount > 0 && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
-            This conversation is long, so the {trimmedHistoryCount === 1 ? 'oldest message is' : `${trimmedHistoryCount} oldest messages are`}
-            {' '}no longer sent to the assistant. The full transcript stays on this page.
-          </p>
+            {t("This conversation is long, so the ")}{trimmedHistoryCount === 1 ? t("oldest message is") : t("{value0} oldest messages are", { value0: trimmedHistoryCount })}
+            {' '}{t("no longer sent to the assistant. The full transcript stays on this page.")}</p>
         )}
         {sessionNotice && (
           <p className="mt-2 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
@@ -990,7 +990,7 @@ export default function ExperimentalAiPage() {
                     ? 'bg-amber-500'
                     : 'bg-red-500'
             }`} aria-hidden="true" />
-            <span className="font-medium text-gray-700">AI server:</span>
+            <span className="font-medium text-gray-700">{t("AI server:")}</span>
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-gray-600" title={aiEndpoint}>
               {aiEndpoint}
             </span>
@@ -999,19 +999,18 @@ export default function ExperimentalAiPage() {
               type="button"
               onClick={toggleServerEditor}
               disabled={isStreaming || serverLocked}
-              title={serverLocked ? 'The AI server is locked for this conversation.' : undefined}
+              title={serverLocked ? t("The AI server is locked for this conversation.") : undefined}
               className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
             >
-              {isEditingServer ? 'Close' : 'Change'}
+              {isEditingServer ? t("Close") : t("Change")}
             </button>
           </div>
           {serverLocked && (
-            <p className="mt-1 text-xs text-gray-500">This server is locked for the current conversation. Start a new chat to change servers.</p>
+            <p className="mt-1 text-xs text-gray-500">{t("This server is locked for the current conversation. Start a new chat to change servers.")}</p>
           )}
           {!isOfficialAiEndpoint(aiEndpoint) && (
             <p className="mt-1 text-xs text-amber-700">
-              This server is unofficially hosted. Privacy and data retention practices may vary.
-            </p>
+              {t("This server is unofficially hosted. Privacy and data retention practices may vary.")}</p>
           )}
           {isEditingServer && !serverLocked && (
             <form
@@ -1027,22 +1026,20 @@ export default function ExperimentalAiPage() {
                   onClick={() => selectAiEndpoint(PRODUCTION_AI_API_URL)}
                   className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                 >
-                  Use hosted
-                </button>
+                  {t("Use hosted")}</button>
                 <button
                   type="button"
                   onClick={() => selectAiEndpoint(LOCAL_AI_API_URL)}
                   className="rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
                 >
-                  Use localhost
-                </button>
+                  {t("Use localhost")}</button>
               </div>
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={customEndpoint}
                   onChange={event => setCustomEndpoint(event.target.value)}
-                  aria-label="Custom AI server URL"
+                  aria-label={t("Custom AI server URL")}
                   placeholder="https://ai.example.com"
                   spellCheck={false}
                   className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -1051,8 +1048,7 @@ export default function ExperimentalAiPage() {
                   type="submit"
                   className="rounded border border-blue-600 bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700"
                 >
-                  Use custom
-                </button>
+                  {t("Use custom")}</button>
               </div>
               {serverError && <p className="text-xs text-red-700">{serverError}</p>}
             </form>
@@ -1067,10 +1063,10 @@ export default function ExperimentalAiPage() {
                 type="button"
                 onClick={() => void exportChat()}
                 disabled={isExportingChat || !savedChatExportEnabled}
-                title={savedChatExportEnabled ? 'Download the complete chat and its files as a ZIP' : 'Chat export is unavailable on this server'}
+                title={savedChatExportEnabled ? t("Download the complete chat and its files as a ZIP") : t("Chat export is unavailable on this server")}
                 className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isExportingChat ? 'Preparing export…' : 'Export Chat'}
+                {isExportingChat ? t("Preparing export…") : t("Export Chat")}
               </button>
               <span aria-hidden="true">·</span>
               <button
@@ -1079,8 +1075,7 @@ export default function ExperimentalAiPage() {
                 disabled={isStreaming}
                 className="font-medium text-red-700 underline underline-offset-2 hover:text-red-900 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Start new chat
-              </button>
+                {t("Start new chat")}</button>
             </div>
           )}
         </div>
@@ -1098,14 +1093,14 @@ export default function ExperimentalAiPage() {
               onClear={clearAuthToken}
             />
             {authRejected && !isEditingAuthToken && (
-              <p className="mt-1 text-xs text-red-700">The credentials were rejected.</p>
+              <p className="mt-1 text-xs text-red-700">{t("The credentials were rejected.")}</p>
             )}
           </div>
         )}
-        <div role="group" aria-label="AI versions" className={`mt-3 max-w-2xl rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+        <div role="group" aria-label={t("AI versions")} className={`mt-3 max-w-2xl rounded-md border px-3 py-2 text-xs ${hasVersionMismatch ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             <span>
-              Frontend{' '}
+              {t("Frontend")}{' '}
               <AppVersionText
                 version={CURRENT_APP_VERSION}
                 versionHref={GITHUB_TAGS_URL}
@@ -1114,7 +1109,7 @@ export default function ExperimentalAiPage() {
               />
             </span>
             <span>
-              Backend{' '}
+              {t("Backend")}{' '}
               <AppVersionText
                 version={backendVersion ?? 'unknown'}
                 versionHref={GITHUB_TAGS_URL}
@@ -1125,8 +1120,7 @@ export default function ExperimentalAiPage() {
           </div>
           {hasVersionMismatch && (
             <p className="mt-1 font-medium text-amber-700">
-              Frontend and backend versions do not match. If nothing breaks, you can continue.
-            </p>
+              {t("Frontend and backend versions do not match. If nothing breaks, you can continue.")}</p>
           )}
         </div>
         <p className="mt-3 px-3 text-xs text-gray-500">
@@ -1136,8 +1130,7 @@ export default function ExperimentalAiPage() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Privacy Policy
-          </a>
+            {t("Privacy Policy")}</a>
           {' · '}
           <a
             className="text-blue-600 underline hover:text-blue-800"
@@ -1145,17 +1138,14 @@ export default function ExperimentalAiPage() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Request beta access
-          </a>
+            {t("Request beta access")}</a>
         </p>
         <div className="mt-3 sm:px-3">
-          <MobileDetails label="Chat details and settings">
+          <MobileDetails label={t("Chat details and settings")}>
             <p className="mt-2 text-xs font-medium text-gray-500">
-              Browser Schedule Spec: {peopleData.items.length} people, {dateData.items.length} dates. Sent when you send a message.
-            </p>
+              {t("Browser Schedule Spec: ")}{peopleData.items.length}{t(" people, ")}{dateData.items.length}{t(" dates. Sent when you send a message.")}</p>
             <p className="mt-2 text-xs text-gray-500">
-              Chat sessions expire after {retentionLabel(sessionRetentionSeconds)} of inactivity. Each new message renews this period.
-            </p>
+              {t("Chat sessions expire after ")}{retentionLabel(sessionRetentionSeconds)}{t(" of inactivity. Each new message renews this period.")}</p>
             <div className="mt-2 flex flex-wrap gap-4">
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input
@@ -1164,8 +1154,7 @@ export default function ExperimentalAiPage() {
                   onChange={event => rememberPreferences({ showReasoning: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
                 />
-                Show reasoning
-              </label>
+                {t("Show reasoning")}</label>
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input
                   type="checkbox"
@@ -1173,20 +1162,17 @@ export default function ExperimentalAiPage() {
                   onChange={event => rememberPreferences({ showTools: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3"
                 />
-                Show tool activity
-              </label>
+                {t("Show tool activity")}</label>
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input type="checkbox" checked={showCosts}
                   onChange={event => rememberPreferences({ showCosts: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
-                Show turn details
-              </label>
+                {t("Show turn details")}</label>
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input type="checkbox" checked={showModels}
                   onChange={event => rememberPreferences({ showModels: event.target.checked })}
                   className="h-4 w-4 accent-gray-400 sm:h-3 sm:w-3" />
-                Show models
-              </label>
+                {t("Show models")}</label>
             </div>
             {process.env.NEXT_PUBLIC_DISABLE_SENTRY !== '1' && (
               // FeedbackWidget hides the floating Feedback button here on phones.
@@ -1195,19 +1181,18 @@ export default function ExperimentalAiPage() {
                 ref={attachFeedbackForm}
                 className="mt-1 flex min-h-11 items-center gap-1.5 text-xs text-blue-600 underline sm:hidden"
               >
-                Send feedback
-              </button>
+                {t("Send feedback")}</button>
             )}
           </MobileDetails>
         </div>
       </div>
 
-      <aside aria-label="Recent chats" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:left-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
-        <MobileDetails label={`Recent chats (${recentChats.length})`} desktopCollapsible>
-          <p className="mt-2 text-xs text-gray-600">Kept for 7 days after activity. Chats may be lost on server restart. Use Export chat to keep a copy.</p>
+      <aside aria-label={t("Recent chats")} className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:left-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+        <MobileDetails label={t("Recent chats ({value0})", { value0: recentChats.length })} desktopCollapsible>
+          <p className="mt-2 text-xs text-gray-600">{t("Kept for 7 days after activity. Chats may be lost on server restart. Use Export chat to keep a copy.")}</p>
           <button type="button" onClick={startNewConversation} disabled={isStreaming || removingUploadId !== null || removingDownloadId !== null}
-            className="mt-3 min-h-11 w-full rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">New chat</button>
-          {recentChats.length === 0 ? <p className="mt-3 text-sm text-gray-500">No recent chats.</p> : (
+            className="mt-3 min-h-11 w-full rounded-lg border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{t("New chat")}</button>
+          {recentChats.length === 0 ? <p className="mt-3 text-sm text-gray-500">{t("No recent chats.")}</p> : (
             <ul className="mt-3 space-y-2">
               {recentChats.map(({ conversation, lastActivityAt }) => {
                 const key = chatKey(conversation);
@@ -1218,35 +1203,35 @@ export default function ExperimentalAiPage() {
                       disabled={isStreaming || removingUploadId !== null || removingDownloadId !== null}
                       className="w-full rounded-lg px-3 pt-3 text-left disabled:opacity-50">
                       <span className="block break-words text-sm font-medium text-gray-900">{chatTitle(conversation)}</span>
-                      <time dateTime={new Date(lastActivityAt).toISOString()} className="mt-1 block text-xs text-gray-500">{new Date(lastActivityAt).toLocaleString()}</time>
+                      <time dateTime={new Date(lastActivityAt).toISOString()} className="mt-1 block text-xs text-gray-500">{new Date(lastActivityAt).toLocaleString(locale)}</time>
                       <span className="mt-1 block break-all text-xs text-gray-500">{conversation.endpoint}</span>
                     </button>
-                    <button type="button" onClick={() => removeRecentChat(key)} aria-label={`Remove chat: ${chatTitle(conversation)}`}
-                      className="min-h-11 px-3 text-xs text-red-700 hover:underline">Remove</button>
+                    <button type="button" onClick={() => removeRecentChat(key)} aria-label={t("Remove chat: {value0}", { value0: chatTitle(conversation) })}
+                      className="min-h-11 px-3 text-xs text-red-700 hover:underline">{t("Remove")}</button>
                   </li>
                 );
               })}
             </ul>
           )}
           {recentChats.length > 0 && <button type="button" onClick={() => {
-            if (window.confirm('Clear all recent chats on this device? Backend sessions will be kept until their retention limit.')) clearRecentChats();
-          }} className="mt-2 min-h-11 text-xs text-red-700 underline">Clear history</button>}
-          <p className="mt-2 text-xs text-gray-500">Remove and Clear history only forget browser records. The open conversation stays visible.</p>
+            if (window.confirm(t("Clear all recent chats on this device? Backend sessions will be kept until their retention limit."))) clearRecentChats();
+          }} className="mt-2 min-h-11 text-xs text-red-700 underline">{t("Clear history")}</button>}
+          <p className="mt-2 text-xs text-gray-500">{t("Remove and Clear history only forget browser records. The open conversation stays visible.")}</p>
         </MobileDetails>
-        {historyError && <p role="status" className="mt-2 text-xs text-amber-800">{historyError}</p>}
+        {historyError && <p role="status" className="mt-2 text-xs text-amber-800">{t(historyError)}</p>}
       </aside>
 
       {fileCapability.retained && (
-        <aside aria-label="Session files" className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
-          <MobileDetails label={`Uploaded files (${uploadedFiles.length})`} desktopCollapsible>
-            <p className="mt-2 text-xs text-gray-600">Uploaded files are temporary and may disappear after a server restart without prior notice. Keep your original files. A repeated filename gets a number, such as ward (1).csv.</p>
-            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">No uploaded files.</p> : (
+        <aside aria-label={t("Session files")} className="mb-4 rounded-xl border border-gray-200 bg-white p-4 xl:fixed xl:right-4 xl:top-24 xl:z-10 xl:max-h-[calc(100dvh-8rem)] xl:w-64 xl:overflow-y-auto">
+          <MobileDetails label={t("Uploaded files ({value0})", { value0: uploadedFiles.length })} desktopCollapsible>
+            <p className="mt-2 text-xs text-gray-600">{t("Uploaded files are temporary and may disappear after a server restart without prior notice. Keep your original files. A repeated filename gets a number, such as ward (1).csv.")}</p>
+            {uploadedFiles.length === 0 ? <p className="mt-3 text-sm text-gray-500">{t("No uploaded files.")}</p> : (
               <ul className="mt-3 space-y-3">
                 {uploadedFiles.map(file => (
                   <li key={file.id} className="flex items-start gap-2">
-                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()} KB</span></span>
-                    <button type="button" aria-label={`Remove ${file.filename}`} disabled={isStreaming || removingUploadId !== null}
-                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">Remove</button>
+                    <span className="min-w-0 flex-1 break-words text-sm">{file.filename}<span className="block text-xs text-gray-500">{(file.bytes / 1000).toLocaleString()}{t(" KB")}</span></span>
+                    <button type="button" aria-label={t("Remove {value0}", { value0: file.filename })} disabled={isStreaming || removingUploadId !== null}
+                      onClick={() => void removeUploadedFile(file.id)} className="rounded px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50">{t("Remove")}</button>
                   </li>
                 ))}
               </ul>
@@ -1275,13 +1260,13 @@ export default function ExperimentalAiPage() {
 
       {error && (
         <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+          {t(error)}
         </div>
       )}
 
       {capabilitiesError && (
         <div role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {capabilitiesError}
+          {t(capabilitiesError)}
         </div>
       )}
 
@@ -1292,34 +1277,33 @@ export default function ExperimentalAiPage() {
         onDragOver={dragOverAttachmentDropZone}
         onDragLeave={leaveAttachmentDropZone}
         onDrop={dropAttachments}
-        aria-label="Message composer"
+        aria-label={t("Message composer")}
         style={{ bottom: keyboardInset }}
         className={`fixed inset-x-2 bottom-0 sm:inset-x-10 z-30 mx-auto max-w-5xl space-y-3 xl:inset-x-72 bg-gradient-to-t from-white via-white to-white/90 px-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-6 ${
           isDraggingFiles ? 'rounded-xl ring-2 ring-blue-400 ring-offset-2' : ''
         }`}
       >
-        <p role="status" aria-label="Schedule Spec status" className={`mb-2 rounded-lg border px-3 py-2 text-xs ${scheduleDiffers ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-white text-gray-600'}`}>
+        <p role="status" aria-label={t("Schedule Spec status")} className={`mb-2 rounded-lg border px-3 py-2 text-xs ${scheduleDiffers ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-white text-gray-600'}`}>
           {activeSessionId === null
-            ? 'Sending your first message will send the current browser Schedule Spec to this chat.'
+            ? t("Sending your first message will send the current browser Schedule Spec to this chat.")
             : scheduleDiffers
               ? isStreaming
-                ? 'Browser Schedule Spec differs from this chat. This response keeps its Schedule Spec. Browser changes will be sent when the next response starts.'
-                : 'Browser Schedule Spec differs from this chat. Sending your next message will send the current browser Schedule Spec.'
-              : 'Browser Schedule Spec matches this chat.'}
+                ? t("Browser Schedule Spec differs from this chat. This response keeps its Schedule Spec. Browser changes will be sent when the next response starts.")
+                : t("Browser Schedule Spec differs from this chat. Sending your next message will send the current browser Schedule Spec.")
+              : t("Browser Schedule Spec matches this chat.")}
         </p>
         {isDraggingFiles && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/90 text-sm font-semibold text-blue-800">
-            Drop files to attach
-          </div>
+            {t("Drop files to attach")}</div>
         )}
         {(showScrollToTop || showScrollToBottom) && (
-          <div role="group" aria-label="Chat navigation" className="absolute -top-10 left-1/2 flex -translate-x-1/2 gap-2">
+          <div role="group" aria-label={t("Chat navigation")} className="absolute -top-10 left-1/2 flex -translate-x-1/2 gap-2">
             {showScrollToTop && (
               <button
                 type="button"
                 onClick={scrollToPageTop}
-                aria-label="Back to top"
-                title="Back to top"
+                aria-label={t("Back to top")}
+                title={t("Back to top")}
                 className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
               >
                 <FiArrowUp aria-hidden="true" className="h-4 w-4" />
@@ -1329,8 +1313,8 @@ export default function ExperimentalAiPage() {
               <button
                 type="button"
                 onClick={scrollToPageBottom}
-                aria-label="Scroll to bottom"
-                title="Scroll to bottom"
+                aria-label={t("Scroll to bottom")}
+                title={t("Scroll to bottom")}
                 className="rounded-full border border-gray-300 bg-white/95 p-2 text-gray-700 shadow-md backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
               >
                 <FiArrowDown aria-hidden="true" className="h-4 w-4" />
@@ -1340,8 +1324,7 @@ export default function ExperimentalAiPage() {
         )}
         {isReconnecting && (
           <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
-            Reconnecting. Your AI response continues on the server.
-          </div>
+            {t("Reconnecting. Your AI response continues on the server.")}</div>
         )}
         {activeOptimization !== null && (
           <div
@@ -1349,12 +1332,12 @@ export default function ExperimentalAiPage() {
             className="flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900"
           >
             <span aria-hidden="true" className="h-2 w-2 animate-pulse rounded-full bg-violet-600" />
-            <span>Optimizer running in the background · {activeOptimization.state}</span>
+            <span>{t("Optimizer running in the background · ")}{activeOptimization.state}</span>
             <OptimizationElapsed key={activeOptimization.jobId} createdAt={activeOptimization.createdAt} startedAt={activeOptimization.startedAt} />
             {activeOptimization.points.length > 0 && (
               <div className="ml-auto flex items-center gap-2 text-violet-800">
                 <span className="font-semibold tabular-nums">
-                  Score {new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(
+                  {t("Score ")}{new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
                     activeOptimization.points.at(-1)!.currentBestScore
                   )}
                 </span>
@@ -1369,7 +1352,7 @@ export default function ExperimentalAiPage() {
                 || activeOptimization.state === 'cancelling' || isReconnecting}
               className="ml-auto inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
             >
-              {finishingOptimizationId === activeOptimization.jobId || activeOptimization.finishNowRequestedBy ? 'Finishing…' : 'Finish now'}
+              {finishingOptimizationId === activeOptimization.jobId || activeOptimization.finishNowRequestedBy ? t("Finishing…") : t("Finish now")}
             </button>
             <button
               type="button"
@@ -1378,13 +1361,13 @@ export default function ExperimentalAiPage() {
               className="inline-flex items-center gap-1 rounded-md border border-violet-300 px-2 py-1 font-medium hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
             >
               <FiSquare aria-hidden="true" className="h-3 w-3" />
-              {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? 'Cancelling optimizer…' : 'Cancel optimizer'}
+              {cancellingOptimizationId === activeOptimization.jobId || activeOptimization.state === 'cancelling' ? t("Cancelling optimizer…") : t("Cancel optimizer")}
             </button>
           </div>
         )}
         {queuedMessages.length > 0 && (
           <div className="rounded-r-md border-l-2 border-gray-400 bg-gray-50 px-3 py-2 text-xs text-gray-700">
-            <p className="font-semibold uppercase tracking-wide text-gray-500">Queued for steering</p>
+            <p className="font-semibold uppercase tracking-wide text-gray-500">{t("Queued for steering")}</p>
             <div className="mt-1 space-y-1">
               {queuedMessages.map(message => (
                 <p key={message.id} className="truncate">· {message.content}</p>
@@ -1393,13 +1376,13 @@ export default function ExperimentalAiPage() {
           </div>
         )}
         {selectedAttachments.length > 0 && (
-          <div aria-label="Files attached to next message" className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
+          <div aria-label={t("Files attached to next message")} className="flex flex-wrap gap-3 rounded-xl border border-gray-200 bg-white p-3">
             {selectedAttachments.map(attachment => (
               <div key={attachment.id} className="flex max-w-52 items-center gap-2 rounded-lg bg-gray-50 p-2">
                 {attachment.previewUrl ? (
                   <Image
                     src={attachment.previewUrl}
-                    alt={`Preview of ${attachment.file.name}`}
+                    alt={t("Preview of {value0}", { value0: attachment.file.name })}
                     width={48}
                     height={48}
                     unoptimized
@@ -1414,7 +1397,7 @@ export default function ExperimentalAiPage() {
                 <button
                   type="button"
                   onClick={() => removeAttachment(attachment.id)}
-                  aria-label={`Remove ${attachment.file.name}`}
+                  aria-label={t("Remove {value0}", { value0: attachment.file.name })}
                   className="rounded px-1.5 py-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800"
                 >
                   ×
@@ -1432,7 +1415,7 @@ export default function ExperimentalAiPage() {
         <div className="flex min-h-14 items-end gap-1 rounded-[1.75rem] border border-gray-300 bg-white p-2 shadow-sm transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200">
           {fileCapability.enabled && (
             <label
-              title="Attach files"
+              title={t("Attach files")}
               className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
                 attachmentPickerDisabled
                   ? 'cursor-not-allowed text-gray-300'
@@ -1444,7 +1427,7 @@ export default function ExperimentalAiPage() {
                 multiple
                 disabled={attachmentPickerDisabled}
                 onChange={selectAttachments}
-                aria-label="Attach files"
+                aria-label={t("Attach files")}
                 className="sr-only"
               />
               <FiPlus aria-hidden="true" className="h-6 w-6" />
@@ -1474,8 +1457,8 @@ export default function ExperimentalAiPage() {
               }
             }}
             rows={1}
-            aria-label="Ask about the current Schedule Spec"
-            placeholder="Ask anything…"
+            aria-label={t("Ask about the current Schedule Spec")}
+            placeholder={t("Ask anything…")}
             className="min-h-6 max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-base leading-6 text-gray-900 outline-none"
           />
           <div className="flex shrink-0 items-center gap-1">
@@ -1487,15 +1470,15 @@ export default function ExperimentalAiPage() {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
-                  ? 'Enable experimental dictation in Firefox'
-                  : 'Firefox dictation compatibility'}
+                  ? t("Enable experimental dictation in Firefox")
+                  : t("Firefox dictation compatibility")}
                 className="group relative inline-flex h-10 w-10 items-center justify-center rounded-full text-amber-600 [@media(pointer:coarse)]:hidden transition-colors hover:bg-amber-50 hover:text-amber-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 <FiMic aria-hidden="true" className="h-4 w-4" />
                 <span className="pointer-events-none absolute bottom-10 right-0 z-10 hidden w-72 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg group-hover:block group-focus-visible:block">
                   {firefoxVersion >= FIREFOX_ON_DEVICE_SPEECH_VERSION
-                    ? 'Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.'
-                    : 'Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.'}
+                    ? t("Firefox dictation is experimental. In about:config, enable media.webspeech.recognition.enable, then reload this page.")
+                    : t("Dictation is unavailable in this Firefox version. Try Firefox Nightly or another supported browser.")}
                 </span>
               </a>
             ) : (
@@ -1505,9 +1488,9 @@ export default function ExperimentalAiPage() {
                   type="button"
                   onClick={toggleDictation}
                   disabled={!isClientReady || composerUnavailable || !speechSupported}
-                  aria-label={isListening ? 'Stop dictation' : 'Start dictation'}
+                  aria-label={isListening ? t("Stop dictation") : t("Start dictation")}
                   aria-pressed={isListening}
-                  title={speechSupported ? (isListening ? 'Stop dictation' : 'Dictate message') : 'Speech input is not supported by this browser'}
+                  title={speechSupported ? (isListening ? t("Stop dictation") : t("Dictate message")) : t("Speech input is not supported by this browser")}
                   className={`inline-flex h-10 w-10 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:text-gray-300 ${
                     isListening ? 'bg-red-50 text-red-600' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'
                   }`}
@@ -1519,12 +1502,12 @@ export default function ExperimentalAiPage() {
                     value={speechLanguage}
                     onChange={event => setSpeechLanguage(event.target.value)}
                     disabled={!isClientReady || composerUnavailable || !speechSupported || isListening}
-                    aria-label="Dictation language"
-                    title="Dictation language"
+                    aria-label={t("Dictation language")}
+                    title={t("Dictation language")}
                     className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
                   >
                     {SPEECH_LANGUAGES.map(language => (
-                      <option key={language.value} value={language.value}>{language.label}</option>
+                      <option key={language.value} value={language.value}>{t(language.label)}</option>
                     ))}
                   </select>
                   <FiChevronDown aria-hidden="true" className="pointer-events-none h-full w-full p-0.5" />
@@ -1536,8 +1519,8 @@ export default function ExperimentalAiPage() {
                 <button
                   type="submit"
                   disabled={!isClientReady || composerUnavailable || !draft.trim()}
-                  aria-label="Queue message"
-                  title="Queue message"
+                  aria-label={t("Queue message")}
+                  title={t("Queue message")}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <FiArrowUp aria-hidden="true" className="h-5 w-5" />
@@ -1546,8 +1529,8 @@ export default function ExperimentalAiPage() {
                   type="button"
                   onClick={stop}
                   disabled={isStopping}
-                  aria-label="Stop"
-                  title="Stop"
+                  aria-label={t("Stop")}
+                  title={t("Stop")}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-800 text-white transition-colors hover:bg-gray-900 disabled:cursor-wait disabled:bg-gray-500"
                 >
                   <FiSquare aria-hidden="true" className="h-4 w-4 fill-current" />
@@ -1557,8 +1540,8 @@ export default function ExperimentalAiPage() {
               <button
                 type="submit"
                 disabled={!isClientReady || composerUnavailable || !draft.trim()}
-                aria-label="Send"
-                title="Send"
+                aria-label={t("Send")}
+                title={t("Send")}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 <FiArrowUp aria-hidden="true" className="h-5 w-5" />
@@ -1569,14 +1552,14 @@ export default function ExperimentalAiPage() {
         {(contextUsage !== null || messages.length > 0 || costSummary) && (
           <p className="mt-2 px-2 text-center text-[0.6875rem] text-gray-500" aria-live="polite">
             {(contextUsage !== null || messages.length > 0) && <span title={contextDescription}>
-              Context {contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
-                ? `${contextUsage.estimated !== false ? '~' : ''}${(100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1)}% used`
-                : 'unavailable'}
+              {t("Context ")}{contextUsage?.usedTokens !== undefined && contextUsage.maxTokens !== undefined
+                ? t("{value0}{value1}% used", { value0: contextUsage.estimated !== false ? '~' : '', value1: (100 * contextUsage.usedTokens / contextUsage.maxTokens).toFixed(1) })
+                : t("unavailable")}
             </span>}
             {contextUsage?.usedTokens !== undefined && <>
               {' · '}
               <span title={tokenDescription}>
-                Tokens: {contextUsage.estimated !== false ? '~' : ''}{contextUsage.usedTokens.toLocaleString('en-US')} / {contextUsage.maxTokens?.toLocaleString('en-US') ?? 'unavailable'}
+                {t("Tokens: ")}{contextUsage.estimated !== false ? '~' : ''}{contextUsage.usedTokens.toLocaleString(locale)} / {contextUsage.maxTokens?.toLocaleString(locale) ?? t("unavailable")}
               </span>
             </>}
             {activeSessionId && <>
@@ -1584,14 +1567,13 @@ export default function ExperimentalAiPage() {
               <button type="button" onClick={() => void compactContext()}
                 disabled={isStreaming || isCompacting || composerUnavailable}
                 className="underline disabled:cursor-not-allowed disabled:opacity-50"
-                title="Summarize older conversation context without generating an answer.">
-                Compact context
-              </button>
+                title={t("Summarize older conversation context without generating an answer.")}>
+                {t("Compact context")}</button>
             </>}
             {costSummary && <>
               {(contextUsage !== null || messages.length > 0) && ' · '}
-              <span title="Estimated LLM cost across this conversation, including retries and tool follow-up calls.">
-                Est. cost: {costLabel(costSummary, false)}
+              <span title={t("Estimated LLM cost across this conversation, including retries and tool follow-up calls.")}>
+                {t("Est. cost: ")}{costLabel(costSummary, false)}
               </span>
             </>}
           </p>
