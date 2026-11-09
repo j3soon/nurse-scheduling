@@ -31,6 +31,16 @@ describe('message catalogs', () => {
     expect(isLocale('invalid')).toBe(false);
   });
 
+  it('matches Traditional Chinese language and region tags in preference order', () => {
+    for (const tag of ['zh-TW', 'zh-tw', 'zh-Hant', 'zh-Hant-TW', 'zh-HK', 'zh-MO', 'zh']) {
+      expect(detectLocale([tag])).toBe('zh-TW');
+    }
+    expect(detectLocale(['fr-FR', 'zh-TW', 'en-US'])).toBe('zh-TW');
+    expect(detectLocale(['en-GB', 'zh-TW'])).toBe('en');
+    expect(detectLocale(['zh-Hans-CN', 'en'])).toBe('en');
+    expect(translator('zh-TW')('Nurse Scheduling System')).toBe('護理人員排班系統');
+  });
+
   it('preserves placeholders in every translation', () => {
     for (const catalog of Object.values(catalogs)) {
       expect(Object.keys(catalog).sort()).toEqual(Object.keys(catalogs.en).sort());

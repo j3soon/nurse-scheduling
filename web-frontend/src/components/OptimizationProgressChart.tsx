@@ -270,7 +270,7 @@ export default function OptimizationProgressChart({
                 tickLine={false}
                 axisLine={false}
                 width={68}
-                label={{ value: 'Score', angle: -90, position: 'insideLeft', fill: SCORE_COLOR, fontSize: 11 }}
+                label={{ value: t('Score'), angle: -90, position: 'insideLeft', fill: SCORE_COLOR, fontSize: 11 }}
               />
               <Tooltip
                 content={OptimizationProgressTooltip}
@@ -336,7 +336,7 @@ export default function OptimizationProgressChart({
                   tickLine={false}
                   axisLine={false}
                   width={68}
-                  label={{ value: 'Comments', angle: -90, position: 'insideLeft', fill: COMMENT_COLOR, fontSize: 11 }}
+                  label={{ value: t('Comments'), angle: -90, position: 'insideLeft', fill: COMMENT_COLOR, fontSize: 11 }}
                 />
                 <Tooltip
                   content={() => null}

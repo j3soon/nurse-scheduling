@@ -616,6 +616,7 @@ export default function ItemGroupEditorPage({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DataTable
           title={itemLabelPlural}
+          tableId={dataType === DataType.SHIFT_TYPES ? "shift-types" : dataType}
           columns={itemColumns}
           data={items}
           onReorder={mode === Mode.INLINE_EDITING || itemsReadOnly ? undefined : handleReorderItems}
@@ -625,6 +626,7 @@ export default function ItemGroupEditorPage({
 
         <DataTable
           title={itemLabelPlural + t(" Groups")}
+          tableId={`${dataType === DataType.SHIFT_TYPES ? "shift-types" : dataType}-groups`}
           columns={groupColumns}
           data={groups}
           onReorder={mode === Mode.INLINE_EDITING || groupsReadOnly ? undefined : handleReorderGroups}

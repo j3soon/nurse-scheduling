@@ -1567,8 +1567,8 @@ export default function ShiftRequestsPage() {
                 <UploadButton
                   onFileUpload={processPeopleHistoryFile}
                   acceptedFileTypes={['.csv', '.txt']}
-                  buttonText="Upload People History (shorthand)"
-                  tooltipText="Upload a CSV file with people history (name, shift type, repetition count)"
+                  buttonText={t("Upload People History (shorthand)")}
+                  tooltipText={t("Upload a CSV file with people history (name, shift type, repetition count)")}
                   className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
                   icon={<FiUpload className="h-4 w-4" />}
                 />
@@ -1581,11 +1581,11 @@ export default function ShiftRequestsPage() {
                     processShiftRequestFile(file);
                   }}
                   acceptedFileTypes={['.csv', '.txt']}
-                  buttonText="Upload Shift Requests"
+                  buttonText={t("Upload Shift Requests")}
                   tooltipText={
                     !isValidWeightValue(addFormData.weight)
-                      ? 'Weight must be a valid number, Infinity, or -Infinity'
-                      : 'Upload a CSV file with shift preferences (people x (dates + 1) matrix)'
+                      ? t("Weight must be a valid number, Infinity, or -Infinity")
+                      : t("Upload a CSV file with shift preferences (people x (dates + 1) matrix)")
                   }
                   disabled={!isValidWeightValue(addFormData.weight)}
                   icon={<FiUpload className="h-4 w-4" />}

@@ -1843,7 +1843,7 @@ export default function OptimizeAndExportPage() {
         }}
         onDoubleClick={isOptimizing ? undefined : () => setAddingServer(true)}
         placeholder="https://backend.example.test"
-        emptyText="Double-click to add URL"
+        emptyText={t("Double-click to add URL")}
         className="min-w-0 truncate text-sm font-medium"
         editClassName="w-full max-w-xl border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
         error={addServerError ?? undefined}
@@ -1953,6 +1953,7 @@ export default function OptimizeAndExportPage() {
           <div className="space-y-5 p-5">
             <div className="space-y-3">
               <DataTable
+                tableId="backend"
                 title={t("Backend")}
                 fixedLayout
                 columns={backendTableColumns}

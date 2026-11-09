@@ -105,7 +105,7 @@ function BackendTokenEditor({
         <button
           type="button"
           onClick={() => setShowToken((visible) => !visible)}
-          aria-label={t("{value0} token for {value1}", { value0: showToken ? 'Hide' : 'Show', value1: endpoint })}
+          aria-label={t("{value0} token for {value1}", { value0: t(showToken ? 'Hide' : 'Show'), value1: endpoint })}
           aria-pressed={showToken}
           title={showToken ? t("Hide token") : t("Show token")}
           className="rounded border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
@@ -184,7 +184,7 @@ export default function BackendTokenField({
         type="button"
         onClick={onEdit}
         disabled={disabled}
-        aria-label={t("{value0} token for {value1}", { value0: token ? 'Change' : 'Enter', value1: endpoint })}
+        aria-label={t("{value0} token for {value1}", { value0: t(token ? 'Change' : 'Enter'), value1: endpoint })}
         className={CONTROL_CLASSES}
       >
         {token ? t("Change") : t("Enter token")}

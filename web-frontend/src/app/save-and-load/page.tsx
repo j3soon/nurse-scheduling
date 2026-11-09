@@ -334,8 +334,8 @@ export default function SaveAndLoadPage() {
           <UploadButton
             onFileUpload={processYamlFile}
             acceptedFileTypes={['.yaml', '.yml']}
-            buttonText="Upload"
-            tooltipText="Upload Schedule Spec YAML. Click to select a file or drag and drop it here."
+            buttonText={t("Upload")}
+            tooltipText={t("Upload Schedule Spec YAML. Click to select a file or drag and drop it here.")}
             className="bg-green-600 text-white hover:bg-green-700 focus:ring-green-500"
             icon={<FiUpload className="h-4 w-4" />}
           />

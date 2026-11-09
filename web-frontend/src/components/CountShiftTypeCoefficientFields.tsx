@@ -50,7 +50,7 @@ export function CountShiftTypeCoefficientFields({
   onChange,
 }: CountShiftTypeCoefficientFieldsProps) {
   const { t } = useI18n();
-  const singularLabel = label.toLowerCase();
+  const singularLabel = t(label).toLowerCase();
   const emptyHint = t("Coefficients are not needed when no {value0} is selected.", { value0: singularLabel });
   const coefficientShiftTypeIds = getCoefficientShiftTypeIds(selectedShiftTypeIds, shiftTypeData);
 

@@ -294,7 +294,8 @@ To test specific source files from the repository root, run:
 
 Use `useI18n()` for interface messages and locale formatting. Add English messages
 in `src/i18n/en.ts` and preserve named placeholders in each translation. Translate
-constant display labels where they render. Keep identifiers, saved Schedule Spec
+constant display labels where they render. Keep DOM and test IDs independent of
+translated labels. Keep identifiers, saved Schedule Spec
 values, backend protocols, user content, XLSX labels, and chat exports unchanged.
 Pass a translator to shared presentation helpers. Their default stays English for
 exports and other callers. Changing language must preserve mounted component state.

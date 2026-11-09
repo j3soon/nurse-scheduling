@@ -142,8 +142,8 @@ export default function PeoplePage() {
     <UploadButton
       onFileUpload={processPeopleFile}
       acceptedFileTypes={['.txt', '.csv']}
-      buttonText="Upload People"
-      tooltipText="Upload a file with newline-separated people names. Existing people will be reordered to match the file order, new people will be added, and any existing people not in the file will be moved to the end."
+      buttonText={t("Upload People")}
+      tooltipText={t("Upload a file with newline-separated people names. Existing people will be reordered to match the file order, new people will be added, and any existing people not in the file will be moved to the end.")}
     />
   );
 

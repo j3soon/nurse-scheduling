@@ -190,12 +190,12 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           itemPlaceholder={placeholder}
           onItemChange={onIdChange}
           descriptionValue={draft.description}
-          descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : "group"} description (optional)`}
+          descriptionPlaceholder={t("Enter {value0} description (optional)", { value0: isItem ? itemLabel.toLowerCase() : t("group") })}
           onDescriptionChange={onDescriptionChange}
           error={error}
           onAction={onSave}
           onCancel={onCancel}
-          actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
+          actionText={mode === Mode.ADDING ? t("Add") : t("Update")}
         >
           {!draft.isItem ? memberSelector : groupSelector}
           {applyFrom}

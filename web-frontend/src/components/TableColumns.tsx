@@ -139,7 +139,7 @@ function IdColumn({
         onDoubleClick={canEdit ? () => onInlineEdit(item.id, isItem, 'description') : undefined}
         className="text-xs text-gray-400 mt-1 max-w-[150px] truncate block"
         editClassName="text-xs mt-1 w-full"
-        emptyText="Add description..."
+        emptyText={t("Add description...")}
         placeholder={t("Enter description...")}
       />
     </div>

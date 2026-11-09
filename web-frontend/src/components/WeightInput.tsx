@@ -85,7 +85,7 @@ export default function WeightInput({
           value={value}
           onChange={handleInputChange}
           className={inputClassName}
-          placeholder={placeholder}
+          placeholder={t(placeholder)}
         />
         <div className={buttonsContainerClassName}>
           <button

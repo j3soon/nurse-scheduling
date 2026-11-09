@@ -19,15 +19,16 @@
 // This code is mostly AI generated.
 
 import { en } from './en';
+import { zhTW } from './zhTW';
 
-export type Locale = 'en';
+export type Locale = 'en' | 'zh-TW';
 export type MessageKey = keyof typeof en;
 export type Catalog = Record<MessageKey, string>;
 export type MessageValues = Record<string, string | number | undefined>;
 export type Translator = (message: string, values?: MessageValues) => string;
-export const catalogs: Record<Locale, Catalog> = { en };
+export const catalogs: Record<Locale, Catalog> = { en, 'zh-TW': zhTW };
 export const LOCALE_STORAGE_KEY = 'nurse-scheduling-language';
-export const localeNames: Record<Locale, string> = { en: 'English' };
+export const localeNames: Record<Locale, string> = { en: 'English', 'zh-TW': '繁體中文' };
 
 export function isLocale(value: unknown): value is Locale {
   return typeof value === 'string' && Object.hasOwn(catalogs, value);
@@ -35,8 +36,9 @@ export function isLocale(value: unknown): value is Locale {
 
 export function detectLocale(languages: readonly string[]): Locale {
   for (const language of languages) {
-    if (isLocale(language)) return language;
-    const base = language.split('-')[0].toLowerCase();
+    const normalized = language.toLowerCase();
+    if (/^zh(?:$|-hant(?:-|$)|-(?:tw|hk|mo)(?:-|$))/.test(normalized)) return 'zh-TW';
+    const base = normalized.split('-')[0];
     if (isLocale(base)) return base;
   }
   return 'en';

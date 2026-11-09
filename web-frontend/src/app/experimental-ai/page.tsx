@@ -952,7 +952,7 @@ export default function ExperimentalAiPage() {
   const hasVersionMismatch = backendVersion !== undefined && hasAppVersionMismatch(CURRENT_APP_VERSION, backendVersion);
   const serverLocked = activeSessionId !== null || messages.length > 0;
 
-  const tokenDescription = t("{value0} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.", { value0: contextUsage?.estimated !== false ? 'Estimated current' : 'Current' });
+  const tokenDescription = t("{value0} LLM context tokens / model context limit. Includes system instructions, tools, and conversation messages.", { value0: t(contextUsage?.estimated !== false ? 'Estimated current' : 'Current') });
   const contextDescription = contextUsage?.usedTokens !== undefined
     ? tokenDescription
     : t("The AI server has not reported context tokens.");

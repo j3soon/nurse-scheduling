@@ -291,7 +291,7 @@ export default function DatePage() {
             </div>
             {draft.startDate && draft.endDate && (
               <p className="mt-3 text-sm text-gray-600" aria-live="polite">
-                {selectedDayCount}{t(" day")}{selectedDayCount === 1 ? '' : 's'}{t(" selected")}</p>
+                {t(selectedDayCount === 1 ? "{count} day selected" : "{count} days selected", { count: selectedDayCount })}</p>
             )}
           </section>
 
