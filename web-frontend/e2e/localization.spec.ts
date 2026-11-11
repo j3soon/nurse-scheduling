@@ -39,7 +39,7 @@ test.describe('Traditional Chinese interface', () => {
       ['/shift-type-successions', '班別接續'],
       ['/shift-counts', '班次計數'],
       ['/shift-affinities', '同班偏好'],
-      ['/export-layout', '匯出配置'],
+      ['/export-layout', '匯出版面'],
       ['/save-and-load', '儲存與載入'],
       ['/optimize-and-export', '最佳化與匯出'],
       ['/experimental-ai', '排班 AI 對話'],
