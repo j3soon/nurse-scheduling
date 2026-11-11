@@ -22,7 +22,7 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
-import * as Sentry from '@sentry/nextjs';
+import { useFeedbackForm } from '@/hooks/useFeedbackForm';
 import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
 import { ChatTranscriptView } from './ChatTranscriptView';
@@ -180,12 +180,6 @@ function isTouchOnlyPointer(): boolean {
   return Boolean(window.matchMedia?.('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches);
 }
 
-// A module-level callback ref keeps the Sentry form attached across rerenders, so
-// streaming output does not close an open form. React runs the returned cleanup.
-function attachFeedbackForm(element: HTMLButtonElement | null) {
-  return element ? Sentry.getFeedback()?.attachTo(element) : undefined;
-}
-
 function fileExtension(filename: string): string {
   const lastDot = filename.lastIndexOf('.');
   return lastDot < 0 ? '' : filename.slice(lastDot).toLowerCase();
@@ -215,6 +209,7 @@ function OptimizationSparkline({ points }: { points: OptimizationProgressPoint[]
 }
 
 export default function ExperimentalAiPage() {
+  const attachFeedbackForm = useFeedbackForm();
   const { t, locale } = useI18n();
   const {
     dateData,

@@ -24,6 +24,9 @@
 import * as Sentry from '@sentry/nextjs';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef } from 'react';
+import { useI18n } from '@/i18n/I18nProvider';
+import type { Locale } from '@/i18n/messages';
+import { getFeedbackOptions } from '@/utils/feedbackOptions';
 
 type FeedbackActor = ReturnType<NonNullable<ReturnType<typeof Sentry.getFeedback>>['createWidget']>;
 
@@ -32,6 +35,8 @@ type FeedbackActor = ReturnType<NonNullable<ReturnType<typeof Sentry.getFeedback
 // chat details panel instead.
 export default function FeedbackWidget() {
   const pathname = usePathname();
+  const { locale, t } = useI18n();
+  const actorsRef = useRef(new Map<Locale, FeedbackActor>());
   const actorRef = useRef<FeedbackActor | null>(null);
 
   useEffect(() => {
@@ -41,16 +46,30 @@ export default function FeedbackWidget() {
     const update = () => {
       if (pathname === '/experimental-ai' && phone.matches) {
         actorRef.current?.removeFromDom();
-      } else if (actorRef.current) {
-        actorRef.current.appendToDom();
       } else {
-        actorRef.current = feedback.createWidget();
+        const actor = actorsRef.current.get(locale);
+        if (actorRef.current !== actor) actorRef.current?.removeFromDom();
+        if (actor) {
+          actor.appendToDom();
+          actorRef.current = actor;
+        } else {
+          actorRef.current = feedback.createWidget(getFeedbackOptions(t));
+          actorsRef.current.set(locale, actorRef.current);
+        }
       }
     };
     update();
     phone.addEventListener('change', update);
     return () => phone.removeEventListener('change', update);
-  }, [pathname]);
+  }, [pathname, locale, t]);
+
+  useEffect(() => {
+    const actors = actorsRef.current;
+    return () => {
+      actors.forEach(actor => actor.removeFromDom());
+      actors.clear();
+    };
+  }, []);
 
   return null;
 }

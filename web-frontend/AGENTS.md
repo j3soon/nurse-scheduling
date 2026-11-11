@@ -300,7 +300,9 @@ values, backend protocols, user content, XLSX labels, and chat exports unchanged
 Pass a translator to shared presentation helpers. Their default stays English for
 exports and other callers. Changing language must preserve mounted component state.
 Translate network errors when they render. A display language change must not
-restart requests or invalidate pending saves.
+restart requests or invalidate pending saves. Localize third-party UI options too.
+Keep feedback forms attached during rerenders so streaming and language changes
+do not discard a feedback draft.
 
 ## TypeScript And React Style
 - Mark a file written entirely by an AI coding agent immediately after the license

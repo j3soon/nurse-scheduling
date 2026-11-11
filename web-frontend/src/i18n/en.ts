@@ -980,5 +980,22 @@ export const en = {
   "Provider streaming speed: {speed}": "Provider streaming speed: {speed}",
   "Speed measured for {measured} of {total} call.": "Speed measured for {measured} of {total} call.",
   "Speed measured for {measured} of {total} calls.": "Speed measured for {measured} of {total} calls.",
-  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate."
+  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.",
+  "Feedback": "Feedback",
+  "Send Feedback": "Send Feedback",
+  "Tell us what worked, what did not, or what could be improved.": "Tell us what worked, what did not, or what could be improved.",
+  "Confirm": "Confirm",
+  "Name": "Name",
+  "Your Name": "Your Name",
+  "Email": "Email",
+  "(required)": "(required)",
+  "Add a screenshot": "Add a screenshot",
+  "Remove screenshot": "Remove screenshot",
+  "Highlight": "Highlight",
+  "Thank you for your report!": "Thank you for your report!",
+  "Unable to submit feedback with empty message": "Unable to submit feedback with empty message",
+  "No client setup, cannot send feedback.": "No client setup, cannot send feedback.",
+  "Unable to determine if Feedback was correctly sent.": "Unable to determine if Feedback was correctly sent.",
+  "Unable to send feedback. This could be because this domain is not in your list of allowed domains.": "Unable to send feedback. This could be because this domain is not in your list of allowed domains.",
+  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker."
 } as const;

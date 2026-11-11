@@ -983,5 +983,22 @@ export const zhTW: Catalog = {
   "Provider streaming speed: {speed}": "供應商串流速度：{speed}",
   "Speed measured for {measured} of {total} call.": "已測量 {total} 次呼叫中的 {measured} 次串流速度。",
   "Speed measured for {measured} of {total} calls.": "已測量 {total} 次呼叫中的 {measured} 次串流速度。",
-  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "從第一個到最後一個輸出區塊計算時間。包含已回報的推理與工具呼叫輸出 token，不包含首次輸出等待時間、工具執行、虛擬機器作業與重試延遲。供應商的緩衝機制可能影響此估計值。"
+  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "從第一個到最後一個輸出區塊計算時間。包含已回報的推理與工具呼叫輸出 token，不包含首次輸出等待時間、工具執行、虛擬機器作業與重試延遲。供應商的緩衝機制可能影響此估計值。",
+  "Feedback": "意見回饋",
+  "Send Feedback": "傳送回饋",
+  "Tell us what worked, what did not, or what could be improved.": "請告訴我們哪些功能有幫助、哪些有問題，或哪些地方可以改進。",
+  "Confirm": "確認",
+  "Name": "姓名",
+  "Your Name": "您的姓名",
+  "Email": "電子郵件",
+  "(required)": "（必填）",
+  "Add a screenshot": "新增螢幕截圖",
+  "Remove screenshot": "移除螢幕截圖",
+  "Highlight": "標示",
+  "Thank you for your report!": "感謝您的回報！",
+  "Unable to submit feedback with empty message": "請填寫回饋內容後再傳送。",
+  "No client setup, cannot send feedback.": "尚未設定用戶端，無法傳送回饋。",
+  "Unable to determine if Feedback was correctly sent.": "無法確認回饋是否已成功傳送。",
+  "Unable to send feedback. This could be because this domain is not in your list of allowed domains.": "無法傳送回饋。此網域可能不在允許的網域清單中。",
+  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "無法傳送回饋。這可能是網路問題或廣告攔截器所造成。"
 };
