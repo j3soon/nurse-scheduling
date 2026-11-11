@@ -77,7 +77,7 @@ export function ModelControls({
       const saved = pending ?? current ?? choices.current.get(scope);
       const selected = result.models.find(item => item.id === saved?.model)
         ?? result.models.find(item => item.id === result.default_model) ?? result.models[0];
-      if (!selected) throw new Error(t("No compatible chat models are available to this AI key."));
+      if (!selected) throw new Error("No compatible chat models are available to this AI key.");
       const reasoning = selected.reasoning_options.some(option => option.id === saved?.reasoning) ? saved!.reasoning : selected.default_reasoning;
       let next = { model: selected.id, reasoning };
       if (sessionId && pending) {
@@ -99,11 +99,11 @@ export function ModelControls({
     }).catch((failure: unknown) => {
       if (!controller.signal.aborted) {
         setSaving(false);
-        setError(failure instanceof Error ? failure.message : t("Could not load AI models."));
+        setError(failure instanceof Error ? failure.message : "Could not load AI models.");
       }
     });
     return () => { controller.abort(); generation.current += 1; };
-  }, [endpoint, token, sessionId, scope, requestScope, onChange, t]);
+  }, [endpoint, token, sessionId, scope, requestScope, onChange]);
 
   useEffect(() => {
     if (!sessionId || lockReads === 0) return;
@@ -144,7 +144,7 @@ export function ModelControls({
     }).catch((failure: unknown) => {
       if (generation.current === currentGeneration && change === latestChange.current) {
         setSaving(false);
-        setError(failure instanceof Error ? failure.message : t("Could not save the model choice."));
+        setError(failure instanceof Error ? failure.message : "Could not save the model choice.");
       }
     });
   };

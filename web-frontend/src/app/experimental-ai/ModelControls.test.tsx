@@ -24,6 +24,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { ModelControls } from './ModelControls';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 
 const catalog = {
   default_model: 'fast', models: [
@@ -33,7 +35,7 @@ const catalog = {
     ] },
   ],
 };
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 
 it('shows supported reasoning choices and restores the choice when switching back', async () => {
   const user = userEvent.setup();
@@ -196,4 +198,36 @@ it('saves edits made before session creation finishes instead of restoring its o
   await act(async () => finishSave({ ok: true, json: async () => ({ model: 'fast', reasoning: 'default', locked: false }) }));
   await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'fast', reasoning: 'default' }));
   expect(screen.getByLabelText('AI model')).toHaveValue('fast');
+});
+
+it.each([false, true])('keeps a pending reasoning save when another tab changes language: %s', async changesLocale => {
+  let stored = { model: 'deep', reasoning: 'off', locked: false };
+  let finishSave!: () => void;
+  const savePending = new Promise<void>(resolve => { finishSave = resolve; });
+  const fetch = vi.fn().mockImplementation(async (url: string, request?: RequestInit) => {
+    if (url.endsWith('/models')) return { ok: true, json: async () => catalog };
+    if (request?.method === 'PUT') {
+      await savePending;
+      stored = { ...JSON.parse(request.body as string), locked: false };
+    }
+    return { ok: true, json: async () => stored };
+  });
+  vi.stubGlobal('fetch', fetch);
+  const onChange = vi.fn();
+  render(<I18nProvider><ModelControls endpoint="https://ai.example" token="chat-key"
+    sessionId="session" disabled={false} onChange={onChange} /></I18nProvider>);
+  await waitFor(() => expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'off' }));
+  await userEvent.setup().selectOptions(screen.getByLabelText('Reasoning'), 'high');
+  await waitFor(() => expect(fetch.mock.calls.some(([, request]) => request?.method === 'PUT')).toBe(true));
+  if (changesLocale) {
+    act(() => {
+      localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+      window.dispatchEvent(new StorageEvent('storage', { key: LOCALE_STORAGE_KEY, newValue: 'zh-TW' }));
+    });
+    await screen.findByLabelText('推理');
+  }
+  await act(async () => { finishSave(); await savePending; });
+  expect(stored.reasoning).toBe('high');
+  expect(screen.getByLabelText(changesLocale ? '推理' : 'Reasoning')).toHaveValue('high');
+  expect(onChange).toHaveBeenLastCalledWith({ model: 'deep', reasoning: 'high' });
 });

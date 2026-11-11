@@ -299,6 +299,8 @@ translated labels. Keep identifiers, saved Schedule Spec
 values, backend protocols, user content, XLSX labels, and chat exports unchanged.
 Pass a translator to shared presentation helpers. Their default stays English for
 exports and other callers. Changing language must preserve mounted component state.
+Translate network errors when they render. A display language change must not
+restart requests or invalidate pending saves.
 
 ## TypeScript And React Style
 - Mark a file written entirely by an AI coding agent immediately after the license

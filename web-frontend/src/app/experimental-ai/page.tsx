@@ -247,7 +247,7 @@ export default function ExperimentalAiPage() {
   const [isEditingAuthToken, setIsEditingAuthToken] = useState(false);
   const [authRejected, setAuthRejected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [capabilitiesError, setCapabilitiesError] = useState<string | null>(null);
+  const [capabilitiesErrorEndpoint, setCapabilitiesErrorEndpoint] = useState<string | null>(null);
   const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
   const [selection, setSelection] = useState<ModelSelection>();
   const [modelControlsKey, setModelControlsKey] = useState(0);
@@ -416,7 +416,7 @@ export default function ExperimentalAiPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setServerStatus('checking');
     setBackendVersion(undefined);
-    setCapabilitiesError(null);
+    setCapabilitiesErrorEndpoint(null);
     getCapabilities(capabilitiesController.signal, aiEndpoint)
       .then(async capabilities => {
         if (capabilitiesController.signal.aborted) return;
@@ -436,13 +436,11 @@ export default function ExperimentalAiPage() {
           const unauthorized = isAuthenticationError(capabilityError);
           setServerStatus(unauthorized ? 'unauthorized' : 'offline');
           if (unauthorized) setAuthRequired(true);
-          setCapabilitiesError(
-            t("Could not load AI capabilities from {value0}. Check that the AI backend is reachable from this browser.", { value0: aiEndpoint }),
-          );
+          setCapabilitiesErrorEndpoint(aiEndpoint);
         }
       });
     return () => capabilitiesController.abort();
-  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds, t]);
+  }, [aiEndpoint, isClientReady, setSessionRetentionSeconds]);
 
   useEffect(() => () => {
       speechRecognitionRef.current?.stop();
@@ -650,7 +648,7 @@ export default function ExperimentalAiPage() {
     setRememberAuthToken(readStoredAuthTokens()[endpoint] !== undefined);
     setAuthRejected(false);
     setServerError(null);
-    setCapabilitiesError(null);
+    setCapabilitiesErrorEndpoint(null);
     setIsEditingServer(false);
     try {
       window.localStorage.setItem(AI_SERVER_STORAGE_KEY, endpoint);
@@ -1264,9 +1262,9 @@ export default function ExperimentalAiPage() {
         </div>
       )}
 
-      {capabilitiesError && (
+      {capabilitiesErrorEndpoint && (
         <div role="alert" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {t(capabilitiesError)}
+          {t("Could not load AI capabilities from {value0}. Check that the AI backend is reachable from this browser.", { value0: capabilitiesErrorEndpoint })}
         </div>
       )}
 
