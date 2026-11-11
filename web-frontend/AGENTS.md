@@ -57,8 +57,9 @@ Assert the failed operation and path as well as output preservation.
 Give synchronous child processes in tests a timeout shorter than the test timeout.
 The test runner cannot interrupt a blocked synchronous call.
 
-Use Playwright locator actions for form controls. Before interacting with
-statically rendered controls, wait for an observable result of client
+Scope form locators to their page or dialog so global navigation controls do not
+change the selected field. Use Playwright locator actions for form controls.
+Before interacting with statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
 
 For exact elapsed-time assertions, install the Playwright clock before navigation

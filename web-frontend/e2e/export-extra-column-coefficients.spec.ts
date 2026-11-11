@@ -39,7 +39,7 @@ test('extra column coefficients persist through Save and Load YAML and page navi
 
   await page.goto('/export-layout');
   await page.getByRole('button', { name: 'Add Export Rule' }).click();
-  await page.locator('select').first().selectOption('extra column');
+  await page.getByRole('main').locator('select').first().selectOption('extra column');
   await page.getByPlaceholder('OFF (Weekend)').fill('Weighted shifts');
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();
   await page.getByRole('checkbox', { name: 'N', exact: true }).check();

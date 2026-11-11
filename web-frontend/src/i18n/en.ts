@@ -997,5 +997,6 @@ export const en = {
   "No client setup, cannot send feedback.": "No client setup, cannot send feedback.",
   "Unable to determine if Feedback was correctly sent.": "Unable to determine if Feedback was correctly sent.",
   "Unable to send feedback. This could be because this domain is not in your list of allowed domains.": "Unable to send feedback. This could be because this domain is not in your list of allowed domains.",
-  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker."
+  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.",
+  "Change language": "Change language"
 } as const;

@@ -1000,5 +1000,6 @@ export const zhTW: Catalog = {
   "No client setup, cannot send feedback.": "尚未設定用戶端，無法傳送回饋。",
   "Unable to determine if Feedback was correctly sent.": "無法確認回饋是否已成功傳送。",
   "Unable to send feedback. This could be because this domain is not in your list of allowed domains.": "無法傳送回饋。此網域可能不在允許的網域清單中。",
-  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "無法傳送回饋。這可能是網路問題或廣告攔截器所造成。"
+  "Unable to send feedback. This could be because of network issues, or because you are using an ad-blocker.": "無法傳送回饋。這可能是網路問題或廣告攔截器所造成。",
+  "Change language": "切換語言"
 };

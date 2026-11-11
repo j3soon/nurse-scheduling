@@ -21,6 +21,7 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
+import NavigationLanguageSelect from '@/components/NavigationLanguageSelect';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight, FiRotateCcw, FiRotateCw } from 'react-icons/fi';
@@ -294,6 +295,7 @@ export default function Navigation() {
               <Icon aria-hidden="true" className="h-4 w-4" />
             </button>
           ))}
+          <NavigationLanguageSelect />
         </div>
       </nav>
 
