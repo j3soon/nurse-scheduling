@@ -1956,3 +1956,21 @@ test('keeps pending reasoning when language changes in another tab', async ({ pa
   await expect(page.getByLabel('推理', { exact: true })).toHaveValue('high');
   await expect(page.getByRole('button', { name: '傳送', exact: true })).toBeEnabled();
 });
+
+test('localizes AI cost and retention details while preserving reply text', async ({ page }) => {
+  const summary = { usd: '0.0123', calls: 1, pending: 0, unavailable: 0,
+    streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } };
+  await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
+    { type: 'cost_summary', data: { conversation: { ...summary, calls: 2, unavailable: 1 }, run: summary } },
+  ]);
+  await page.addInitScript(() => localStorage.setItem('nurse-scheduling-language', 'zh-TW'));
+  await page.goto('/experimental-ai');
+  await expect(page.getByText(/對話工作階段將在.*天.*未使用後到期/)).toBeVisible();
+  await page.getByRole('textbox', { name: '詢問目前的排班設定' }).fill('Cost this reply.');
+  await page.getByRole('button', { name: '傳送', exact: true }).click();
+  await expect(page.getByText('Costed answer.', { exact: true })).toBeVisible();
+  await page.getByText('此輪詳細資料 · ~$0.0123 · 100 tok/s · 1 次呼叫', { exact: true }).click();
+  await expect(page.getByText('預估費用：$0.0123', { exact: true })).toBeVisible();
+  await expect(page.getByText('已測量 1 次呼叫中的 1 次串流速度。', { exact: true })).toBeVisible();
+  await expect(page.getByText('預估費用：$0.0123 · 1 次費用無法取得', { exact: true })).toBeVisible();
+});

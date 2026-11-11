@@ -19,6 +19,10 @@
 
 // This code is mostly AI generated.
 
+import { translator, type Translator } from '@/i18n/messages';
+
+const english = translator('en');
+
 export interface CostSummary {
   version?: number;
   streaming?: { calls: number; output_tokens: number; seconds: number };
@@ -87,10 +91,11 @@ export function formatUsd(value: string): string {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })}`;
 }
 
-export function costLabel(summary: CostSummary, includeCalls = true): string {
-  return formatUsd(summary.usd) + (includeCalls ? ` · ${summary.calls} ${summary.calls === 1 ? 'call' : 'calls'}` : '')
-    + (includeCalls && summary.pending ? ` · ${summary.pending} pending` : '')
-    + (summary.unavailable ? ` · ${summary.unavailable} cost unavailable` : '');
+export function costLabel(summary: CostSummary, includeCalls = true, t: Translator = english): string {
+  return formatUsd(summary.usd)
+    + (includeCalls ? t(summary.calls === 1 ? ' · {count} call' : ' · {count} calls', { count: summary.calls }) : '')
+    + (includeCalls && summary.pending ? t(' · {count} pending', { count: summary.pending }) : '')
+    + (summary.unavailable ? t(' · {count} cost unavailable', { count: summary.unavailable }) : '');
 }
 
 export function replaceCall(calls: ProviderCallCost[] | undefined, call: ProviderCallCost): ProviderCallCost[] {
@@ -98,27 +103,27 @@ export function replaceCall(calls: ProviderCallCost[] | undefined, call: Provide
   return calls.map(item => item.callId === call.callId ? call : item);
 }
 
-export function formatSpeed(tokens: number | undefined, seconds: number | null | undefined): string {
+export function formatSpeed(tokens: number | undefined, seconds: number | null | undefined, t: Translator = english): string {
   return tokens && seconds && seconds > 0
-    ? `${(tokens / seconds).toLocaleString('en-US', { maximumFractionDigits: 1 })} tok/s` : 'Speed unavailable';
+    ? `${(tokens / seconds).toLocaleString('en-US', { maximumFractionDigits: 1 })} tok/s` : t('Speed unavailable');
 }
 
 export function formatSeconds(seconds: number): string {
   return `${seconds.toLocaleString('en-US', { maximumFractionDigits: 3 })}s`;
 }
 
-export function turnDetailsLabel(summary: CostSummary): string {
+export function turnDetailsLabel(summary: CostSummary, t: Translator = english): string {
   const price = formatUsd(summary.usd);
-  const speed = formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds);
-  return `Turn details · ${price.startsWith('<') ? price : '~' + price} · ${speed}`
-    + costLabel(summary).slice(price.length);
+  const speed = formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds, t);
+  return t('Turn details · {price} · {speed}', { price: price.startsWith('<') ? price : '~' + price, speed })
+    + costLabel(summary, true, t).slice(price.length);
 }
 
-export function turnMeasurementLines(summary: CostSummary): string[] {
+export function turnMeasurementLines(summary: CostSummary, t: Translator = english): string[] {
   return [
-    `Estimated cost: ${formatUsd(summary.usd)}`,
-    `Provider streaming speed: ${formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds)}`,
-    `Speed measured for ${summary.streaming?.calls ?? 0} of ${summary.calls} ${summary.calls === 1 ? 'call' : 'calls'}.`,
-    'Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.',
+    t('Estimated cost: {price}', { price: formatUsd(summary.usd) }),
+    t('Provider streaming speed: {speed}', { speed: formatSpeed(summary.streaming?.output_tokens, summary.streaming?.seconds, t) }),
+    t(summary.calls === 1 ? 'Speed measured for {measured} of {total} call.' : 'Speed measured for {measured} of {total} calls.', { measured: summary.streaming?.calls ?? 0, total: summary.calls }),
+    t('Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.'),
   ];
 }

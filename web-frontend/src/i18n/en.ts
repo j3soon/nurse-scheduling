@@ -969,5 +969,16 @@ export const en = {
   "Estimated current": "Estimated current",
   "Current": "Current",
   "e.g., -1, -10k, ∞": "e.g., -1, -10k, ∞",
-  "Language": "Language"
+  "Language": "Language",
+  " · {count} call": " · {count} call",
+  " · {count} calls": " · {count} calls",
+  " · {count} pending": " · {count} pending",
+  " · {count} cost unavailable": " · {count} cost unavailable",
+  "Speed unavailable": "Speed unavailable",
+  "Turn details · {price} · {speed}": "Turn details · {price} · {speed}",
+  "Estimated cost: {price}": "Estimated cost: {price}",
+  "Provider streaming speed: {speed}": "Provider streaming speed: {speed}",
+  "Speed measured for {measured} of {total} call.": "Speed measured for {measured} of {total} call.",
+  "Speed measured for {measured} of {total} calls.": "Speed measured for {measured} of {total} calls.",
+  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate."
 } as const;

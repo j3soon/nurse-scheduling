@@ -972,5 +972,16 @@ export const zhTW: Catalog = {
   "Estimated current": "目前預估的",
   "Current": "目前的",
   "e.g., -1, -10k, ∞": "例如：-1、-10k、∞",
-  "Language": "語言"
+  "Language": "語言",
+  " · {count} call": " · {count} 次呼叫",
+  " · {count} calls": " · {count} 次呼叫",
+  " · {count} pending": " · {count} 次待計算",
+  " · {count} cost unavailable": " · {count} 次費用無法取得",
+  "Speed unavailable": "無法取得速度",
+  "Turn details · {price} · {speed}": "此輪詳細資料 · {price} · {speed}",
+  "Estimated cost: {price}": "預估費用：{price}",
+  "Provider streaming speed: {speed}": "供應商串流速度：{speed}",
+  "Speed measured for {measured} of {total} call.": "已測量 {total} 次呼叫中的 {measured} 次串流速度。",
+  "Speed measured for {measured} of {total} calls.": "已測量 {total} 次呼叫中的 {measured} 次串流速度。",
+  "Measured from first to last output chunk. Includes reported reasoning and tool-call output tokens. Excludes time to first output, tool execution, VM work, and retry delays. Provider buffering can affect this estimate.": "從第一個到最後一個輸出區塊計算時間。包含已回報的推理與工具呼叫輸出 token，不包含首次輸出等待時間、工具執行、虛擬機器作業與重試延遲。供應商的緩衝機制可能影響此估計值。"
 };

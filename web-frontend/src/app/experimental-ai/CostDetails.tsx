@@ -32,8 +32,8 @@ export function CostDetails({ summary, calls, running }: {
   const displayed = running ? summary : { ...summary, pending: 0,
     unavailable: summary.unavailable + Math.max(0, summary.pending - knownPending) };
   return <details className="cost-details">
-    <summary className="cost-summary">{turnDetailsLabel(displayed)}</summary>
-    <div className="turn-metrics">{turnMeasurementLines(displayed).map(line => <div key={line}>{line}</div>)}</div>
+    <summary className="cost-summary">{turnDetailsLabel(displayed, t)}</summary>
+    <div className="turn-metrics">{turnMeasurementLines(displayed, t).map(line => <div key={line}>{line}</div>)}</div>
     <ul className="cost-calls" aria-label={t("Provider calls")}>
       {calls.map((call, index) => <li key={call.callId} className="cost-call">
         <div>{index + 1}. {call.model} · {call.reasoning} · {call.costUsd !== null
@@ -44,7 +44,7 @@ export function CostDetails({ summary, calls, running }: {
           {call.usage.cached_prompt_tokens != null && <>{t(" · Cached input: ")}{call.usage.cached_prompt_tokens.toLocaleString()}</>}
           {!!call.usage.reasoning_tokens && <>{t(" · Reasoning (included in output): ")}{call.usage.reasoning_tokens.toLocaleString()}</>}
         </div>}
-        <div>{t("Provider streaming speed: ")}{formatSpeed(call.usage?.completion_tokens, call.streamingSeconds)}
+        <div>{t("Provider streaming speed: ")}{formatSpeed(call.usage?.completion_tokens, call.streamingSeconds, t)}
           {call.streamingSeconds != null && <>{t(" · Streaming: ")}{formatSeconds(call.streamingSeconds)}</>}
           {call.timeToFirstOutputSeconds != null && <>{t(" · Time to first output: ")}{formatSeconds(call.timeToFirstOutputSeconds)}</>}
         </div>

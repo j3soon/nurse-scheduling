@@ -1143,7 +1143,7 @@ export default function ExperimentalAiPage() {
             <p className="mt-2 text-xs font-medium text-gray-500">
               {t("Browser Schedule Spec: ")}{peopleData.items.length}{t(" people, ")}{dateData.items.length}{t(" dates. Sent when you send a message.")}</p>
             <p className="mt-2 text-xs text-gray-500">
-              {t("Chat sessions expire after ")}{retentionLabel(sessionRetentionSeconds)}{t(" of inactivity. Each new message renews this period.")}</p>
+              {t("Chat sessions expire after ")}{retentionLabel(sessionRetentionSeconds, t)}{t(" of inactivity. Each new message renews this period.")}</p>
             <div className="mt-2 flex flex-wrap gap-4">
               <label className="flex min-h-11 items-center gap-1.5 sm:min-h-0">
                 <input
@@ -1571,7 +1571,7 @@ export default function ExperimentalAiPage() {
             {costSummary && <>
               {(contextUsage !== null || messages.length > 0) && ' · '}
               <span title={t("Estimated LLM cost across this conversation, including retries and tool follow-up calls.")}>
-                {t("Est. cost: ")}{costLabel(costSummary, false)}
+                {t("Est. cost: ")}{costLabel(costSummary, false, t)}
               </span>
             </>}
           </p>
