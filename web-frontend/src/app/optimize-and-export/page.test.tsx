@@ -23,6 +23,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
@@ -2188,6 +2190,28 @@ describe('OptimizeAndExportPage backend authentication', () => {
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
     expect(screen.getByText('Token set for this session')).toBeInTheDocument();
     expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]);
+  });
+
+  it.each([false, true])('keeps the entered backend token when another tab changes language: %s', async changesLocale => {
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
+    const user = userEvent.setup();
+    const fetchMock = respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
+    await screen.findByText('Server: Credentials required');
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+    await screen.findByText('Server: Online');
+    if (changesLocale) {
+      await act(async () => {
+        localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+        window.dispatchEvent(new StorageEvent('storage', { key: LOCALE_STORAGE_KEY, newValue: 'zh-TW' }));
+      });
+    }
+    const optionsCall = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/optimize/options')).at(-1);
+    expect((optionsCall?.[1] as RequestInit).headers).toMatchObject({ Authorization: `Bearer ${BACKEND_TOKEN}` });
+    expect(screen.getByRole('button', { name: changesLocale ? '最佳化並下載' : 'Optimize and Download', exact: true })).toBeEnabled();
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
   });
 
   it('sends a remembered token with optimization requests', async () => {

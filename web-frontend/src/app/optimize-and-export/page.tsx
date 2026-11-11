@@ -683,7 +683,7 @@ function describeServerStatus(status: ServerStatus, server: OptimizeServerEntry 
     : formatServerStatus(status, t);
   const detail = status === 'unauthorized'
     ? describeCredentialStatus(isCredentialRejection(server), t)
-    : server?.error ?? null;
+    : server?.error ? t(server.error) : null;
   return detail ? t("{value0}. {value1}", { value0: statusText, value1: detail }) : statusText;
 }
 
@@ -1000,8 +1000,8 @@ export default function OptimizeAndExportPage() {
                 // Credential problems are shown by the Status icon, not by this line.
                 ? null
                 : options.kind === 'invalid'
-                  ? t("Backend returned invalid optimization options.")
-                  : t("Optimization options are temporarily unavailable."),
+                  ? "Backend returned invalid optimization options."
+                  : "Optimization options are temporarily unavailable.",
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -1011,7 +1011,7 @@ export default function OptimizeAndExportPage() {
         serverProbeControllersRef.current.delete(endpoint);
       }
     });
-  }, [t]);
+  }, []);
 
   const checkAllServers = useCallback((servers = serverEntries) => {
     servers.forEach(server => {
@@ -2034,7 +2034,7 @@ export default function OptimizeAndExportPage() {
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   <div className="flex gap-2">
                     <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>{selectedServer?.error ?? t("Optimization options are unavailable.")}</span>
+                    <span>{t(selectedServer?.error ?? "Optimization options are unavailable.")}</span>
                   </div>
                 </div>
               )}
