@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -32,15 +32,15 @@ The script intentionally:
   suite with coverage.
 - Uses compact test output flags to keep CI output small. pytest uses the
   flags from `scripts/test_core_affected.sh`
-  (`-q --tb=short --disable-warnings --maxfail=1`). Playwright coverage uses
+  (`-q --tb=short --disable-warnings --maxfail=1`). Playwright uses
   `--reporter=dot --quiet --max-failures=1`, matching
   `scripts/test_frontend_e2e_affected.sh`. Vitest coverage uses
   `text-summary` reporting instead of the per-file text table. Run focused
   tests with
   `--log-cli-level=INFO` when solver or job logs are needed.
-- Runs frontend lint, build, unit coverage, E2E coverage, and the E2E coverage
-  report. Coverage commands execute the tests, so do not run duplicate
-  non-coverage test commands.
+- Runs frontend lint, build, unit coverage, and every E2E test. Skip the optional
+  minified-bundle coverage report. Unit coverage already executes those tests,
+  so do not run a duplicate unit test command.
 - Does not upload coverage or artifacts.
 
 When validating AI persistence, configure an isolated PostgreSQL test database

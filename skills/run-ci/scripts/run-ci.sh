@@ -35,6 +35,5 @@ set -x
   bun run lint
   bun run build
   bun run test:coverage
-  bun run test:e2e:coverage
-  bun run coverage:e2e:report
+  bunx playwright test --reporter=dot --quiet --max-failures=1
 )

@@ -36,7 +36,10 @@ them. The full suite takes about two minutes in the dev container. If you
 cannot run it, tell the user that it was not run and that they can run it before
 pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
-Playwright. Keep test files and runner configuration outside the production
+Playwright. Routine CI collects Vitest source coverage and runs every browser
+case without V8 bundle coverage. Use `test:e2e:coverage` or workflow dispatch's
+`bundle_coverage` input only when the minified-bundle report is needed.
+Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
 
 Prepare chat archives before starting a native download in a hidden frame. Keep

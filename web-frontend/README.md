@@ -56,7 +56,9 @@ image after Playwright version changes, `bun run test:e2e` and
 `bun run test:e2e:ui` should not require rerunning `bunx playwright install chromium`
 inside each new `docker run --rm` container.
 
-In GitHub Actions, frontend browser integration tests run after frontend unit/coverage tests. The workflow uploads Playwright reports as build artifacts so failed CI runs keep browser traces and reports for debugging.
+In GitHub Actions, frontend browser integration tests run independently of unit tests. Vitest collects source coverage
+with the configured thresholds. The workflow uploads Playwright reports as build artifacts so failed CI runs keep
+browser traces and reports for debugging.
 
 `e2e/experimental-ai-rendering.spec.ts` compares the live transcript and fresh
 export HTML from the same conversation events. It checks content, disclosure
@@ -64,7 +66,7 @@ states, and screenshots at desktop and phone widths, including after reload.
 Comparison HTML, screenshots, and visual differences are saved under the
 repository-root `artifacts/chat-rendering/` directory and uploaded by CI.
 
-Generate a separate browser-flow coverage report from Playwright:
+Generate an optional JavaScript bundle coverage report from Playwright:
 
 ```sh
 cd web-frontend
@@ -72,7 +74,10 @@ bun run test:e2e:coverage
 bun run coverage:e2e:report
 ```
 
-This writes a separate report under `web-frontend/coverage-e2e/` and does not replace the main Vitest coverage report under `web-frontend/coverage/`.
+This writes a separate report under `web-frontend/coverage-e2e/`. The current build reports minified JavaScript bundles,
+including dependencies, rather than TypeScript source files. Routine CI skips this costly report and still runs
+every browser test. Enable `bundle_coverage` through **Run workflow** to collect it in CI.
+Vitest source coverage remains under `web-frontend/coverage/`.
 
 For building static site, run:
 

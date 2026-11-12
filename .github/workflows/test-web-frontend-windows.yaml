@@ -1,8 +1,14 @@
 name: Test Web Frontend Windows
 
 on:
-  - push
-  - pull_request
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bundle_coverage:
+        description: Collect the slower minified-bundle coverage report
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,7 +42,8 @@ jobs:
 
   test-web-frontend-e2e-windows:
     runs-on: windows-latest
-    needs: test-web-frontend-windows
+    env:
+      E2E_COVERAGE: ${{ inputs.bundle_coverage && '1' || '0' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -59,17 +66,15 @@ jobs:
       - name: Install Playwright Chromium
         working-directory: web-frontend
         run: bunx playwright install chromium
-      - name: Run Playwright tests with coverage
+      - name: Run Playwright tests
         working-directory: web-frontend
-        run: |
-          Remove-Item -Recurse -Force .e2e-coverage, coverage-e2e -ErrorAction SilentlyContinue
-          $env:E2E_COVERAGE = '1'
-          bunx playwright test --workers=4
+        run: bunx playwright test --workers=4 --reporter=dot --quiet --max-failures=1
       - name: Generate Playwright coverage report
+        if: inputs.bundle_coverage
         working-directory: web-frontend
         run: bun run coverage:e2e:report
       - name: Upload Playwright coverage to Codecov
-        if: github.event_name != 'pull_request'
+        if: inputs.bundle_coverage && github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
