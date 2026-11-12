@@ -22,6 +22,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExportLayoutPage from '@/app/export-layout/page';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import { ExportConfig } from '@/types/scheduling';
 import { UnsavedEditingStateProvider } from '@/utils/unsavedEditingState';
 
@@ -71,9 +73,9 @@ function renderExportLayoutPage(exportData: ExportConfig = { formatting: [], ext
   });
 
   return render(
-    <UnsavedEditingStateProvider>
+    <I18nProvider><UnsavedEditingStateProvider>
       <ExportLayoutPage />
-    </UnsavedEditingStateProvider>
+    </UnsavedEditingStateProvider></I18nProvider>
   );
 }
 
@@ -237,6 +239,29 @@ describe('ExportLayoutPage extra column coefficients', () => {
 
     expect(duplicateExportExtraColumn).toHaveBeenCalledWith(0);
     expect(updateExportExtraColumns).not.toHaveBeenCalled();
+  });
+
+  it('translates request shape labels while preserving draft selection and saved identifiers', async () => {
+    const user = userEvent.setup();
+    renderExportLayoutPage({
+      formatting: [{
+        type: 'cell', people: ['P1'], dates: ['2026-01-01'], shiftTypes: ['D'],
+        backgroundColor: '#ffffff',
+        when: { preference: { types: ['shift request'], requestShape: ['person-item-to-date-item'] } },
+      }],
+    });
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('checkbox', { name: 'Person item to date item' })).toBeChecked();
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('checkbox', { name: '個別人員對個別日期' })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: '更新', exact: true }));
+    expect(updateExportConfig).toHaveBeenCalledWith(expect.objectContaining({
+      formatting: [
+        expect.objectContaining({ when: { preference: { types: ['shift request'], requestShape: ['person-item-to-date-item'] } } }),
+      ],
+    }));
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
   });
 
   it('dismisses the edited export draft before duplicating export entries', async () => {

@@ -108,6 +108,7 @@ type ExportLayoutErrorField = Exclude<keyof ExportLayoutErrors, 'countShiftTypeC
 
 interface SelectOption {
   id: string;
+  label?: string;
   description: string;
 }
 
@@ -1054,7 +1055,11 @@ export default function ExportFormattingPage() {
 
         {renderCheckboxes(
           t("Request Shape"),
-          REQUEST_SHAPE_OPTIONS.map(option => ({ ...option, description: t(option.description ?? option.id) })),
+          REQUEST_SHAPE_OPTIONS.map(option => ({
+            ...option,
+            label: t(option.description),
+            description: t(option.description),
+          })),
           draft.requestShape,
           (id) => toggleDraftArrayField('requestShape', id),
           t("No request shape options available."),

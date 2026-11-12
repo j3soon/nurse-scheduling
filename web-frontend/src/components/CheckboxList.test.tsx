@@ -41,6 +41,19 @@ describe('CheckboxList', () => {
     expect(getItemClassName).toHaveBeenCalledWith({ id: 'B' }, false);
   });
 
+  it('shows a separate label and tooltip while toggling the original ID', () => {
+    const onToggle = vi.fn();
+    render(<CheckboxList label="Request Shape"
+      items={[{ id: 'person-item-to-date-item', label: '人員項目對日期項目', description: 'Request shape help' }]}
+      selectedIds={['person-item-to-date-item']} onToggle={onToggle}
+    />);
+    const checkbox = screen.getByRole('checkbox', { name: '人員項目對日期項目' });
+    expect(checkbox).toBeChecked();
+    expect(checkbox.closest('label')).toHaveAttribute('title', 'Request shape help');
+    fireEvent.mouseUp(checkbox);
+    expect(onToggle).toHaveBeenCalledWith('person-item-to-date-item');
+  });
+
   it('toggles one item on normal click sequence', () => {
     const onToggle = vi.fn();
 
