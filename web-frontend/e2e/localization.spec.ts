@@ -24,33 +24,43 @@ import { disableModalDialogs, seedMinimalScheduleSpecState } from './helpers';
 test.describe('Traditional Chinese interface', () => {
   test.use({ locale: 'zh-TW' });
 
-  test('detects the browser across all pages and preserves user content', async ({ page }) => {
-    await disableModalDialogs(page);
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await seedMinimalScheduleSpecState(page);
-    for (const [path, heading] of [
-      ['/', '護理人員排班系統'],
-      ['/dates', '日期管理'],
-      ['/people', '人員管理'],
-      ['/shift-types', '班別管理'],
-      ['/shift-type-requirements', '班別需求'],
-      ['/shift-requests', '排班請求'],
-      ['/shift-type-successions', '班別接續'],
-      ['/shift-counts', '班次計數'],
-      ['/shift-affinities', '同班偏好'],
-      ['/export-layout', '匯出版面'],
-      ['/save-and-load', '儲存與載入'],
-      ['/optimize-and-export', '最佳化與匯出'],
-      ['/experimental-ai', '排班 AI 對話'],
-    ]) {
+  for (const [path, heading] of [
+    ['/', '護理人員排班系統'],
+    ['/dates', '日期管理'],
+    ['/people', '人員管理'],
+    ['/shift-types', '班別管理'],
+    ['/shift-type-requirements', '班別需求'],
+    ['/shift-requests', '排班請求'],
+    ['/shift-type-successions', '班別接續'],
+    ['/shift-counts', '班次計數'],
+    ['/shift-affinities', '同班偏好'],
+    ['/export-layout', '匯出版面'],
+    ['/save-and-load', '儲存與載入'],
+    ['/optimize-and-export', '最佳化與匯出'],
+    ['/experimental-ai', '排班 AI 對話'],
+  ]) {
+    test(`detects the browser language on ${path}`, async ({ page }) => {
+      await disableModalDialogs(page);
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await seedMinimalScheduleSpecState(page);
       await page.goto(path);
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
       await expect(page.locator('html')).toHaveAttribute('lang', 'zh-TW');
       await expect(page).toHaveTitle('護理人員排班系統');
       await expect(page.locator('head title')).toHaveCount(1);
-    }
-    await expect(page.getByRole('textbox', { name: '詢問目前的排班設定' })).toBeVisible();
+      if (path === '/experimental-ai') {
+        await expect(page.getByRole('textbox', { name: '詢問目前的排班設定' })).toBeVisible();
+      }
+      expect(errors).toEqual([]);
+    });
+  }
+
+  test('preserves user content and translates validation errors', async ({ page }) => {
+    await disableModalDialogs(page);
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await seedMinimalScheduleSpecState(page);
     await page.goto('/people');
     await expect(page.getByTestId('data-table-people').getByText('1. Person 1', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '新增人員', exact: true }).click();

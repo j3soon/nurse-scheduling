@@ -61,6 +61,8 @@ Scope form locators to their page or dialog so global navigation controls do not
 change the selected field. Use Playwright locator actions for form controls.
 Before interacting with statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
+Keep independent page checks in separate Playwright tests so each page has its
+own timeout and failure report.
 
 For exact elapsed-time assertions, install the Playwright clock before navigation
 at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
