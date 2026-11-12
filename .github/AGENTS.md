@@ -12,3 +12,7 @@
   instead of the whole workflow.
 - Keep live AI behavior checks on trusted same-repository pull requests and
   pushes in the primary repository. Fork pull requests run offline validation only.
+- Cache Python dependency downloads with `actions/setup-python`. Jobs that
+  install `requirements-optional.txt` must include both core requirements files
+  in `cache-dependency-path`. Keep installation steps so caches do not replace
+  dependency resolution.
