@@ -22,6 +22,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import { ChatTranscriptView } from './ChatTranscriptView';
 import { failResponse, staleResponse } from './assistantEvents';
 import type { ChatMessage } from './chatTranscript';
@@ -286,4 +288,22 @@ it('renders an in-progress manual compaction without an empty assistant bubble',
   expect(screen.getByText('Summarizing conversation').closest('article')).toHaveClass('mx-auto');
   expect(screen.queryByText('Assistant', { exact: true })).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Thinking')).not.toBeInTheDocument();
+});
+
+it('translates schedule download and ZIP removal while they are busy', () => {
+  localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+  render(<I18nProvider><ChatTranscriptView
+    messages={[
+      { id: 'job', role: 'optimizer', content: 'Finished.', optimizerJob: { jobId: 'job', downloadable: true } },
+      { id: 'answer', role: 'assistant', content: 'Files.', downloadId: 'zip' },
+    ]}
+    showReasoning={false} showTools={false} showCosts={false} showModels={false}
+    steeringAssistantId={null} conversationUnavailable={false}
+    removingDownloadId="zip" downloadingOptimizationId="job"
+    downloadGeneratedFiles={vi.fn()} removeGeneratedFiles={vi.fn()} downloadOptimizationResult={vi.fn()}
+    activeSessionId={null} sessionExpiresAt={null} sessionRetentionSeconds={172800}
+  /></I18nProvider>);
+  expect(screen.getByRole('button', { name: '下載中…' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '移除中…' })).toBeDisabled();
+  localStorage.removeItem(LOCALE_STORAGE_KEY);
 });

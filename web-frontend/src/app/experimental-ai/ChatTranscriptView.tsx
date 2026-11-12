@@ -182,7 +182,7 @@ export function ChatTranscriptView({
                   className="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-gray-400"
                 >
                   <FiDownload aria-hidden="true" className="h-4 w-4" />
-                  {downloadingOptimizationId === message.optimizerJob.jobId ? 'Downloading...' : t("Download schedule")}
+                  {downloadingOptimizationId === message.optimizerJob.jobId ? t("Downloading...") : t("Download schedule")}
                 </button>
               )}
               {message.downloadId && (
@@ -195,7 +195,7 @@ export function ChatTranscriptView({
                     disabled={removingDownloadId !== null || conversationUnavailable}
                     title={t("Remove this ZIP from the chat to free session storage.")}
                     className="rounded-lg px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50">
-                    {removingDownloadId === message.downloadId ? 'Removing...' : t("Remove ZIP")}
+                    {removingDownloadId === message.downloadId ? t("Removing...") : t("Remove ZIP")}
                   </button>
                 </div>
               )}

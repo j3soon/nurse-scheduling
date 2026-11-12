@@ -1985,7 +1985,7 @@ describe('OptimizeAndExportPage error handling', () => {
         })),
       });
 
-    render(<OptimizeAndExportPage />);
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
@@ -2007,6 +2007,14 @@ describe('OptimizeAndExportPage error handling', () => {
       'http://localhost:8000/optimize/opt_control/cancel',
       expect.objectContaining({ method: 'POST' })
     );
+
+    expect(await screen.findByRole('button', { name: 'Cancelling...' })).toBeDisabled();
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('button', { name: '取消中…' })).toBeDisabled();
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
 
     act(() => {
       MockEventSource.instances[0].emit('job.state_changed', { state: 'cancelled' });
