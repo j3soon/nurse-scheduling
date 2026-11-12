@@ -70,6 +70,7 @@ Routine CI runs the complete schedule fixture corpus through OR-Tools CP-SAT and
 fixture corpus through CP-SAT in both plain and prettified forms. Low-level OR-Tools MPSolver and MathOpt tests
 still check their distinct adapters. Other PuLP runtimes and repeated backend fixture sweeps are optional.
 Use `pytest --solver-profile=all` locally, or choose `all` in the core workflows' **Run workflow** action.
+The core workflows run the `all` profile every Sunday, starting at 03:17 UTC across the three platforms.
 Install GLPK for its optional tests. Unmarked tests of unavailable-runtime behavior still run in the primary profile.
 
 Generate coverage report:
@@ -99,6 +100,8 @@ Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is
 The checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix so they are not included in the
 normal core suite. The real-scenario CI workflows replay the saved 87-person assignment. They check the exact score,
 all assignments, and the absence of critical request violations without searching for a new schedule.
+The real-scenario workflows also search for a new schedule every Sunday, starting at 03:47 UTC across the three platforms.
+Scheduled checks use the default branch and run independently of push and pull-request checks.
 Use the workflows' **Run workflow** action with `run_search` enabled for a new search, or run
 `pytest tests/real/schedule_ortools_cp_sat.py` locally. That search has a 20-minute solver budget and stops after
 critical request violations remain absent for one minute. It measures search behavior that the fixed replay cannot check.

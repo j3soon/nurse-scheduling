@@ -16,3 +16,6 @@
   install `requirements-optional.txt` must include both core requirements files
   in `cache-dependency-path`. Keep installation steps so caches do not replace
   dependency resolution.
+- Keep the full solver profile and a bounded new real-scenario search in weekly
+  checks on Linux, macOS, and Windows. Routine checks use the primary profile
+  and the fixed-assignment replay. Scheduled checks run on the default branch.

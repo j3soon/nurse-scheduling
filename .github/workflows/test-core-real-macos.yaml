@@ -3,6 +3,8 @@ name: Test Core Real Scenario macOS
 on:
   push:
   pull_request:
+  schedule:
+    - cron: '57 3 * * 0'
   workflow_dispatch:
     inputs:
       run_search:
@@ -19,6 +21,7 @@ permissions:
 
 jobs:
   test-core-real-macos:
+    timeout-minutes: 25
     runs-on: macos-latest
     strategy:
       matrix:
@@ -41,7 +44,7 @@ jobs:
         working-directory: core
         run: pytest -q --durations=20 tests/real/schedule_score_ground_truth.py
       - name: Test real-world scenario until OR-Tools clears critical violations
-        if: github.event_name == 'workflow_dispatch' && inputs.run_search
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_search)
         working-directory: core
         run: pytest tests/real/schedule_ortools_cp_sat.py
       - name: Test bounded real-world scenario with CBC
