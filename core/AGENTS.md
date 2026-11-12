@@ -18,10 +18,10 @@ project packages are installed system-wide, so run `python`, `pytest`, and
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
-  normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites. Tests marked `requires_solver` skip automatically when their optional
-  runtime package is absent. An installed runtime that fails its availability
-  check still stops the script. Use `--skip-unavailable-solvers` to skip those
+  primary solver suite with CP-SAT and CBC regression sweeps. Other backend
+  sweeps remain available with `pytest --solver-profile=all`. Tests marked
+  `requires_solver` skip automatically when their optional runtime package is absent.
+  An installed runtime that fails its availability check still stops the script. Use `--skip-unavailable-solvers` to skip those
   tests too.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
@@ -735,6 +735,11 @@ and current session recovery working.
 - Real-world checks under `tests/real/` intentionally omit pytest's `test_`
   filename prefix. Run them explicitly; do not include them in normal test
   commands.
+- Routine CI and broad affected checks use `--solver-profile=primary`. Keep
+  each schedule fixture in the CP-SAT and CBC sweeps. Test workbook formatting
+  through CP-SAT in both forms. Keep distinct OR-Tools adapter checks in the
+  primary profile. Use `--solver-profile=all` for optional runtime checks and
+  repeated backend sweeps. New runtime-dependent checks need `requires_solver`.
 - Primary suites are:
   `tests/test_solver_ortools_cp_sat.py`,
   `tests/test_solver_ortools_linear.py`,

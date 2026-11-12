@@ -1,8 +1,15 @@
 name: Test Core
 
 on:
-  - push
-  - pull_request
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      solver_profile:
+        description: Solver regression coverage
+        type: choice
+        options: [primary, all]
+        default: primary
 
 permissions:
   contents: read
@@ -25,11 +32,12 @@ jobs:
       - name: Test documentation link checker
         run: python -m unittest discover -s scripts -p test_check_docs_links.py
       - name: Install GLPK
+        if: github.event_name == 'workflow_dispatch' && inputs.solver_profile == 'all'
         run: sudo apt-get update && sudo apt-get install -y glpk-utils
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements-optional.txt
       - name: Test with pytest and collect coverage
-        run: cd core && pytest --cov=nurse_scheduling tests --ignore=tests/test_schedule_pulp_cuopt.py
+        run: cd core && pytest --cov=nurse_scheduling --durations=20 --solver-profile=${{ inputs.solver_profile || 'primary' }} tests --ignore=tests/test_schedule_pulp_cuopt.py
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request'
         uses: codecov/codecov-action@v4

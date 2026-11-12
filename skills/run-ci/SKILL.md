@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the normal core pytest suite with coverage without CBC, cuOpt, or the three explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E coverage. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -24,8 +24,9 @@ inside a dev container, where project packages are installed system-wide.
 The script intentionally:
 
 - Runs documentation link-checker regression tests before the module checks.
-- Excludes every core test file matching `*pulp_cbc.py` or `*pulp_cuopt.py`,
-  plus the mixed CBC/cuOpt `test_solver_pulp_progress.py` suite.
+- Uses `--solver-profile=primary` for the complete CP-SAT and CBC schedule
+  fixture sweeps, CP-SAT workbook fixtures, and low-level OR-Tools adapters.
+  Other backend sweeps remain available with `--solver-profile=all`.
 - Does not explicitly run the three `core/tests/real/schedule_*.py` scenarios.
 - Runs core Ruff format checking, Ruff lint, and the remaining normal pytest
   suite with coverage.
@@ -56,8 +57,8 @@ GitHub CI or the standard dev image for that solver coverage. An installed but
 broken runtime still fails, so do not pass `--skip-unavailable-solvers` to
 silence it or build the missing package from source.
 
-Do not replace the script with affected-test commands or add excluded solver
-tests. When a check fails, diagnose and fix the underlying error while
+Do not replace the script with affected-test commands or add optional solver
+sweeps. When a check fails, diagnose and fix the underlying error while
 preserving repository conventions and unrelated user changes. Run a focused
 check when useful to verify the fix, then rerun the bundled script from the
 beginning. Repeat until the full script passes.

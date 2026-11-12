@@ -48,6 +48,8 @@ Run tests:
 cd core
 # run the normal core test suite
 pytest --log-cli-level=INFO
+# run the routine CI profile, including CP-SAT and CBC fixture regressions
+pytest --solver-profile=primary --durations=20
 # run focused OR-Tools | CP-SAT tests
 pytest --log-cli-level=INFO \
   tests/test_solver_ortools_cp_sat.py \
@@ -63,6 +65,12 @@ ruff check --fix nurse_scheduling tests
 # apply consistent formatting
 ruff format nurse_scheduling tests
 ```
+
+Routine CI runs the complete schedule fixture corpus through OR-Tools CP-SAT and PuLP CBC. It runs the workbook
+fixture corpus through CP-SAT in both plain and prettified forms. Low-level OR-Tools MPSolver and MathOpt tests
+still check their distinct adapters. Other PuLP runtimes and repeated backend fixture sweeps are optional.
+Use `pytest --solver-profile=all` locally, or choose `all` in the core workflows' **Run workflow** action.
+Install GLPK for its optional tests. Unmarked tests of unavailable-runtime behavior still run in the primary profile.
 
 Generate coverage report:
 

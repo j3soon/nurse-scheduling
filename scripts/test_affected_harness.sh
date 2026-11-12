@@ -121,13 +121,13 @@ printf 'change\n' >> "$fixture_root/core/tests/ai/testcases/basics/case.yaml"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_testcases.py'
 assert_no_line "$output" 'test: tests/test_ai_basic.py'
-assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_no_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/tests/ai/testcases/basics/case.yaml
 
 rm -- "$fixture_root/core/tests/ai/testcases/basics/case.yaml"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_testcases.py'
-assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_no_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/tests/ai/testcases/basics/case.yaml
 
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
@@ -141,25 +141,25 @@ assert_line "$output" 'test: tests/test_ai_basic.py'
 
 write_fixture core/requirements.txt
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
-assert_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 rm -- "$fixture_root/core/requirements.txt"
 
 rm -- "$fixture_root/core/tests/test_ai_provider.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 assert_no_line "$output" 'test: tests/test_ai_provider.py'
-assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_no_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/tests/test_ai_provider.py
 
 rm -- "$fixture_root/core/nurse_scheduling/ai/pi/read.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
-assert_no_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_no_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/nurse_scheduling/ai/pi/read.py
 
 rm -- "$fixture_root/core/tests/test_scheduler.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
-assert_line "$output" 'tests: full normal core suite (CBC and cuOpt excluded)'
+assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/tests/test_scheduler.py
 
 printf 'change\n' >> "$fixture_root/web-frontend/src/app/page.tsx"
@@ -278,8 +278,8 @@ assert_line "$output" 'mock ruff: check nurse_scheduling tests'
 assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_scheduler.py'
 assert_no_line "$output" 'mock python: - pulp/highs'
 output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" --full)"
-assert_line "$output" 'mock python: - pulp/highs pulp/scip'
-assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --ignore-glob=*pulp_cbc.py --ignore-glob=*pulp_cuopt.py --ignore=tests/test_solver_pulp_progress.py tests'
+assert_no_line "$output" 'mock python: - pulp/highs pulp/scip'
+assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --solver-profile=primary tests'
 
 set +e
 output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \
