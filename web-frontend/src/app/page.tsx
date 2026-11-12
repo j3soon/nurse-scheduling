@@ -110,12 +110,12 @@ export default function Home() {
         createNewState();
       } else {
         const response = await fetch('/examples/large-ward-with-87-people-2025-11.yaml');
-        if (!response.ok) throw new Error(t("The example Schedule Spec could not be loaded."));
+        if (!response.ok) throw new Error("The example Schedule Spec could not be loaded.");
         loadFromYaml(yaml.load(await response.text()));
       }
       setShowConfirmDialog(false);
     } catch (error) {
-      setNewScheduleSpecError(error instanceof Error ? error.message : t("The Schedule Spec could not be created."));
+      setNewScheduleSpecError(error instanceof Error ? error.message : "The Schedule Spec could not be created.");
     } finally {
       setIsCreatingScheduleSpec(false);
     }
@@ -260,7 +260,7 @@ export default function Home() {
                 ? t("Start an empty Schedule Spec? This will reset all your current data.")
                 : t("Load the 87-person example? This will reset all your current data.")}
             </p>
-            {newScheduleSpecError && <p className="mb-4 text-sm text-red-700" role="alert">{newScheduleSpecError}</p>}
+            {newScheduleSpecError && <p className="mb-4 text-sm text-red-700" role="alert">{t(newScheduleSpecError)}</p>}
             <div className="flex justify-end gap-4">
               <button
                 onClick={() => setShowConfirmDialog(false)}

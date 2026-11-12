@@ -1534,6 +1534,48 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByText('Server error (422): request rejected by old API')).resolves.toBeInTheDocument();
   });
 
+  it.each(['success', 'no schedule', 'backend error'])('translates %s after changing language during and after a run', async outcome => {
+    const user = userEvent.setup();
+    let finishJob: (response: unknown) => void = () => {};
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ok: true, json: async () => optimizeJobResponse({ id: 'locale-test' }) })
+      .mockImplementationOnce(() => new Promise(resolve => { finishJob = resolve; }))
+      .mockResolvedValueOnce({
+        ok: true, blob: async () => new Blob(['xlsx']), headers: new Headers(),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
+    await user.click(screen.getByRole('button', { name: 'Optimize and Download' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      LOCAL_API_URL + '/optimize/locale-test', expect.objectContaining({ method: 'GET' }),
+    ));
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(vi.mocked(fetch).mock.calls.length).toBe(requestCount);
+
+    await act(async () => { finishJob({
+      ok: true,
+      json: async () => optimizeJobResponse({
+        id: 'locale-test', state: 'completed',
+        outcome: outcome === 'success' ? 'optimal' : 'infeasible',
+        solverStatus: 'DONE',
+        error: outcome === 'backend error' ? 'Backend supplied detail' : null,
+      }),
+    }); });
+    const chinese = outcome === 'success' ? '班表已成功完成最佳化並下載！'
+      : outcome === 'no schedule' ? '沒有可下載的班表。工作結果：infeasible' : 'Backend supplied detail';
+    expect(await screen.findByText(chinese)).toBeInTheDocument();
+
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    const english = outcome === 'success' ? 'Schedule optimized and downloaded successfully!'
+      : outcome === 'no schedule' ? 'No downloadable schedule is available. Job outcome: infeasible' : 'Backend supplied detail';
+    expect(screen.getByText(english)).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/schedule_spec/optimize'))).toHaveLength(1);
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
+  });
+
   it('keeps a successful download when best-effort job cleanup fails', async () => {
     const user = userEvent.setup();
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');

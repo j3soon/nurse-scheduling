@@ -22,6 +22,7 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
+import type { MessageDescriptor, MessageValues } from '@/i18n/messages';
 import { useFeedbackForm } from '@/hooks/useFeedbackForm';
 import Image from 'next/image';
 import { MobileDetails } from '@/components/MobileDetails';
@@ -241,7 +242,10 @@ export default function ExperimentalAiPage() {
   const [rememberAuthToken, setRememberAuthToken] = useState(false);
   const [isEditingAuthToken, setIsEditingAuthToken] = useState(false);
   const [authRejected, setAuthRejected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorMessage] = useState<MessageDescriptor | null>(null);
+  const setError = useCallback((key: string | null, values?: MessageValues) => {
+    setErrorMessage(key === null ? null : { key, values });
+  }, []);
   const [capabilitiesErrorEndpoint, setCapabilitiesErrorEndpoint] = useState<string | null>(null);
   const [modelSelectionEnabled, setModelSelectionEnabled] = useState(false);
   const [selection, setSelection] = useState<ModelSelection>();
@@ -277,11 +281,11 @@ export default function ExperimentalAiPage() {
       setAuthRequired(true);
       setAuthRejected(true);
       setIsEditingAuthToken(true);
-      setError(t("AI credentials were rejected. Enter the current AI token and try again."));
+      setError("AI credentials were rejected. Enter the current AI token and try again.");
       return;
     }
     setError(requestError instanceof Error ? requestError.message : fallback);
-  }, [t]);
+  }, [setError]);
 
   const resetChatUi = useCallback(() => {
     setDownloadingOptimizationId(null);
@@ -680,7 +684,7 @@ export default function ExperimentalAiPage() {
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
       optimizationDownloadUrlRef.current = null;
     } catch {
-      setError(t("The saved chat could not be opened from browser storage."));
+      setError("The saved chat could not be opened from browser storage.");
     }
   };
 
@@ -702,17 +706,17 @@ export default function ExperimentalAiPage() {
   const addAttachments = (files: File[]) => {
     if (files.length === 0) return;
     if (!fileCapability.enabled) {
-      setError(t("File attachments are unavailable."));
+      setError("File attachments are unavailable.");
       return;
     }
     if (uploadedFiles.length + selectedAttachments.length + files.length > fileCapability.max_files) {
-      setError(t("Keep at most {value0} files in this chat. Remove unused uploads first.", { value0: fileCapability.max_files }));
+      setError("Keep at most {value0} files in this chat. Remove unused uploads first.", { value0: fileCapability.max_files });
       return;
     }
     const megabytes = (bytes: number) => (bytes / 1_000_000).toLocaleString(locale, { maximumFractionDigits: 1 });
     const maxFileBytes = fileCapability.max_bytes_per_file;
     if (files.some(file => file.size > maxFileBytes)) {
-      setError(t("Each file must be {value0} MB or smaller.", { value0: megabytes(maxFileBytes) }));
+      setError("Each file must be {value0} MB or smaller.", { value0: megabytes(maxFileBytes) });
       return;
     }
 
@@ -720,7 +724,7 @@ export default function ExperimentalAiPage() {
       + selectedAttachments.reduce((total, attachment) => total + attachment.file.size, 0)
       + files.reduce((total, file) => total + file.size, 0);
     if (totalBytes > fileCapability.max_bytes_per_session) {
-      setError(t("Files in this chat must total {value0} MB or less. Remove unused uploads first.", { value0: megabytes(fileCapability.max_bytes_per_session) }));
+      setError("Files in this chat must total {value0} MB or less. Remove unused uploads first.", { value0: megabytes(fileCapability.max_bytes_per_session) });
       return;
     }
     setError(null);
@@ -765,7 +769,7 @@ export default function ExperimentalAiPage() {
       link.click();
       link.remove();
     } catch (downloadError) {
-      reportRequestError(downloadError, t("The generated files could not be downloaded."));
+      reportRequestError(downloadError, "The generated files could not be downloaded.");
     }
   };
 
@@ -787,7 +791,7 @@ export default function ExperimentalAiPage() {
       const failed = () => {
         if (chatExportFrameRef.current !== frame || !session.ownsConversation()) return;
         setChatExportNotice(null);
-        reportRequestError(new Error(t("The chat download could not start. Please try Export Chat again.")), t("The chat could not be exported."));
+        reportRequestError(new Error("The chat download could not start. Please try Export Chat again."), "The chat could not be exported.");
       };
       frame.onload = () => {
         if (!initialized) {
@@ -805,7 +809,7 @@ export default function ExperimentalAiPage() {
       document.body.appendChild(frame);
       setChatExportNotice(t("Chat download requested. Check your browser’s downloads."));
     } catch (exportError) {
-      if (session.ownsConversation()) reportRequestError(exportError, t("The chat could not be exported."));
+      if (session.ownsConversation()) reportRequestError(exportError, "The chat could not be exported.");
     } finally {
       if (session.ownsConversation()) setIsExportingChat(false);
     }
@@ -835,7 +839,7 @@ export default function ExperimentalAiPage() {
       link.click();
       link.remove();
     } catch (downloadError) {
-      if (ownsConversation()) reportRequestError(downloadError, t("The schedule could not be downloaded."));
+      if (ownsConversation()) reportRequestError(downloadError, "The schedule could not be downloaded.");
     } finally {
       if (ownsConversation()) setDownloadingOptimizationId(null);
     }
@@ -851,7 +855,7 @@ export default function ExperimentalAiPage() {
     } catch (cancelError) {
       if (session.ownsConversation()) {
         setCancellingOptimizationId(current => current === jobId ? null : current);
-        reportRequestError(cancelError, t("The optimizer could not be cancelled."));
+        reportRequestError(cancelError, "The optimizer could not be cancelled.");
       }
     }
   };
@@ -865,7 +869,7 @@ export default function ExperimentalAiPage() {
     } catch (finishError) {
       if (session.ownsConversation()) {
         setFinishingOptimizationId(current => current === jobId ? null : current);
-        reportRequestError(finishError, t("The optimizer could not finish early."));
+        reportRequestError(finishError, "The optimizer could not finish early.");
       }
     }
   };
@@ -897,7 +901,7 @@ export default function ExperimentalAiPage() {
     };
     recognition.onerror = event => {
       if (!BENIGN_SPEECH_ERRORS.has(event?.error ?? '')) {
-        setError(t("Speech recognition stopped before it could transcribe audio."));
+        setError("Speech recognition stopped before it could transcribe audio.");
       }
       setIsListening(false);
     };
@@ -909,7 +913,7 @@ export default function ExperimentalAiPage() {
     } catch {
       speechRecognitionRef.current = null;
       setIsListening(false);
-      setError(t("Speech recognition could not start in this browser."));
+      setError("Speech recognition could not start in this browser.");
     }
   };
   const credentialsMissing = authRequired && authToken === null;
@@ -1253,7 +1257,7 @@ export default function ExperimentalAiPage() {
 
       {error && (
         <div role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {t(error)}
+          {t(error.key, error.values)}
         </div>
       )}
 

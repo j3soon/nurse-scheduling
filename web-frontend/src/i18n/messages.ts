@@ -25,6 +25,7 @@ export type Locale = 'en' | 'zh-TW';
 export type MessageKey = keyof typeof en;
 export type Catalog = Record<MessageKey, string>;
 export type MessageValues = Record<string, string | number | undefined>;
+export type MessageDescriptor = { key: string; values?: MessageValues };
 export type Translator = (message: string, values?: MessageValues) => string;
 export const catalogs: Record<Locale, Catalog> = { en, 'zh-TW': zhTW };
 export const LOCALE_STORAGE_KEY = 'nurse-scheduling-language';

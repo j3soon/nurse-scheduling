@@ -22,6 +22,7 @@
 
 import { translator, type Translator } from '@/i18n/messages';
 import { useI18n } from '@/i18n/I18nProvider';
+import type { MessageDescriptor } from '@/i18n/messages';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiLock, FiRefreshCw, FiShieldOff, FiWifi, FiWifiOff, FiActivity, FiTrash2, FiPlus } from 'react-icons/fi';
@@ -737,9 +738,9 @@ export default function OptimizeAndExportPage() {
   const [anonymizeScheduleSpec, setAnonymizeScheduleSpec] = useState(true);
   const [solverArg, setSolverArg] = useState('ortools/cp-sat');
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
-  const [timeoutError, setTimeoutError] = useState<string | null>(null);
+  const [timeoutError, setTimeoutError] = useState<MessageDescriptor | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<MessageDescriptor | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<number | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
@@ -1181,7 +1182,7 @@ export default function OptimizeAndExportPage() {
             eventSource.close();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
-            reject(new Error(t("Optimization event stream failed")));
+            reject(new Error("Optimization event stream failed"));
           } else {
             if (completionStarted) {
               return;
@@ -1215,14 +1216,14 @@ export default function OptimizeAndExportPage() {
     }
 
     if (!activeOptimizationOptions) {
-      setErrorMessage(t("Backend optimization options are unavailable."));
+      setErrorMessage({ key: "Backend optimization options are unavailable." });
       setSuccessMessage(null);
       return;
     }
 
     const solverChoice = activeOptimizationOptions.solver.choices.find(choice => choice.value === solverArg);
     if (!solverChoice) {
-      setErrorMessage(t("Select a solver supported by the active backend."));
+      setErrorMessage({ key: "Select a solver supported by the active backend." });
       setSuccessMessage(null);
       return;
     }
@@ -1236,14 +1237,17 @@ export default function OptimizeAndExportPage() {
       timeoutArg > timeoutOptions.maximum
     ) {
       setTimeoutError(
-        t("Solver timeout must be an integer between {value0} and {value1} seconds.", { value0: timeoutOptions.minimum, value1: timeoutOptions.maximum })
+        {
+          key: "Solver timeout must be an integer between {value0} and {value1} seconds.",
+          values: { value0: timeoutOptions.minimum, value1: timeoutOptions.maximum },
+        }
       );
       setErrorMessage(null);
       return;
     }
 
     if (!canUseActiveServer || !resolvedOptimizeEndpoint) {
-      setErrorMessage(t("Select an online backend or explicitly select an incompatible backend before optimizing."));
+      setErrorMessage({ key: "Select an online backend or explicitly select an incompatible backend before optimizing." });
       setSuccessMessage(null);
       return;
     }
@@ -1322,7 +1326,11 @@ export default function OptimizeAndExportPage() {
         throw new Error(completedJob.error.message);
       }
       if (!completedJob.links.schedule) {
-        throw new Error(t("No downloadable schedule is available. Job outcome: {value0}", { value0: completedJob.result?.outcome ?? completedJob.state }));
+        setErrorMessage({
+          key: "No downloadable schedule is available. Job outcome: {value0}",
+          values: { value0: completedJob.result?.outcome ?? completedJob.state },
+        });
+        return;
       }
 
       const xlsxResponse = await authorizedFetch(runEndpoint, completedJob.links.schedule, {
@@ -1363,14 +1371,12 @@ export default function OptimizeAndExportPage() {
         method: 'DELETE',
       }).catch(() => undefined);
 
-      setSuccessMessage(t("Schedule optimized and downloaded successfully!"));
+      setSuccessMessage("Schedule optimized and downloaded successfully!");
     } catch (error) {
       console.error('Error during optimization:', error);
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : t("An unexpected error occurred during optimization")
-      );
+      setErrorMessage({
+        key: error instanceof Error ? error.message : "An unexpected error occurred during optimization",
+      });
     } finally {
       setIsOptimizing(false);
       setLockedOptimizeEndpoint(null);
@@ -1398,11 +1404,10 @@ export default function OptimizeAndExportPage() {
       setCurrentJob(updatedJob);
       setScheduleStatus(updatedJob.state);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : t("Unable to {value0}", { value0: action === 'cancel' ? 'cancel optimization' : 'request current results' })
-      );
+      setErrorMessage(error instanceof Error ? { key: error.message } : {
+        key: "Unable to {value0}",
+        values: { value0: action === 'cancel' ? 'cancel optimization' : 'request current results' },
+      });
     }
   };
 
@@ -2143,7 +2148,7 @@ export default function OptimizeAndExportPage() {
                   {timeoutError && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
                       <FiAlertCircle className="h-4 w-4" />
-                      {timeoutError}
+                      {t(timeoutError.key, timeoutError.values)}
                     </p>
                   )}
                 </div>
@@ -2288,7 +2293,7 @@ export default function OptimizeAndExportPage() {
               <div className="space-y-2">
                 <div className="flex gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
                   <FiCheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{successMessage}</span>
+                  <span>{t(successMessage)}</span>
                 </div>
                 {completedFeedback && (
                   <OptimizationFeedbackNudge
@@ -2308,7 +2313,7 @@ export default function OptimizeAndExportPage() {
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
                 <div className="flex gap-2">
                   <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>{errorMessage}</p>
+                  <p>{t(errorMessage.key, errorMessage.values)}</p>
                 </div>
               </div>
             )}
