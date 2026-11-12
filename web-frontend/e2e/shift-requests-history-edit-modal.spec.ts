@@ -60,7 +60,7 @@ test('history edit modal updates the saved people-history summary', async ({ pag
 
   await currentHistory.getByRole('button', { name: 'Edit' }).click();
   await expect(page.getByText('Edit History - P1')).toBeVisible();
-  await page.locator('select').selectOption('N');
+  await page.getByRole('main').locator('select').selectOption('N');
 
   await expect(page.getByText('Edit History - P1')).toHaveCount(0);
   await expect(currentHistory.getByText(/H-1:\s*D/)).toHaveCount(0);

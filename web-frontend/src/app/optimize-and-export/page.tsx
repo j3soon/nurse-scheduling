@@ -20,6 +20,9 @@
 // The Optimize and Export page for Tab "11. Optimize and Export"
 'use client';
 
+import { translator, type Translator } from '@/i18n/messages';
+import { useI18n } from '@/i18n/I18nProvider';
+import type { MessageDescriptor } from '@/i18n/messages';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { FiDownload, FiAlertCircle, FiAlertTriangle, FiCheckCircle, FiLoader, FiLock, FiRefreshCw, FiShieldOff, FiWifi, FiWifiOff, FiActivity, FiTrash2, FiPlus } from 'react-icons/fi';
@@ -587,8 +590,8 @@ function isPhaseEventData(data: unknown): data is OptimizePhaseEvent {
   return typeof data === 'object' && data !== null && 'message' in data;
 }
 
-function formatScore(score: number): string {
-  return new Intl.NumberFormat(undefined, {
+function formatScore(score: number, locale = 'en'): string {
+  return new Intl.NumberFormat(locale, {
     maximumFractionDigits: 2,
   }).format(score);
 }
@@ -602,29 +605,29 @@ function formatElapsedSeconds(value: number): string {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
-function formatRunStatus(status: string | null, queuePosition?: number | null): string {
+function formatRunStatus(status: string | null, queuePosition?: number | null, t: Translator = translator('en')): string {
   if (!status) {
-    return 'Idle';
+    return t("Idle");
   }
   if (status.toLowerCase() === 'queued' && queuePosition !== undefined && queuePosition !== null) {
-    return `Queued, position ${queuePosition}`;
+    return t("Queued, position {value0}", { value0: queuePosition });
   }
   return status;
 }
 
-function formatProgressSummary(data: OptimizeProgressEvent): string {
-  const parts = [`Score: ${typeof data.currentBestScore === 'number' ? formatScore(data.currentBestScore) : 'N/A'}`];
+function formatProgressSummary(data: OptimizeProgressEvent, t: Translator = translator('en')): string {
+  const parts = [t("Score: {value0}", { value0: typeof data.currentBestScore === 'number' ? formatScore(data.currentBestScore) : 'N/A' })];
   if (data.commentCount !== undefined && data.commentCount !== null) {
-    parts.push(`Comments: ${data.commentCount}`);
+    parts.push(t("Comments: {value0}", { value0: data.commentCount }));
   }
   if (data.elapsedSeconds !== undefined) {
-    parts.push(`Elapsed: ${data.elapsedSeconds}s`);
+    parts.push(t("Elapsed: {value0}s", { value0: data.elapsedSeconds }));
   }
   if (data.solutionIndex !== undefined && data.solutionIndex !== null) {
-    parts.push(`Solution: #${data.solutionIndex}`);
+    parts.push(t("Solution: #{value0}", { value0: data.solutionIndex }));
   }
   if (data.source) {
-    parts.push(`Source: ${data.source}`);
+    parts.push(t("Source: {value0}", { value0: data.source }));
   }
   return parts.join(' · ');
 }
@@ -665,49 +668,50 @@ function isCredentialRejection(server: OptimizeServerEntry | null): boolean {
   return server?.status === 'unauthorized' && server.token !== null;
 }
 
-function formatCredentialStatus(rejected: boolean): string {
-  return rejected ? 'Credentials rejected' : 'Credentials required';
+function formatCredentialStatus(rejected: boolean, t: Translator = translator('en')): string {
+  return rejected ? t("Credentials rejected") : t("Credentials required");
 }
 
-function describeCredentialStatus(rejected: boolean): string {
-  return rejected ? 'Select Change to enter the current token.' : 'Select Enter token to continue.';
+function describeCredentialStatus(rejected: boolean, t: Translator = translator('en')): string {
+  return rejected ? t("Select Change to enter the current token.") : t("Select Enter token to continue.");
 }
 
 // Every status detail belongs in the Status icon's hover text. Putting it in the server
 // cell instead lengthens that cell, which widens the table and hides the trailing columns.
-function describeServerStatus(status: ServerStatus, server: OptimizeServerEntry | null): string {
+function describeServerStatus(status: ServerStatus, server: OptimizeServerEntry | null, t: Translator = translator('en')): string {
   const statusText = status === 'unauthorized'
-    ? formatCredentialStatus(isCredentialRejection(server))
-    : formatServerStatus(status);
+    ? formatCredentialStatus(isCredentialRejection(server), t)
+    : formatServerStatus(status, t);
   const detail = status === 'unauthorized'
-    ? describeCredentialStatus(isCredentialRejection(server))
-    : server?.error ?? null;
-  return detail ? `${statusText}. ${detail}` : statusText;
+    ? describeCredentialStatus(isCredentialRejection(server), t)
+    : server?.error ? t(server.error) : null;
+  return detail ? t("{value0}. {value1}", { value0: statusText, value1: detail }) : statusText;
 }
 
-function formatServerStatus(status: ServerStatus): string {
+function formatServerStatus(status: ServerStatus, t: Translator = translator('en')): string {
   if (status === 'checking') {
-    return 'Checking';
+    return t("Checking");
   }
   if (status === 'online') {
-    return 'Online';
+    return t("Online");
   }
   if (status === 'incompatible') {
-    return 'Incompatible';
+    return t("Incompatible");
   }
   if (status === 'offline') {
-    return 'Offline';
+    return t("Offline");
   }
   if (status === 'degraded') {
-    return 'Options unavailable';
+    return t("Options unavailable");
   }
   if (status === 'unauthorized') {
-    return 'Credentials required';
+    return t("Credentials required");
   }
-  return 'Unchecked';
+  return t("Unchecked");
 }
 
 export default function OptimizeAndExportPage() {
+  const { t } = useI18n();
   const {
     apiVersionData,
     descriptionData,
@@ -734,9 +738,9 @@ export default function OptimizeAndExportPage() {
   const [anonymizeScheduleSpec, setAnonymizeScheduleSpec] = useState(true);
   const [solverArg, setSolverArg] = useState('ortools/cp-sat');
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
-  const [timeoutError, setTimeoutError] = useState<string | null>(null);
+  const [timeoutError, setTimeoutError] = useState<MessageDescriptor | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<MessageDescriptor | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<number | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<string | null>(null);
@@ -816,17 +820,17 @@ export default function OptimizeAndExportPage() {
   const isCancelling = scheduleStatus === 'cancelling';
   const isOptimizeDisabled = isOptimizing || isRequiredDataMissing || !canUseActiveServer || !activeOptimizationOptions;
   const optimizeDisabledReason = isRequiredDataMissing
-    ? 'Complete the required Schedule Spec fields before optimizing.'
+    ? t("Complete the required Schedule Spec fields before optimizing.")
     : activeServerStatus === 'unauthorized'
-      ? 'This backend requires credentials. Enter its token to continue.'
+      ? t("This backend requires credentials. Enter its token to continue.")
     : activeServerStatus === 'degraded'
-      ? 'Optimization options are unavailable. Check the backend and try again.'
+      ? t("Optimization options are unavailable. Check the backend and try again.")
     : !canUseActiveServer
       ? activeServerStatus === 'incompatible'
-        ? 'Auto found no compatible backend. Explicitly select an incompatible backend to continue anyway.'
-        : 'Backend unavailable. Check or select an online backend.'
+        ? t("Auto found no compatible backend. Explicitly select an incompatible backend to continue anyway.")
+        : t("Backend unavailable. Check or select an online backend.")
       : !activeOptimizationOptions
-        ? 'Backend optimization options are unavailable.'
+        ? t("Backend optimization options are unavailable.")
       : null;
 
   // Create the current state object for YAML export (filtering out autogenerated items)
@@ -997,8 +1001,8 @@ export default function OptimizeAndExportPage() {
                 // Credential problems are shown by the Status icon, not by this line.
                 ? null
                 : options.kind === 'invalid'
-                  ? 'Backend returned invalid optimization options.'
-                  : 'Optimization options are temporarily unavailable.',
+                  ? "Backend returned invalid optimization options."
+                  : "Optimization options are temporarily unavailable.",
           lastCheckedAt: new Date(),
           pingMs,
         };
@@ -1178,14 +1182,14 @@ export default function OptimizeAndExportPage() {
             eventSource.close();
             const parsedData = parseSseEventData(event as MessageEvent);
             appendSseEvent('error', parsedData);
-            reject(new Error('Optimization event stream failed'));
+            reject(new Error("Optimization event stream failed"));
           } else {
             if (completionStarted) {
               return;
             }
             completionStarted = true;
             eventSource.close();
-            appendSseEvent('error', 'Optimization event stream disconnected; falling back to polling');
+            appendSseEvent('error', t("Optimization event stream disconnected; falling back to polling"));
             void pollOptimizeJob(job).then(resolve).catch(reject);
           }
         });
@@ -1212,14 +1216,14 @@ export default function OptimizeAndExportPage() {
     }
 
     if (!activeOptimizationOptions) {
-      setErrorMessage('Backend optimization options are unavailable.');
+      setErrorMessage({ key: "Backend optimization options are unavailable." });
       setSuccessMessage(null);
       return;
     }
 
     const solverChoice = activeOptimizationOptions.solver.choices.find(choice => choice.value === solverArg);
     if (!solverChoice) {
-      setErrorMessage('Select a solver supported by the active backend.');
+      setErrorMessage({ key: "Select a solver supported by the active backend." });
       setSuccessMessage(null);
       return;
     }
@@ -1233,14 +1237,17 @@ export default function OptimizeAndExportPage() {
       timeoutArg > timeoutOptions.maximum
     ) {
       setTimeoutError(
-        `Solver timeout must be an integer between ${timeoutOptions.minimum} and ${timeoutOptions.maximum} seconds.`
+        {
+          key: "Solver timeout must be an integer between {value0} and {value1} seconds.",
+          values: { value0: timeoutOptions.minimum, value1: timeoutOptions.maximum },
+        }
       );
       setErrorMessage(null);
       return;
     }
 
     if (!canUseActiveServer || !resolvedOptimizeEndpoint) {
-      setErrorMessage('Select an online backend or explicitly select an incompatible backend before optimizing.');
+      setErrorMessage({ key: "Select an online backend or explicitly select an incompatible backend before optimizing." });
       setSuccessMessage(null);
       return;
     }
@@ -1319,7 +1326,11 @@ export default function OptimizeAndExportPage() {
         throw new Error(completedJob.error.message);
       }
       if (!completedJob.links.schedule) {
-        throw new Error(`No downloadable schedule is available. Job outcome: ${completedJob.result?.outcome ?? completedJob.state}`);
+        setErrorMessage({
+          key: "No downloadable schedule is available. Job outcome: {value0}",
+          values: { value0: completedJob.result?.outcome ?? completedJob.state },
+        });
+        return;
       }
 
       const xlsxResponse = await authorizedFetch(runEndpoint, completedJob.links.schedule, {
@@ -1360,14 +1371,12 @@ export default function OptimizeAndExportPage() {
         method: 'DELETE',
       }).catch(() => undefined);
 
-      setSuccessMessage('Schedule optimized and downloaded successfully!');
+      setSuccessMessage("Schedule optimized and downloaded successfully!");
     } catch (error) {
       console.error('Error during optimization:', error);
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : 'An unexpected error occurred during optimization'
-      );
+      setErrorMessage({
+        key: error instanceof Error ? error.message : "An unexpected error occurred during optimization",
+      });
     } finally {
       setIsOptimizing(false);
       setLockedOptimizeEndpoint(null);
@@ -1395,11 +1404,10 @@ export default function OptimizeAndExportPage() {
       setCurrentJob(updatedJob);
       setScheduleStatus(updatedJob.state);
     } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : `Unable to ${action === 'cancel' ? 'cancel optimization' : 'request current results'}`
-      );
+      setErrorMessage(error instanceof Error ? { key: error.message } : {
+        key: "Unable to {value0}",
+        values: { value0: action === 'cancel' ? 'cancel optimization' : 'request current results' },
+      });
     }
   };
 
@@ -1455,7 +1463,7 @@ export default function OptimizeAndExportPage() {
               status: 'unchecked',
               health: null,
               options: null,
-              error: 'Backend URL is required.',
+              error: t("Backend URL is required."),
               lastCheckedAt: null,
               pingMs: null,
               healthProbeId,
@@ -1473,7 +1481,7 @@ export default function OptimizeAndExportPage() {
               status: 'unchecked',
               health: null,
               options: null,
-              error: 'Backend URL already exists.',
+              error: t("Backend URL already exists."),
               lastCheckedAt: null,
               pingMs: null,
               healthProbeId,
@@ -1524,7 +1532,7 @@ export default function OptimizeAndExportPage() {
       return;
     }
     if (isDuplicateServerEndpoint(normalizedEndpoint)) {
-      setAddServerError('Backend URL already exists.');
+      setAddServerError(t("Backend URL already exists."));
       return;
     }
     const nextServer = createServerEntry({
@@ -1590,12 +1598,11 @@ export default function OptimizeAndExportPage() {
         type="button"
         onClick={() => addServer(LOCAL_BACKEND_API_URL, true)}
         disabled={isOptimizing || hasLocalBackend}
-        title={hasLocalBackend ? 'Localhost is already in the backend list' : `Add ${LOCAL_BACKEND_API_URL}`}
+        title={hasLocalBackend ? t("Localhost is already in the backend list") : t("Add {value0}", { value0: LOCAL_BACKEND_API_URL })}
         className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
         <FiPlus className="h-4 w-4" />
-        Add localhost
-      </button>
+        {t("Add localhost")}</button>
       <button
         type="button"
         onClick={() => checkAllServers()}
@@ -1603,20 +1610,18 @@ export default function OptimizeAndExportPage() {
         className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
         <FiRefreshCw className="h-4 w-4" />
-        Check all
-      </button>
+        {t("Check all")}</button>
       <button
         type="button"
         onClick={resetServers}
         disabled={isOptimizing || !hasCustomBackendSettings}
         aria-label={hasCustomBackendSettings
-          ? 'Reset server settings to defaults. Custom server settings active.'
-          : 'Reset server settings to defaults'}
-        title={hasCustomBackendSettings ? 'Custom server settings active' : undefined}
+          ? t("Reset server settings to defaults. Custom server settings active.")
+          : t("Reset server settings to defaults")}
+        title={hasCustomBackendSettings ? t("Custom server settings active") : undefined}
         className="inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
       >
-        Reset
-        {hasCustomBackendSettings && (
+        {t("Reset")}{hasCustomBackendSettings && (
           <span aria-hidden="true" className="h-2 w-2 rounded-full bg-amber-500" />
         )}
       </button>
@@ -1624,7 +1629,7 @@ export default function OptimizeAndExportPage() {
   );
   const backendTableColumns = [
     {
-      header: 'Server',
+      header: t("Server"),
       accessor: (row: BackendTableRow) => {
         if (row.kind === 'auto') {
           return (
@@ -1637,9 +1642,9 @@ export default function OptimizeAndExportPage() {
                 className="sr-only"
               />
               <span className={`min-w-0 border-l-4 pl-2 ${selectedServerEndpoint === 'auto' ? 'border-blue-500' : 'border-transparent'}`}>
-                <span className="block text-sm font-medium text-gray-900">Auto</span>
+                <span className="block text-sm font-medium text-gray-900">{t("Auto")}</span>
                 <span className="mt-0.5 block truncate text-xs text-gray-500">
-                  {autoServer ? `Uses ${autoServer.endpoint}` : 'Uses the first online server by priority.'}
+                  {autoServer ? t("Uses {value0}", { value0: autoServer.endpoint }) : t("Uses the first online server by priority.")}
                 </span>
               </span>
             </label>
@@ -1657,7 +1662,7 @@ export default function OptimizeAndExportPage() {
               onChange={() => selectServer(server.endpoint)}
               disabled={isOptimizing}
               className="sr-only"
-              aria-label={`Select ${server.endpoint}`}
+              aria-label={t("Select {value0}", { value0: server.endpoint })}
             />
             <span className={`min-w-0 flex-1 border-l-4 pl-2 ${selectedServerEndpoint === server.endpoint ? 'border-blue-500' : 'border-transparent'}`}>
               <InlineEdit
@@ -1681,8 +1686,8 @@ export default function OptimizeAndExportPage() {
                 * out of view. Status detail belongs in the Status icon's hover text.
                 */}
               <span className="mt-1 block truncate text-xs text-gray-500">
-                Last checked: {formatCheckedTime(server.lastCheckedAt)}
-                {server.pingMs !== null ? ` · ${server.pingMs} ms` : ''}
+                {t("Last checked: ")}{formatCheckedTime(server.lastCheckedAt)}
+                {server.pingMs !== null ? t(" · {value0} ms", { value0: server.pingMs }) : ''}
               </span>
             </span>
           </label>
@@ -1710,7 +1715,7 @@ export default function OptimizeAndExportPage() {
       },
     },
     {
-      header: 'Activity',
+      header: t("Activity"),
       width: 150,
       // Phones cannot fit this fixed column beside Status and Actions without collapsing Server.
       className: 'hidden sm:table-cell',
@@ -1718,15 +1723,15 @@ export default function OptimizeAndExportPage() {
         const server = row.kind === 'auto' ? resolvedServer : row.server;
         const status = row.kind === 'auto' ? autoServerStatus : row.server.status;
         if (status === 'offline') {
-          return <span className="text-sm font-normal text-red-600">Not responding</span>;
+          return <span className="text-sm font-normal text-red-600">{t("Not responding")}</span>;
         }
         if (status === 'checking' && !server?.health) {
-          return <span className="text-sm font-normal text-gray-500">Checking...</span>;
+          return <span className="text-sm font-normal text-gray-500">{t("Checking...")}</span>;
         }
         if (!server?.health?.jobs || !server.health.workers) {
           return (
             <span className="text-sm font-normal text-gray-500">
-              {status === 'unchecked' ? 'Not checked' : 'Activity unavailable'}
+              {status === 'unchecked' ? t("Not checked") : t("Activity unavailable")}
             </span>
           );
         }
@@ -1736,17 +1741,16 @@ export default function OptimizeAndExportPage() {
         return (
           <span className="block min-h-10 font-normal">
             <span className="block text-sm text-gray-800">
-              {activeJobs} active · {server.health.jobs.queued} queued
-            </span>
+              {activeJobs}{t(" active · ")}{server.health.jobs.queued}{t(" queued")}</span>
             <span className="mt-0.5 block text-xs text-gray-500">
-              {onlineWorkers} {onlineWorkers === 1 ? 'worker' : 'workers'}
+              {onlineWorkers} {onlineWorkers === 1 ? t("worker") : t("workers")}
             </span>
           </span>
         );
       },
     },
     {
-      header: 'Status',
+      header: t("Status"),
       align: 'center' as const,
       width: 80,
       accessor: (row: BackendTableRow) => {
@@ -1756,12 +1760,12 @@ export default function OptimizeAndExportPage() {
         // text carry the distinction instead of lengthening the server description line.
         const rejected = status === 'unauthorized' && isCredentialRejection(server);
         const statusText = status === 'unauthorized'
-          ? formatCredentialStatus(rejected)
-          : formatServerStatus(status);
-        const hoverText = describeServerStatus(status, server);
+          ? formatCredentialStatus(rejected, t)
+          : formatServerStatus(status, t);
+        const hoverText = describeServerStatus(status, server, t);
         const label = row.kind === 'auto'
-          ? `Auto status: ${statusText}`
-          : `${row.server.endpoint} status: ${statusText}`;
+          ? t("Auto status: {value0}", { value0: statusText })
+          : t("{value0} status: {value1}", { value0: row.server.endpoint, value1: statusText });
         const badgeClasses = rejected
           ? 'bg-red-50 text-red-700 ring-red-200'
           : getServerStatusBadgeClasses(status);
@@ -1791,7 +1795,7 @@ export default function OptimizeAndExportPage() {
       },
     },
     {
-      header: 'Actions',
+      header: t("Actions"),
       align: 'center' as const,
       width: 80,
       accessor: (row: BackendTableRow) => {
@@ -1808,8 +1812,8 @@ export default function OptimizeAndExportPage() {
                 startServerCheck(row.server);
               }}
               disabled={isOptimizing}
-              aria-label={`Check Backend ${row.server.endpoint}`}
-              title="Check backend"
+              aria-label={t("Check Backend {value0}", { value0: row.server.endpoint })}
+              title={t("Check backend")}
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
             >
               <FiRefreshCw className="h-4 w-4" />
@@ -1821,8 +1825,8 @@ export default function OptimizeAndExportPage() {
                 removeServer(row.server.endpoint);
               }}
               disabled={isOptimizing}
-              aria-label={`Remove Backend ${row.server.endpoint}`}
-              title="Remove backend"
+              aria-label={t("Remove Backend {value0}", { value0: row.server.endpoint })}
+              title={t("Remove backend")}
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400"
             >
               <FiTrash2 className="h-4 w-4" />
@@ -1844,7 +1848,7 @@ export default function OptimizeAndExportPage() {
         }}
         onDoubleClick={isOptimizing ? undefined : () => setAddingServer(true)}
         placeholder="https://backend.example.test"
-        emptyText="Double-click to add URL"
+        emptyText={t("Double-click to add URL")}
         className="min-w-0 truncate text-sm font-medium"
         editClassName="w-full max-w-xl border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
         error={addServerError ?? undefined}
@@ -1862,13 +1866,13 @@ export default function OptimizeAndExportPage() {
       : activeServerStatus === 'incompatible' || activeServerStatus === 'degraded' || activeServerStatus === 'unauthorized'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
       : 'border-gray-200 bg-gray-50 text-gray-600';
-  const serverStatusLabel = formatServerStatus(activeServerStatus);
+  const serverStatusLabel = formatServerStatus(activeServerStatus, t);
 
   const runStatus = scheduleStatus
-    ? formatRunStatus(scheduleStatus, currentJob?.queue_position)
+    ? formatRunStatus(scheduleStatus, currentJob?.queue_position, t)
     : isOptimizing
-      ? 'Starting'
-      : 'Idle';
+      ? t("Starting")
+      : t("Idle");
   const runStatusClasses = isOptimizing
     ? 'bg-blue-50 text-blue-700 ring-blue-200'
     : errorMessage
@@ -1882,15 +1886,14 @@ export default function OptimizeAndExportPage() {
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-3">
-            <h1 className="text-3xl font-bold text-gray-900">Optimize and Export</h1>
+            <h1 className="text-3xl font-bold text-gray-900">{t("Optimize and Export")}</h1>
             <PageDocumentationLink
               href={DOCUMENTATION_URLS.optimizeAndExport}
-              label="Optimize and Export"
+              label={t("Optimize and Export")}
             />
           </div>
           <p className="mt-1 text-sm text-gray-600">
-            Send the current Schedule Spec to the backend and download the schedule as XLSX.
-          </p>
+            {t("Send the current Schedule Spec to the backend and download the schedule as XLSX.")}</p>
         </div>
 
         <div className={`inline-flex items-center gap-2.5 rounded-md border px-3 py-2 ${serverStatusClasses}`}>
@@ -1911,10 +1914,10 @@ export default function OptimizeAndExportPage() {
           </span>
           <span>
             <span className="block text-sm font-medium">
-              Server: {serverStatusLabel}
+              {t("Server: ")}{serverStatusLabel}
             </span>
             <span className="mt-0.5 block max-w-72 truncate text-xs opacity-75">
-              {resolvedOptimizeEndpoint || 'No backend'}
+              {resolvedOptimizeEndpoint || t("No backend")}
             </span>
           </span>
         </div>
@@ -1925,28 +1928,22 @@ export default function OptimizeAndExportPage() {
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             {isDateDataMissing ? (
               <>
-                Please set up your dates first by visiting the{' '}
+                {t("Please set up your dates first by visiting the")}{' '}
                 <Link href="/dates" className="text-blue-600 underline hover:text-blue-800">
-                  Dates
-                </Link>{' '}
-                tab.
-              </>
+                  {t("Dates")}</Link>{' '}
+                {t("tab.")}</>
             ) : isPeopleDataMissing ? (
               <>
-                Please set up your people first by visiting the{' '}
+                {t("Please set up your people first by visiting the")}{' '}
                 <Link href="/people" className="text-blue-600 underline hover:text-blue-800">
-                  People
-                </Link>{' '}
-                tab.
-              </>
+                  {t("People")}</Link>{' '}
+                {t("tab.")}</>
             ) : (
               <>
-                Please set up your shift types first by visiting the{' '}
+                {t("Please set up your shift types first by visiting the")}{' '}
                 <Link href="/shift-types" className="text-blue-600 underline hover:text-blue-800">
-                  Shift Types
-                </Link>{' '}
-                tab.
-              </>
+                  {t("Shift Types")}</Link>{' '}
+                {t("tab.")}</>
             )}
           </div>
         </div>
@@ -1955,13 +1952,14 @@ export default function OptimizeAndExportPage() {
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]">
         <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
-            <h2 className="text-base font-semibold text-gray-900">Setup and Run</h2>
-            <p className="mt-0.5 text-sm text-gray-600">Choose a backend, set run options, then optimize.</p>
+            <h2 className="text-base font-semibold text-gray-900">{t("Setup and Run")}</h2>
+            <p className="mt-0.5 text-sm text-gray-600">{t("Choose a backend, set run options, then optimize.")}</p>
           </div>
           <div className="space-y-5 p-5">
             <div className="space-y-3">
               <DataTable
-                title="Backend"
+                tableId="backend"
+                title={t("Backend")}
                 fixedLayout
                 columns={backendTableColumns}
                 data={backendRows}
@@ -1991,7 +1989,7 @@ export default function OptimizeAndExportPage() {
                 ))}
               </datalist>
               {serverEntries.some(server => server.status === 'checking') && (
-                <p className="text-xs text-gray-500">Checking API endpoints...</p>
+                <p className="text-xs text-gray-500">{t("Checking API endpoints...")}</p>
               )}
 
               {(activeServerHealth || activeServerStatus === 'incompatible') && (
@@ -1999,43 +1997,40 @@ export default function OptimizeAndExportPage() {
                   <div className={`rounded-md border px-3 py-2 text-xs ${activeServerStatus === 'incompatible' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
                     {activeServerHealth && (
                       <p>
-                        API version: {activeServerHealth.api_version}
+                        {t("API version: ")}{activeServerHealth.api_version}
                         {activeServerStatus === 'incompatible' && activeServerHealth.api_version !== SUPPORTED_BACKEND_API_VERSION
-                          ? ` (expected ${SUPPORTED_BACKEND_API_VERSION})`
+                          ? t(" (expected {value0})", { value0: SUPPORTED_BACKEND_API_VERSION })
                           : ''}
-                        {' · '}Frontend version: {CURRENT_APP_VERSION} · Backend version: {activeServerHealth.app_version}
+                        {' · '}{t("Frontend version: ")}{CURRENT_APP_VERSION}{t(" · Backend version: ")}{activeServerHealth.app_version}
                       </p>
                     )}
                     {activeClaimedPerformance && (
                       <p className="mt-1">
-                        Claimed performance: {formatScore(activeClaimedPerformance.score)}
+                        {t("Claimed performance: ")}{formatScore(activeClaimedPerformance.score)}
                       </p>
                     )}
                     {activeServerStatus === 'incompatible' ? (
                       selectedServerEndpoint === 'auto' ? (
                         <p className="font-medium">
-                          No compatible backend is available. Select a backend explicitly to continue anyway.
-                        </p>
+                          {t("No compatible backend is available. Select a backend explicitly to continue anyway.")}</p>
                       ) : (
                         <>
-                          {!activeServerHealth && <p>Server information: invalid</p>}
+                          {!activeServerHealth && <p>{t("Server information: invalid")}</p>}
                           {activeServerHealth?.service_name !== EXPECTED_BACKEND_SERVICE_NAME && (
                             <p className="mt-1">
-                              Service: {activeServerHealth?.service_name ?? 'missing'} (expected {EXPECTED_BACKEND_SERVICE_NAME})
+                              {t("Service: ")}{activeServerHealth?.service_name ?? t("missing")}{t(" (expected ")}{EXPECTED_BACKEND_SERVICE_NAME})
                             </p>
                           )}
                           {activeServerHealth?.status !== 'ready' && (
                             <p className="mt-1">
-                              Status: {activeServerHealth?.status ?? 'missing'} (expected ready)
-                            </p>
+                              {t("Status: ")}{activeServerHealth?.status ?? t("missing")}{t(" (expected ready)")}</p>
                           )}
-                          <p className="mt-1 font-medium">Incompatible backend. The request may fail.</p>
+                          <p className="mt-1 font-medium">{t("Incompatible backend. The request may fail.")}</p>
                         </>
                       )
                     ) : hasVersionMismatch && (
                       <p className="mt-1 font-medium text-amber-700">
-                        Frontend and backend versions do not match. If nothing breaks, you can continue.
-                      </p>
+                        {t("Frontend and backend versions do not match. If nothing breaks, you can continue.")}</p>
                     )}
                   </div>
                 </div>
@@ -2044,7 +2039,7 @@ export default function OptimizeAndExportPage() {
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   <div className="flex gap-2">
                     <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>{selectedServer?.error ?? 'Optimization options are unavailable.'}</span>
+                    <span>{t(selectedServer?.error ?? "Optimization options are unavailable.")}</span>
                   </div>
                 </div>
               )}
@@ -2052,7 +2047,7 @@ export default function OptimizeAndExportPage() {
 
             <div className="space-y-3 border-t border-gray-200 pt-5">
               <div>
-                <h3 className="text-sm font-semibold text-gray-900">Run options</h3>
+                <h3 className="text-sm font-semibold text-gray-900">{t("Run options")}</h3>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
@@ -2065,8 +2060,8 @@ export default function OptimizeAndExportPage() {
                     className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                   />
                   <span>
-                    <span className="block text-sm font-medium text-gray-800">Prettify XLSX</span>
-                    <span className="mt-1 block text-xs text-gray-500">Apply formatting to the generated workbook.</span>
+                    <span className="block text-sm font-medium text-gray-800">{t("Prettify XLSX")}</span>
+                    <span className="mt-1 block text-xs text-gray-500">{t("Apply formatting to the generated workbook.")}</span>
                   </span>
                 </label>
 
@@ -2078,15 +2073,14 @@ export default function OptimizeAndExportPage() {
                     className="mt-1 h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                   />
                   <span>
-                    <span className="block text-sm font-medium text-gray-800">Anonymize Schedule Spec</span>
-                    <span className="mt-1 block text-xs text-gray-500">Anonymize people IDs and remove descriptions before sending to the backend.</span>
+                    <span className="block text-sm font-medium text-gray-800">{t("Anonymize Schedule Spec")}</span>
+                    <span className="mt-1 block text-xs text-gray-500">{t("Anonymize people IDs and remove descriptions before sending to the backend.")}</span>
                   </span>
                 </label>
 
                 <div>
                   <label htmlFor="solver-select" className="block text-sm font-medium text-gray-700 mb-2">
-                    Solver
-                  </label>
+                    {t("Solver")}</label>
                   <select
                     id="solver-select"
                     value={activeOptimizationOptions ? solverArg : ''}
@@ -2110,7 +2104,7 @@ export default function OptimizeAndExportPage() {
                     disabled={!activeOptimizationOptions}
                     className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:cursor-not-allowed disabled:bg-gray-100"
                   >
-                    {!activeOptimizationOptions && <option value="">Waiting for backend options</option>}
+                    {!activeOptimizationOptions && <option value="">{t("Waiting for backend options")}</option>}
                     {activeOptimizationOptions?.solver.choices.map(choice => (
                       <option key={choice.value} value={choice.value}>
                         {choice.label} ({choice.compute.toUpperCase()})
@@ -2119,18 +2113,17 @@ export default function OptimizeAndExportPage() {
                   </select>
                   {selectedSolverChoice && (
                     <p className="mt-2 text-xs text-gray-500">
-                      Running controls: {[
-                        selectedSolverChoice.controls.cancel_running ? 'Cancel' : null,
-                        selectedSolverChoice.controls.finish_now ? 'Finish now' : null,
-                      ].filter(Boolean).join(', ') || 'None'}
+                      {t("Running controls: ")}{[
+                        selectedSolverChoice.controls.cancel_running ? t("Cancel") : null,
+                        selectedSolverChoice.controls.finish_now ? t("Finish now") : null,
+                      ].filter(Boolean).join(', ') || t("None")}
                     </p>
                   )}
                 </div>
 
                 <div>
                   <label htmlFor="solver-timeout" className="block text-sm font-medium text-gray-700 mb-2">
-                    Solver Timeout
-                  </label>
+                    {t("Solver Timeout")}</label>
                   <div className="flex items-center gap-2">
                     <NumberInput
                       id="solver-timeout"
@@ -2150,12 +2143,12 @@ export default function OptimizeAndExportPage() {
                       }`}
                       placeholder={selectedSolverChoice ? String(selectedSolverChoice.timeout.default) : ''}
                     />
-                    <span className="text-sm text-gray-500">sec</span>
+                    <span className="text-sm text-gray-500">{t("sec")}</span>
                   </div>
                   {timeoutError && (
                     <p className="mt-2 text-sm text-red-600 flex items-center gap-1">
                       <FiAlertCircle className="h-4 w-4" />
-                      {timeoutError}
+                      {t(timeoutError.key, timeoutError.values)}
                     </p>
                   )}
                 </div>
@@ -2175,12 +2168,11 @@ export default function OptimizeAndExportPage() {
                 {isOptimizing ? (
                   <>
                     <FiLoader className="h-5 w-5 animate-spin" />
-                    Optimizing...
-                  </>
+                    {t("Optimizing...")}</>
                 ) : (
                   <>
                     <FiDownload className="h-5 w-5" />
-                    {isExplicitlySelectedIncompatibleServer ? 'Optimize Anyway and Download' : 'Optimize and Download'}
+                    {isExplicitlySelectedIncompatibleServer ? t("Optimize Anyway and Download") : t("Optimize and Download")}
                   </>
                 )}
               </button>
@@ -2188,21 +2180,19 @@ export default function OptimizeAndExportPage() {
                 <p className="mt-2 text-sm text-amber-700">{optimizeDisabledReason}</p>
               )}
               <p className="mt-2 text-xs text-gray-500">
-                Submitting sends Schedule Spec to the selected backend.{' '}
+                {t("Submitting sends Schedule Spec to the selected backend.")}{' '}
                 <a
                   href={GITHUB_PRIVACY_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-600 underline hover:text-blue-800"
                 >
-                  Privacy Policy
-                </a>.
+                  {t("Privacy Policy")}</a>.
               </p>
               {resolvedOptimizeEndpoint
                 && !isOfficialBackendEndpoint(resolvedOptimizeEndpoint) && (
                 <p className="mt-1 text-xs text-amber-700">
-                  This server is unofficially hosted. Privacy and data retention practices may vary.
-                </p>
+                  {t("This server is unofficially hosted. Privacy and data retention practices may vary.")}</p>
               )}
             </div>
           </div>
@@ -2210,19 +2200,19 @@ export default function OptimizeAndExportPage() {
 
         <section className="rounded-lg border border-gray-200 bg-white">
           <div className="border-b border-gray-200 px-5 py-4">
-            <h2 className="text-base font-semibold text-gray-900">Live Result</h2>
-            <p className="mt-0.5 text-sm text-gray-600">Current job, incumbent score, and downloadable file.</p>
+            <h2 className="text-base font-semibold text-gray-900">{t("Live Result")}</h2>
+            <p className="mt-0.5 text-sm text-gray-600">{t("Current job, incumbent score, and downloadable file.")}</p>
           </div>
           <div className="space-y-4 p-5">
             <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-xs font-medium uppercase text-gray-500">
-                  {isOptimizing ? 'Live Incumbent Score' : scheduleScore !== null ? 'Final Score' : 'Score'}
+                  {isOptimizing ? t("Live Incumbent Score") : scheduleScore !== null ? t("Final Score") : t("Score")}
                 </p>
                 <p className="mt-1 text-4xl font-bold text-gray-900">
-                  {scheduleScore !== null ? formatScore(scheduleScore) : 'No incumbent yet'}
+                  {scheduleScore !== null ? formatScore(scheduleScore) : t("No incumbent yet")}
                 </p>
-                <p className="mt-1 text-xs text-gray-500">Higher scores are better.</p>
+                <p className="mt-1 text-xs text-gray-500">{t("Higher scores are better.")}</p>
               </div>
               <span className={`inline-flex w-fit items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold ring-1 ${runStatusClasses}`}>
                 {isOptimizing ? <FiLoader className="h-4 w-4 animate-spin" /> : successMessage ? <FiCheckCircle className="h-4 w-4" /> : errorMessage ? <FiAlertCircle className="h-4 w-4" /> : <FiActivity className="h-4 w-4" />}
@@ -2232,28 +2222,28 @@ export default function OptimizeAndExportPage() {
 
             <div className="text-sm text-gray-600">
               {!currentJobId ? (
-                <p>No optimization has been started.</p>
+                <p>{t("No optimization has been started.")}</p>
               ) : isOptimizing && scheduleStatus === 'queued' ? (
                 <p>
                   {currentJob?.queue_position
-                    ? `Waiting in optimization queue at position ${currentJob.queue_position}.`
-                    : 'Waiting in optimization queue.'}
+                    ? t("Waiting in optimization queue at position {value0}.", { value0: currentJob.queue_position })
+                    : t("Waiting in optimization queue.")}
                 </p>
               ) : isOptimizing && !incumbentResult ? (
-                <p>Waiting for first feasible solution...</p>
+                <p>{t("Waiting for first feasible solution...")}</p>
               ) : incumbentResult ? (
                 <p>
-                  {incumbentResult.solutionIndex !== undefined && incumbentResult.solutionIndex !== null ? `Solution #${incumbentResult.solutionIndex}` : 'Incumbent'}
+                  {incumbentResult.solutionIndex !== undefined && incumbentResult.solutionIndex !== null ? t("Solution #{value0}", { value0: incumbentResult.solutionIndex }) : t("Incumbent")}
                   {' · '}
-                  {incumbentResult.elapsedSeconds !== undefined ? formatElapsedSeconds(incumbentResult.elapsedSeconds) : 'time unavailable'}
+                  {incumbentResult.elapsedSeconds !== undefined ? formatElapsedSeconds(incumbentResult.elapsedSeconds) : t("time unavailable")}
                   {' · '}
-                  {incumbentResult.commentCount !== undefined && incumbentResult.commentCount !== null ? `${incumbentResult.commentCount} comments` : 'comments unavailable'}
+                  {incumbentResult.commentCount !== undefined && incumbentResult.commentCount !== null ? t("{value0} comments", { value0: incumbentResult.commentCount }) : t("comments unavailable")}
                   {incumbentResult.source ? ` · ${incumbentResult.source}` : ''}
                 </p>
               ) : (
-                <p>Job {currentJobId}</p>
+                <p>{t("Job ")}{currentJobId}</p>
               )}
-              {currentJobId && <p className="mt-1 break-all text-xs text-gray-400">Job ID: {currentJobId}</p>}
+              {currentJobId && <p className="mt-1 break-all text-xs text-gray-400">{t("Job ID: ")}{currentJobId}</p>}
             </div>
 
             {progressPoints.length >= 2 && (
@@ -2269,8 +2259,7 @@ export default function OptimizeAndExportPage() {
                     className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-green-300 bg-white px-3 py-2 text-sm font-medium text-green-700 transition-colors hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
                   >
                     <FiDownload className="h-4 w-4" />
-                    Download Again
-                    <span className="truncate text-xs font-normal text-green-600">{savedDownload.filename}</span>
+                    {t("Download Again")}<span className="truncate text-xs font-normal text-green-600">{savedDownload.filename}</span>
                   </button>
                 )}
 
@@ -2280,21 +2269,20 @@ export default function OptimizeAndExportPage() {
                       type="button"
                       onClick={() => void requestJobControl('finish-now')}
                       disabled={!currentJob?.controls.early_completion_available || isCancelling}
-                      title="Finish with the current incumbent result"
+                      title={t("Finish with the current incumbent result")}
                       className="inline-flex flex-1 items-center justify-center gap-2 rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
                     >
                       <FiDownload className="h-4 w-4" />
-                      Get Results Now
-                    </button>
+                      {t("Get Results Now")}</button>
                     <button
                       type="button"
                       onClick={() => void requestJobControl('cancel')}
                       disabled={!currentJob?.controls.cancellable || isCancelling}
-                      title="Stop the active optimization job"
+                      title={t("Stop the active optimization job")}
                       className="inline-flex items-center justify-center gap-2 rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400"
                     >
                       <FiAlertCircle className="h-4 w-4" />
-                      {isCancelling ? 'Cancelling...' : 'Cancel'}
+                      {isCancelling ? t("Cancelling...") : t("Cancel")}
                     </button>
                   </>
                 )}
@@ -2305,7 +2293,7 @@ export default function OptimizeAndExportPage() {
               <div className="space-y-2">
                 <div className="flex gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
                   <FiCheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{successMessage}</span>
+                  <span>{t(successMessage)}</span>
                 </div>
                 {completedFeedback && (
                   <OptimizationFeedbackNudge
@@ -2325,7 +2313,7 @@ export default function OptimizeAndExportPage() {
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
                 <div className="flex gap-2">
                   <FiAlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>{errorMessage}</p>
+                  <p>{t(errorMessage.key, errorMessage.values)}</p>
                 </div>
               </div>
             )}
@@ -2336,13 +2324,13 @@ export default function OptimizeAndExportPage() {
       <details open={isOptimizing || Boolean(errorMessage) || !successMessage} className="rounded-lg border border-gray-200 bg-white">
         <summary className="flex cursor-pointer list-none items-center gap-2 border-b border-gray-200 px-5 py-4">
           <FiActivity className="h-4 w-4 text-gray-500" />
-          <h2 className="text-base font-semibold text-gray-900">Optimization Events</h2>
-          <span className="ml-auto text-xs text-gray-500">{sseEvents.length} events</span>
+          <h2 className="text-base font-semibold text-gray-900">{t("Optimization Events")}</h2>
+          <span className="ml-auto text-xs text-gray-500">{sseEvents.length}{t(" events")}</span>
         </summary>
         <div ref={eventLogRef} data-testid="optimization-events-log" className="max-h-[28rem] overflow-auto bg-gray-50">
           {sseEvents.length === 0 ? (
             <div className="px-5 py-6 text-sm text-gray-500">
-              <p>{isOptimizing ? 'Waiting for optimization events...' : 'No optimization events yet.'}</p>
+              <p>{isOptimizing ? t("Waiting for optimization events...") : t("No optimization events yet.")}</p>
             </div>
           ) : (
             <ul className="space-y-0 p-5">
@@ -2355,13 +2343,13 @@ export default function OptimizeAndExportPage() {
                   </div>
                   <div className="min-w-0 rounded-md border border-gray-200 bg-white p-3 text-xs text-gray-700">
                     {isProgressEventData(event.data) && (
-                      <p className="font-semibold text-gray-900">{formatProgressSummary(event.data)}</p>
+                      <p className="font-semibold text-gray-900">{formatProgressSummary(event.data, t)}</p>
                     )}
                     {event.type === 'job.phase_changed' && isPhaseEventData(event.data) && event.data.message && (
                       <p className="font-semibold text-gray-900">{event.data.message}</p>
                     )}
                     <details className={isProgressEventData(event.data) || event.type === 'job.phase_changed' ? 'mt-2' : ''}>
-                      <summary className="cursor-pointer text-gray-500">Raw event data</summary>
+                      <summary className="cursor-pointer text-gray-500">{t("Raw event data")}</summary>
                       <pre className="mt-2 whitespace-pre-wrap break-words">{formatSseEventData(event.data)}</pre>
                     </details>
                   </div>

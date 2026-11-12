@@ -43,7 +43,7 @@ test('canceling export layout style edits restores persisted rule values on reop
 
   await page.goto('/export-layout');
   await page.getByRole('button', { name: 'Add Export Rule' }).click();
-  await page.locator('select').nth(1).selectOption('cell');
+  await page.getByRole('main').locator('select').nth(1).selectOption('cell');
   await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();

@@ -20,6 +20,7 @@
 // The shift type successions management page for Tab "6. Shift Type Successions"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { FiAlertCircle } from 'react-icons/fi';
@@ -47,6 +48,7 @@ interface ShiftTypeSuccessionForm {
 }
 
 export default function ShiftTypeSuccessionsPage() {
+  const { t } = useI18n();
   const {
     getPreferencesByType,
     updatePreferencesByType,
@@ -123,19 +125,19 @@ export default function ShiftTypeSuccessionsPage() {
     const newErrors: {[key: string]: string} = {};
 
     if (formData.person.length === 0) {
-      newErrors.person = 'At least one person must be selected';
+      newErrors.person = t("At least one person must be selected");
     }
 
     if (formData.pattern.length < 2) {
-      newErrors.pattern = 'At least 2 shift types must be selected for a succession pattern';
+      newErrors.pattern = t("At least 2 shift types must be selected for a succession pattern");
     }
 
     if (formData.date.length === 0) {
-      newErrors.date = 'At least one date must be selected';
+      newErrors.date = t("At least one date must be selected");
     }
 
     if (!isValidWeightValue(formData.weight)) {
-      newErrors.weight = 'Weight must be a valid number, Infinity, or -Infinity';
+      newErrors.weight = t("Weight must be a valid number, Infinity, or -Infinity");
     }
 
     setErrors(newErrors);
@@ -319,15 +321,15 @@ export default function ShiftTypeSuccessionsPage() {
     <div className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="text-3xl font-bold text-gray-800">Shift Type Successions</h1>
+          <h1 className="text-3xl font-bold text-gray-800">{t("Shift Type Successions")}</h1>
           <PageDocumentationLink
             href={DOCUMENTATION_URLS.shiftTypeSuccessions}
-            label="Shift Type Successions"
+            label={t("Shift Type Successions")}
           />
         </div>
         <div className="flex flex-wrap gap-3 sm:gap-4">
           <ToggleButton
-            label="Add Succession"
+            label={t("Add Succession")}
             isToggled={isFormVisible}
             onToggle={() => {
               if (isFormVisible) {
@@ -345,37 +347,33 @@ export default function ShiftTypeSuccessionsPage() {
         <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
           <div className="px-6 py-4">
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
-              {editingIndex !== null ? 'Edit Succession' : 'Add New Succession'}
+              {editingIndex !== null ? t("Edit Succession") : t("Add New Succession")}
             </h2>
 
             <div className="space-y-6">
               {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Description (optional)
-                </label>
+                  {t("Description (optional)")}</label>
                 <input
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                   className="block w-full px-4 py-2 text-sm text-gray-900 bg-white border border-gray-300 rounded-lg shadow-sm transition-colors duration-200 ease-in-out focus:border-blue-500 focus:ring-blue-200 placeholder-gray-400 focus:outline-none focus:ring-2 hover:border-gray-400"
-                  placeholder="e.g., Forbid Evening -> Day succession"
+                  placeholder={t("e.g., Forbid Evening -> Day succession")}
                 />
               </div>
 
               {/* People */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  People *
-                </label>
+                  {t("People *")}</label>
                 {peopleData.items.length === 0 && peopleData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No people available. Please set up people in the{' '}
+                    {t("No people available. Please set up people in the")}{' '}
                     <Link href="/people" className="text-blue-600 hover:text-blue-800 underline">
-                      People
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("People")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <CheckboxList
                     items={[
@@ -404,16 +402,13 @@ export default function ShiftTypeSuccessionsPage() {
               {/* Shift Type Pattern */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Shift Type Pattern * (click to add shift types)
-                </label>
+                  {t("Shift Type Pattern * (click to add shift types)")}</label>
                 {shiftTypeData.items.length === 0 && shiftTypeData.groups.length === 0 ? (
                   <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                    No shift types available. Please set up shift types in the{' '}
+                    {t("No shift types available. Please set up shift types in the")}{' '}
                     <Link href="/shift-types" className="text-blue-600 hover:text-blue-800 underline">
-                      Shift Types
-                    </Link>{' '}
-                    tab first.
-                  </div>
+                      {t("Shift Types")}</Link>{' '}
+                    {t("tab first.")}</div>
                 ) : (
                   <div>
                     {/* Available Shift Types as Buttons */}
@@ -437,8 +432,7 @@ export default function ShiftTypeSuccessionsPage() {
                     {formData.pattern.length > 0 && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Pattern Order: (drag to reorder)
-                        </label>
+                          {t("Pattern Order: (drag to reorder)")}</label>
                         <div className="flex flex-wrap items-center">
                           {/* Gap before first element */}
                           <div
@@ -479,7 +473,7 @@ export default function ShiftTypeSuccessionsPage() {
                                 />
 
                                 <ReorderButtons
-                                  label={`${shiftTypeId} at position ${index + 1}`}
+                                  label={t("{value0} at position {value1}", { value0: shiftTypeId, value1: index + 1 })}
                                   horizontal
                                   canMoveUp={index > 0}
                                   canMoveDown={index < formData.pattern.length - 1}
@@ -521,17 +515,14 @@ export default function ShiftTypeSuccessionsPage() {
               {/* Dates */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Dates *
-                </label>
+                  {t("Dates *")}</label>
                 <div className={CHECKBOX_LIST_SCROLL_CLASS_NAME}>
                   {dateData.items.length === 0 && dateData.groups.length === 0 ? (
                     <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-                      No dates available. Please set up dates in the{' '}
+                      {t("No dates available. Please set up dates in the")}{' '}
                       <Link href="/dates" className="text-blue-600 hover:text-blue-800 underline">
-                        Dates
-                      </Link>{' '}
-                      tab first.
-                    </div>
+                        {t("Dates")}</Link>{' '}
+                      {t("tab first.")}</div>
                   ) : (
                     <CheckboxList
                       items={[
@@ -566,7 +557,7 @@ export default function ShiftTypeSuccessionsPage() {
                   setFormData(prev => ({ ...prev, weight: value }));
                 }}
                 error={errors.weight}
-                placeholder="e.g., -1, -10, ∞"
+                placeholder={t("e.g., -1, -10, ∞")}
               />
 
               {/* Action Buttons */}
@@ -577,13 +568,12 @@ export default function ShiftTypeSuccessionsPage() {
                     onClick={handleCancel}
                     className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                   >
-                    Cancel
-                  </button>
+                    {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
                     className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    {editingIndex !== null ? 'Update' : 'Add'}
+                    {editingIndex !== null ? t("Update") : t("Add")}
                   </button>
                 </div>
               </div>
@@ -594,9 +584,9 @@ export default function ShiftTypeSuccessionsPage() {
 
       {/* Successions List */}
       <DraggableCardList
-        title="Current Successions"
+        title={t("Current Successions")}
         items={shiftTypeSuccessions}
-        emptyMessage='No successions defined yet. Click "Add Succession" to get started.'
+        emptyMessage={t("No successions defined yet. Click \"Add Succession\" to get started.")}
         onEdit={handleStartEdit}
         onDuplicate={handleDuplicate}
         onDelete={handleDelete}
@@ -608,11 +598,11 @@ export default function ShiftTypeSuccessionsPage() {
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 text-sm text-gray-600">
               <div className="md:col-span-2 lg:col-span-3">
-                <span className="font-medium">People:</span>{' '}
+                <span className="font-medium">{t("People:")}</span>{' '}
                 {succession.person.join(', ')}
               </div>
               <div className="md:col-span-2 lg:col-span-3">
-                <span className="font-medium">Pattern:</span>{' '}
+                <span className="font-medium">{t("Pattern:")}</span>{' '}
                 <span className="inline-flex items-center">
                   {succession.pattern.map((shiftTypeId, idx) => {
                     const shiftType = [...shiftTypeData.items, ...shiftTypeData.groups]
@@ -634,11 +624,11 @@ export default function ShiftTypeSuccessionsPage() {
                 </span>
               </div>
               <div>
-                <span className="font-medium">Weight:</span> {getWeightWithPositivePrefix(succession.weight)}
+                <span className="font-medium">{t("Weight:")}</span> {getWeightWithPositivePrefix(succession.weight)}
               </div>
               {succession.date && succession.date.length > 0 && (
                 <div className="md:col-span-2 lg:col-span-3">
-                  <span className="font-medium">Dates:</span>{' '}
+                  <span className="font-medium">{t("Dates:")}</span>{' '}
                   {succession.date.join(', ')}
                 </div>
               )}

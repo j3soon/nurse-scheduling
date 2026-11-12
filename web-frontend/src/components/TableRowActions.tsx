@@ -18,6 +18,9 @@
  */
 
 // A component for the edit, duplicate, and delete actions of a table row.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
 
 interface TableRowActionsProps {
@@ -27,6 +30,7 @@ interface TableRowActionsProps {
 }
 
 export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActionsProps) {
+  const { t } = useI18n();
   if (!onEdit && !onDuplicate && !onDelete) {
     return null;
   }
@@ -40,8 +44,8 @@ export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActio
       {onEdit && (
         <button
           type="button"
-          aria-label="Edit"
-          title="Edit"
+          aria-label={t("Edit")}
+          title={t("Edit")}
           onClick={onEdit}
           className={editClassName}
         >
@@ -51,8 +55,8 @@ export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActio
       {onDuplicate && (
         <button
           type="button"
-          aria-label="Duplicate"
-          title="Duplicate"
+          aria-label={t("Duplicate")}
+          title={t("Duplicate")}
           onClick={onDuplicate}
           className={duplicateClassName}
         >
@@ -62,8 +66,8 @@ export function TableRowActions({ onEdit, onDuplicate, onDelete }: TableRowActio
       {onDelete && (
         <button
           type="button"
-          aria-label="Delete"
-          title="Delete"
+          aria-label={t("Delete")}
+          title={t("Delete")}
           onClick={onDelete}
           className={deleteClassName}
         >

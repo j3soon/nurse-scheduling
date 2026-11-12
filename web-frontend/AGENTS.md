@@ -57,9 +57,12 @@ Assert the failed operation and path as well as output preservation.
 Give synchronous child processes in tests a timeout shorter than the test timeout.
 The test runner cannot interrupt a blocked synchronous call.
 
-Use Playwright locator actions for form controls. Before interacting with
-statically rendered controls, wait for an observable result of client
+Scope form locators to their page or dialog so global navigation controls do not
+change the selected field. Use Playwright locator actions for form controls.
+Before interacting with statically rendered controls, wait for an observable result of client
 initialization, such as loaded backend options enabling Optimize.
+Keep independent page checks in separate Playwright tests so each page has its
+own timeout and failure report.
 
 For exact elapsed-time assertions, install the Playwright clock before navigation
 at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
@@ -289,6 +292,20 @@ To test specific source files from the repository root, run:
 ```sh
 ./scripts/test_frontend_affected.sh web-frontend/src/path/to/file.ts
 ```
+
+## Localization
+
+Use `useI18n()` for interface messages and locale formatting. Add English messages
+in `src/i18n/en.ts` and preserve named placeholders in each translation. Translate
+constant display labels where they render. Keep DOM and test IDs independent of
+translated labels. Keep identifiers, saved Schedule Spec
+values, backend protocols, user content, XLSX labels, and chat exports unchanged.
+Pass a translator to shared presentation helpers. Their default stays English for
+exports and other callers. Changing language must preserve mounted component state.
+Translate network errors when they render. A display language change must not
+restart requests or invalidate pending saves. Localize third-party UI options too.
+Keep feedback forms attached during rerenders so streaming and language changes
+do not discard a feedback draft.
 
 ## TypeScript And React Style
 - Mark a file written entirely by an AI coding agent immediately after the license

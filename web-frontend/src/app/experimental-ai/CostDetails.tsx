@@ -19,32 +19,36 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { formatSeconds, formatSpeed, formatUsd, turnDetailsLabel, turnMeasurementLines, type CostSummary, type ProviderCallCost } from './costs';
 
 export function CostDetails({ summary, calls, running }: {
   summary: CostSummary; calls: ProviderCallCost[]; running: boolean;
 }) {
+  const { t } = useI18n();
   const knownPending = calls.filter(call => call.status === 'pending' && call.costUsd !== null).length;
   const displayed = running ? summary : { ...summary, pending: 0,
     unavailable: summary.unavailable + Math.max(0, summary.pending - knownPending) };
   return <details className="cost-details">
-    <summary className="cost-summary">{turnDetailsLabel(displayed)}</summary>
-    <div className="turn-metrics">{turnMeasurementLines(displayed).map(line => <div key={line}>{line}</div>)}</div>
-    <ul className="cost-calls" aria-label="Provider calls">
+    <summary className="cost-summary">{turnDetailsLabel(displayed, t)}</summary>
+    <div className="turn-metrics">{turnMeasurementLines(displayed, t).map(line => <div key={line}>{line}</div>)}</div>
+    <ul className="cost-calls" aria-label={t("Provider calls")}>
       {calls.map((call, index) => <li key={call.callId} className="cost-call">
         <div>{index + 1}. {call.model} · {call.reasoning} · {call.costUsd !== null
-          ? formatUsd(call.costUsd) : call.status === 'pending' && running ? 'Cost pending' : 'Cost unavailable'}</div>
-        {call.responseModel && call.responseModel !== call.model && <div>Reported model: {call.responseModel}</div>}
+          ? formatUsd(call.costUsd) : call.status === 'pending' && running ? t("Cost pending") : t("Cost unavailable")}</div>
+        {call.responseModel && call.responseModel !== call.model && <div>{t("Reported model: ")}{call.responseModel}</div>}
         {call.usage && <div>
-          Input: {call.usage.prompt_tokens.toLocaleString()} · Output: {call.usage.completion_tokens.toLocaleString()}
-          {call.usage.cached_prompt_tokens != null && <> · Cached input: {call.usage.cached_prompt_tokens.toLocaleString()}</>}
-          {!!call.usage.reasoning_tokens && <> · Reasoning (included in output): {call.usage.reasoning_tokens.toLocaleString()}</>}
+          {t("Input: ")}{call.usage.prompt_tokens.toLocaleString()}{t(" · Output: ")}{call.usage.completion_tokens.toLocaleString()}
+          {call.usage.cached_prompt_tokens != null && <>{t(" · Cached input: ")}{call.usage.cached_prompt_tokens.toLocaleString()}</>}
+          {!!call.usage.reasoning_tokens && <>{t(" · Reasoning (included in output): ")}{call.usage.reasoning_tokens.toLocaleString()}</>}
         </div>}
-        <div>Provider streaming speed: {formatSpeed(call.usage?.completion_tokens, call.streamingSeconds)}
-          {call.streamingSeconds != null && <> · Streaming: {formatSeconds(call.streamingSeconds)}</>}
-          {call.timeToFirstOutputSeconds != null && <> · Time to first output: {formatSeconds(call.timeToFirstOutputSeconds)}</>}
+        <div>{t("Provider streaming speed: ")}{formatSpeed(call.usage?.completion_tokens, call.streamingSeconds, t)}
+          {call.streamingSeconds != null && <>{t(" · Streaming: ")}{formatSeconds(call.streamingSeconds)}</>}
+          {call.timeToFirstOutputSeconds != null && <>{t(" · Time to first output: ")}{formatSeconds(call.timeToFirstOutputSeconds)}</>}
         </div>
-        <div className="cost-call-id">Call: {call.providerCallId ?? call.callId}</div>
+        <div className="cost-call-id">{t("Call: ")}{call.providerCallId ?? call.callId}</div>
       </li>)}
     </ul>
   </details>;

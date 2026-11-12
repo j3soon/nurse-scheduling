@@ -56,7 +56,7 @@ test('export formatting rules can be added, edited, and deleted through the page
   await expect(page.getByText('No style rules defined yet. Click "Add Export Rule" to get started.')).toBeVisible();
 
   await page.getByRole('button', { name: 'Add Export Rule' }).click();
-  await page.locator('select').nth(1).selectOption('cell');
+  await page.getByRole('main').locator('select').nth(1).selectOption('cell');
   await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByRole('checkbox', { name: 'D', exact: true }).check();

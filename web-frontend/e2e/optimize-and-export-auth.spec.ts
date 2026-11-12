@@ -235,3 +235,23 @@ test('optimize and export stays unchanged against a backend without authenticati
   await page.getByRole('button', { name: 'Optimize and Download' }).click();
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
 });
+
+test('keeps backend authentication when language changes in another tab', async ({ page, context }) => {
+  await disableModalDialogs(page);
+  await seedMinimalSchedule(page);
+  await mockOptimizeAndExport(page, { requiredAuthToken: BACKEND_TOKEN });
+  await page.goto('/optimize-and-export');
+  await expect(page.getByText('Server: Credentials required')).toBeVisible();
+  await page.getByRole('button', { name: `Enter token for ${BACKEND_URL}` }).click();
+  await page.getByLabel(`Token for ${BACKEND_URL}`, { exact: true }).fill(BACKEND_TOKEN);
+  await page.getByRole('button', { name: `Save token for ${BACKEND_URL}` }).click();
+  await expect(page.getByText('Server: Online')).toBeVisible();
+  const settings = await context.newPage();
+  await settings.goto('/');
+  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+  await expect(page.getByRole('heading', { name: '最佳化與匯出', exact: true })).toBeVisible();
+  await settings.close();
+  await expect(page.getByRole('button', { name: '最佳化並下載', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '最佳化並下載', exact: true }).click();
+  await expect(page.getByText('班表已成功完成最佳化並下載！', { exact: true })).toBeVisible();
+});

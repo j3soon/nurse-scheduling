@@ -30,6 +30,7 @@ import { CSSProperties, useCallback, useEffect, useId, useRef } from 'react';
 
 interface CheckboxItem {
   id: string;
+  label?: string;
   description?: string;
 }
 
@@ -168,7 +169,7 @@ export function CheckboxList({
               onChange={inputType === 'radio' ? () => handleToggle(item.id) : () => {}} // Keep native checkbox changes disabled so gesture logic stays fully in mouse handlers.
               className={resolvedInputClassName}
             />
-            <span className={textClassName}>{item.id}</span>
+            <span className={textClassName}>{item.label ?? item.id}</span>
           </label>
         ))}
       </div>

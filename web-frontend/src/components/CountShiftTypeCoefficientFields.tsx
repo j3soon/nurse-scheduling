@@ -17,6 +17,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import NumberInput from '@/components/NumberInput';
 import { OrderedEntry, sortIdsByEntryOrder } from '@/utils/entityOrdering';
 import { Group, Item } from '@/types/scheduling';
@@ -43,18 +46,18 @@ export function CountShiftTypeCoefficientFields({
   shiftTypeEntries,
   shiftTypeData,
   errorsById = {},
-  label = 'Count Shift Type',
+  label = "Count Shift Type",
   onChange,
 }: CountShiftTypeCoefficientFieldsProps) {
-  const singularLabel = label.toLowerCase();
-  const emptyHint = `Coefficients are not needed when no ${singularLabel} is selected.`;
+  const { t } = useI18n();
+  const singularLabel = t(label).toLowerCase();
+  const emptyHint = t("Coefficients are not needed when no {value0} is selected.", { value0: singularLabel });
   const coefficientShiftTypeIds = getCoefficientShiftTypeIds(selectedShiftTypeIds, shiftTypeData);
 
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">
-        {label} Coefficients
-      </label>
+        {t(label)}{t(" Coefficients")}</label>
 
       <div className="flex flex-wrap items-end">
         {coefficientShiftTypeIds.length < 1 ? (

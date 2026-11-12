@@ -197,7 +197,7 @@ interface AiChatOptions {
   serverStatus: string;
   retainsUploads: boolean;
   backendVersion?: string;
-  setError: Dispatch<SetStateAction<string | null>>;
+  setError: (error: string | null) => void;
   reportRequestError: (error: unknown, fallback: string) => void;
   onSendStart: (kind: 'send' | 'retry' | 'queue') => void;
   onReset: () => void;

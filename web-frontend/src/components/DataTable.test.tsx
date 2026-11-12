@@ -287,3 +287,11 @@ describe('DataTable', () => {
   });
 
 });
+
+it('keeps the table identity when its display language changes', () => {
+  const props = { tableId: 'people', columns: [], data: [] };
+  const { rerender } = render(<DataTable {...props} title="People" />);
+  const table = screen.getByTestId('data-table-people');
+  rerender(<DataTable {...props} title="人員" />);
+  expect(screen.getByTestId('data-table-people')).toBe(table);
+});

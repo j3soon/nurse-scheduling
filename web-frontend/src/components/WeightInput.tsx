@@ -17,6 +17,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import React from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { parseWeightValue } from '@/utils/numberParsing';
@@ -38,6 +41,7 @@ export default function WeightInput({
   label = "Weight (priority)",
   compact = false
 }: WeightInputProps) {
+  const { t } = useI18n();
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onChange(parseWeightValue(e.target.value));
   };
@@ -72,7 +76,7 @@ export default function WeightInput({
     <div>
       {!compact && label && (
         <label className="block text-sm font-medium text-gray-700 mb-2">
-          {label}
+          {t(label)}
         </label>
       )}
       <div className={containerClassName}>
@@ -81,14 +85,14 @@ export default function WeightInput({
           value={value}
           onChange={handleInputChange}
           className={inputClassName}
-          placeholder={placeholder}
+          placeholder={t(placeholder)}
         />
         <div className={buttonsContainerClassName}>
           <button
             type="button"
             onClick={() => handleSetInfinity(true)}
             className={`${buttonClassName} bg-green-100 text-green-700 hover:bg-green-200 border border-green-300 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-green-200`}
-            title="Set to positive infinity (∞)"
+            title={t("Set to positive infinity (∞)")}
           >
             +∞
           </button>
@@ -96,7 +100,7 @@ export default function WeightInput({
             type="button"
             onClick={() => handleSetInfinity(false)}
             className={`${buttonClassName} bg-red-100 text-red-700 hover:bg-red-200 border border-red-300 rounded transition-colors focus:outline-none focus:ring-2 focus:ring-red-200`}
-            title="Set to negative infinity (-∞)"
+            title={t("Set to negative infinity (-∞)")}
           >
             -∞
           </button>

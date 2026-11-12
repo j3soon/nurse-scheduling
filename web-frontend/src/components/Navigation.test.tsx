@@ -299,6 +299,21 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it('keeps picker keys away from document-level form shortcuts', () => {
+    const pageShortcut = vi.fn();
+    document.addEventListener('keydown', pageShortcut);
+    try {
+      renderNavigation();
+      const select = screen.getByRole('combobox', { name: 'Change language' });
+      select.focus();
+      fireEvent.keyDown(select, { key: 'Enter' });
+      fireEvent.keyDown(select, { key: 'Escape' });
+      expect(pageShortcut).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('keydown', pageShortcut);
+    }
+  });
+
   it('ignores shortcuts while textarea, select, or contenteditable elements are focused', () => {
     renderNavigation();
 
@@ -309,12 +324,10 @@ describe('Navigation', () => {
     textarea.blur();
     textarea.remove();
 
-    const select = document.createElement('select');
-    document.body.appendChild(select);
+    const select = screen.getByRole('combobox', { name: 'Change language' });
     select.focus();
     fireEvent.keyDown(document, { key: '5' });
     select.blur();
-    select.remove();
 
     const editable = document.createElement('div');
     editable.setAttribute('contenteditable', 'true');

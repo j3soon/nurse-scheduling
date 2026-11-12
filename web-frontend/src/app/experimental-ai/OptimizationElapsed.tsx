@@ -19,10 +19,14 @@
 
 // This code is mostly AI generated.
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useState } from 'react';
 import { formatOptimizationDuration } from './optimizerMessage';
 
 export default function OptimizationElapsed({ createdAt, startedAt }: { createdAt?: string; startedAt?: string }) {
+  const { t } = useI18n();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -31,5 +35,5 @@ export default function OptimizationElapsed({ createdAt, startedAt }: { createdA
   const since = startedAt ?? createdAt;
   if (!since) return null;
   const seconds = Math.max(0, (now - Date.parse(since)) / 1000);
-  return <span className="tabular-nums">{startedAt ? 'Elapsed' : 'Waiting'}: {formatOptimizationDuration(seconds)}</span>;
+  return <span className="tabular-nums">{startedAt ? t("Elapsed") : t("Waiting")}: {formatOptimizationDuration(seconds)}</span>;
 }

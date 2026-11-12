@@ -52,13 +52,13 @@ test('export formatting drag reorder persists after navigation', async ({ page }
 
   await page.goto('/export-layout');
   await page.getByRole('button', { name: 'Add Export Rule' }).click();
-  await page.locator('select').nth(1).selectOption('row');
+  await page.getByRole('main').locator('select').nth(1).selectOption('row');
   await page.getByRole('checkbox', { name: 'P1', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#111111');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
 
   await page.getByRole('button', { name: 'Add Export Rule' }).click();
-  await page.locator('select').nth(1).selectOption('column');
+  await page.getByRole('main').locator('select').nth(1).selectOption('column');
   await page.getByRole('checkbox', { name: '01', exact: true }).check();
   await page.getByTitle('Enter background color in hex').fill('#222222');
   await page.getByRole('button', { name: 'Add', exact: true }).click();

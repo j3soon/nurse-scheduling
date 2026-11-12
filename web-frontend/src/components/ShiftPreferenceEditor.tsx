@@ -20,6 +20,7 @@
 // Component for editing shift preferences for a specific person-date combination
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useEffect } from 'react';
 import { FiX, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
@@ -46,6 +47,7 @@ export default function ShiftPreferenceEditor({
   shiftTypes,
   initialPreferences
 }: ShiftPreferenceEditorProps) {
+  const { t } = useI18n();
   const [draftPreferences, setDraftPreferences] = useState<{ shiftTypeId: string; weight: number | string }[] | null>(null);
   const preferences = draftPreferences ?? initialPreferences;
 
@@ -84,7 +86,7 @@ export default function ShiftPreferenceEditor({
     // Check for invalid weights
     for (const preference of preferences) {
       if (!isValidWeightValue(preference.weight)) {
-        newErrors[preference.shiftTypeId] = 'Weight must be a valid number, Infinity, or -Infinity';
+        newErrors[preference.shiftTypeId] = t("Weight must be a valid number, Infinity, or -Infinity");
       }
     }
 
@@ -136,11 +138,9 @@ export default function ShiftPreferenceEditor({
         <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <div>
             <h2 className="text-xl font-bold text-gray-800">
-              Shift Preference Matrix
-            </h2>
+              {t("Shift Preference Matrix")}</h2>
             <p className="text-sm text-gray-600 mt-1">
-              Person: <span className="font-medium text-blue-600">{personId}</span> •
-              Date: <span className="font-medium text-blue-600">{dateId}</span>
+              {t("Person: ")}<span className="font-medium text-blue-600">{personId}</span>{t(" • Date: ")}<span className="font-medium text-blue-600">{dateId}</span>
             </p>
           </div>
           <button
@@ -159,11 +159,11 @@ export default function ShiftPreferenceEditor({
               <div className="flex items-start gap-3">
                 <FiInfo className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
                 <div>
-                  <h4 className="text-sm font-medium text-blue-800 mb-1">Weight Scale Guide</h4>
+                  <h4 className="text-sm font-medium text-blue-800 mb-1">{t("Weight Scale Guide")}</h4>
                   <div className="text-xs text-blue-700 space-y-1">
-                    <div><span className="font-medium text-green-600">Positive (+1 to Infinity):</span> Prefer this shift type</div>
-                    <div><span className="font-medium text-red-600">Negative (-1 to -Infinity):</span> Avoid this shift type</div>
-                    <div><span className="font-medium text-gray-600">Zero (0):</span> No preference</div>
+                    <div><span className="font-medium text-green-600">{t("Positive (+1 to Infinity):")}</span>{t(" Prefer this shift type")}</div>
+                    <div><span className="font-medium text-red-600">{t("Negative (-1 to -Infinity):")}</span>{t(" Avoid this shift type")}</div>
+                    <div><span className="font-medium text-gray-600">{t("Zero (0):")}</span>{t(" No preference")}</div>
                   </div>
                 </div>
               </div>
@@ -173,8 +173,8 @@ export default function ShiftPreferenceEditor({
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
               <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-gray-700">Shift Type Preferences</h3>
-                  <span className="text-xs text-gray-500">{shiftTypes.length} shift types</span>
+                  <h3 className="text-sm font-semibold text-gray-700">{t("Shift Type Preferences")}</h3>
+                  <span className="text-xs text-gray-500">{shiftTypes.length}{t(" shift types")}</span>
                 </div>
               </div>
 
@@ -183,17 +183,13 @@ export default function ShiftPreferenceEditor({
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
-                        Shift Type
-                      </th>
+                        {t("Shift Type")}</th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">
-                        Description
-                      </th>
+                        {t("Description")}</th>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
-                        Weight
-                      </th>
+                        {t("Weight")}</th>
                       <th className="py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider w-auto">
-                        Status
-                      </th>
+                        {t("Status")}</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -217,7 +213,7 @@ export default function ShiftPreferenceEditor({
                           {/* Description */}
                           <td className="px-6 py-4">
                             <div className="text-sm text-gray-600">
-                              {shiftType.description ? shiftType.description : <span className="italic text-gray-400">No description</span>}
+                              {shiftType.description ? shiftType.description : <span className="italic text-gray-400">{t("No description")}</span>}
                             </div>
                           </td>
 
@@ -250,7 +246,7 @@ export default function ShiftPreferenceEditor({
             {preferences.length > 0 && (
               <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
                 <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                  <span>Active Preferences Summary</span>
+                  <span>{t("Active Preferences Summary")}</span>
                   <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded-full text-xs">
                     {preferences.length}
                   </span>
@@ -281,21 +277,18 @@ export default function ShiftPreferenceEditor({
             onClick={clearAllPreferences}
             className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
           >
-            Clear All
-          </button>
+            {t("Clear All")}</button>
           <div className="flex gap-3">
             <button
               onClick={handleCancel}
               className="px-6 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
             >
-              Cancel
-            </button>
+              {t("Cancel")}</button>
             <button
               onClick={handleSave}
               className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
             >
-              Save Preferences
-            </button>
+              {t("Save Preferences")}</button>
           </div>
         </div>
       </div>

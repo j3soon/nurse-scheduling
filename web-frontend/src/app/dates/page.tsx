@@ -20,6 +20,7 @@
 // The date management page for Tab "1. Dates"
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useMemo, useState } from 'react';
 import { FiAlertCircle } from 'react-icons/fi';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
@@ -40,6 +41,7 @@ import { isFullCalendarMonth } from '@/utils/calendar';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 
 export default function DatePage() {
+  const { t, locale } = useI18n();
   const {
     updateDateRange,
     dateData,
@@ -76,7 +78,7 @@ export default function DatePage() {
     return dateStr ? new Date(dateStr) : undefined;
   };
   const formatHolidayWeekday = (dateStr: string): string => {
-    return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+    return new Date(dateStr).toLocaleDateString(locale, { weekday: 'short', timeZone: 'UTC' });
   };
   const shouldShowHolidayTypeBadge = (dateStr: string, isFreeday: boolean): boolean => {
     const weekday = new Date(dateStr).getUTCDay();
@@ -96,14 +98,14 @@ export default function DatePage() {
 
     const newWarnings: {[key: string]: string} = {};
     if (!isFullCalendarMonth(draft)) {
-      newWarnings.dateRange = 'Selected dates do not represent a full month (first day to last day of the same month)';
+      newWarnings.dateRange = t("Selected dates do not represent a full month (first day to last day of the same month)");
     }
     if (shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported && includesUnimportedTaiwanLaborDay(draft)) {
-      newWarnings.laborDay = 'Taiwan holiday import does not include Labor Day on May 1. If needed, please manually adjust it after update.';
+      newWarnings.laborDay = t("Taiwan holiday import does not include Labor Day on May 1. If needed, please manually adjust it after update.");
     }
 
     return newWarnings;
-  }, [draft, isTaiwanHolidayImportSupported, mode, shouldImportTaiwanHolidays]);
+  }, [draft, isTaiwanHolidayImportSupported, mode, shouldImportTaiwanHolidays, t]);
 
   const taiwanHolidaySupportLabel = getTaiwanHolidaySupportLabel();
   const includedTaiwanHolidays = useMemo(
@@ -120,15 +122,15 @@ export default function DatePage() {
     const newErrors: {[key: string]: string} = {};
 
     if (!draft.startDate) {
-      newErrors.startDate = 'Start date is required';
+      newErrors.startDate = t("Start date is required");
     }
 
     if (!draft.endDate) {
-      newErrors.endDate = 'End date is required';
+      newErrors.endDate = t("End date is required");
     }
 
     if (draft.startDate && draft.endDate && draft.startDate > draft.endDate) {
-      newErrors.endDate = 'End date must be after start date';
+      newErrors.endDate = t("End date must be after start date");
     }
 
     setErrors(newErrors);
@@ -188,9 +190,9 @@ export default function DatePage() {
         <div className="mb-6 p-4 bg-white shadow-md rounded-lg">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <span className="text-sm font-medium text-gray-700">Start Date:</span>
+              <span className="text-sm font-medium text-gray-700">{t("Start Date:")}</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateData.range && dateData.range.startDate ? dateData.range.startDate.toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.startDate ? dateData.range.startDate.toLocaleDateString(locale, {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -200,9 +202,9 @@ export default function DatePage() {
               </div>
             </div>
             <div>
-              <span className="text-sm font-medium text-gray-700">End Date:</span>
+              <span className="text-sm font-medium text-gray-700">{t("End Date:")}</span>
               <div className="text-lg font-semibold text-gray-900">
-                {dateData.range && dateData.range.endDate ? dateData.range.endDate.toLocaleDateString('en-US', {
+                {dateData.range && dateData.range.endDate ? dateData.range.endDate.toLocaleDateString(locale, {
                   weekday: 'long',
                   year: 'numeric',
                   month: 'long',
@@ -214,8 +216,7 @@ export default function DatePage() {
           </div>
           {dateData.range.startDate && dateData.range.endDate && (
             <div className="mt-3 text-sm text-blue-700">
-              Duration: {Math.ceil((dateData.range.endDate.getTime() - dateData.range.startDate.getTime()) / (1000 * 60 * 60 * 24) + 1)} days
-            </div>
+              {t("Duration: ")}{Math.ceil((dateData.range.endDate.getTime() - dateData.range.startDate.getTime()) / (1000 * 60 * 60 * 24) + 1)}{t(" days")}</div>
           )}
         </div>
       )}
@@ -226,17 +227,15 @@ export default function DatePage() {
   const editDateRangeForm = mode === Mode.DATE_RANGE_EDITING && (
     <div className="mb-6 bg-white shadow-md rounded-lg p-6">
       <h3 className="text-lg font-semibold mb-4 text-gray-800">
-        Set Date Range
-      </h3>
+        {t("Set Date Range")}</h3>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(22rem,0.95fr)]">
         <div className="space-y-5">
           <section>
-            <h4 className="mb-3 text-sm font-semibold text-gray-900">Date range</h4>
+            <h4 className="mb-3 text-sm font-semibold text-gray-900">{t("Date range")}</h4>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
-                  Start Date *
-                </label>
+                  {t("Start Date *")}</label>
                 <input
                   type="date"
                   id="startDate"
@@ -264,8 +263,7 @@ export default function DatePage() {
 
               <div>
                 <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
-                  End Date *
-                </label>
+                  {t("End Date *")}</label>
                 <input
                   type="date"
                   id="endDate"
@@ -293,16 +291,14 @@ export default function DatePage() {
             </div>
             {draft.startDate && draft.endDate && (
               <p className="mt-3 text-sm text-gray-600" aria-live="polite">
-                {selectedDayCount} day{selectedDayCount === 1 ? '' : 's'} selected
-              </p>
+                {t(selectedDayCount === 1 ? "{count} day selected" : "{count} days selected", { count: selectedDayCount })}</p>
             )}
           </section>
 
           {Object.keys(warnings).length > 0 && (
             <section className="rounded-md border border-yellow-200 bg-yellow-50 p-4" aria-labelledby="date-range-review">
               <h4 id="date-range-review" className="text-sm font-semibold text-yellow-900">
-                Review
-              </h4>
+                {t("Review")}</h4>
               <div className="mt-2 space-y-2">
                 {Object.entries(warnings).map(([warningKey, warningMessage]) => (
                   <p key={warningKey} className="flex items-start gap-2 text-sm text-yellow-800">
@@ -326,23 +322,21 @@ export default function DatePage() {
               />
               <div className="min-w-0 flex-1">
                 <label id="holiday-import-heading" htmlFor="importTaiwanHolidays" className="text-sm font-medium text-gray-900">
-                  Import Taiwan holidays into date groups
-                </label>
+                  {t("Import Taiwan holidays into date groups")}</label>
                 <p className="mt-1 text-sm text-gray-600">
-                  Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.
-                </p>
+                  {t("Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.")}</p>
                 {!isTaiwanHolidayImportSupported && (
                   <p className="mt-2 text-sm text-amber-700">
-                    Available only when the selected date range stays within {taiwanHolidaySupportLabel}.
+                    {t("Available only when the selected date range stays within ")}{taiwanHolidaySupportLabel}.
                   </p>
                 )}
                 {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length === 0 && (
-                  <p className="mt-2 text-sm text-gray-500">No holiday changes in the selected range.</p>
+                  <p className="mt-2 text-sm text-gray-500">{t("No holiday changes in the selected range.")}</p>
                 )}
                 {isTaiwanHolidayImportSupported && includedTaiwanHolidays.length > 0 && (
                   <details open className="mt-3 rounded-md border border-gray-200 bg-white">
                     <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50">
-                      {includedTaiwanHolidays.length} holiday {includedTaiwanHolidays.length === 1 ? 'change' : 'changes'}
+                      {includedTaiwanHolidays.length}{t(" holiday ")}{includedTaiwanHolidays.length === 1 ? t("change") : t("changes")}
                     </summary>
                     <div className="max-h-56 space-y-2 overflow-y-auto border-t border-gray-200 p-3">
                       {includedTaiwanHolidays.map((entry) => (
@@ -370,7 +364,7 @@ export default function DatePage() {
           </section>
         </div>
 
-        <section className="w-full lg:justify-self-center" aria-label="Calendar date range picker">
+        <section className="w-full lg:justify-self-center" aria-label={t("Calendar date range picker")}>
           <DateRangeCalendarPicker
             value={draft}
             onChange={(value) => {
@@ -387,13 +381,12 @@ export default function DatePage() {
             onClick={handleCancel}
             className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
           >
-            Cancel
-          </button>
+            {t("Cancel")}</button>
           <button
             onClick={handleSave}
             className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
           >
-            {dateData.range ? 'Update' : 'Apply'}
+            {dateData.range ? t("Update") : t("Apply")}
           </button>
         </div>
       </div>
@@ -402,7 +395,7 @@ export default function DatePage() {
 
   return (
     <ItemGroupEditorPage
-      title="Date Management"
+      title={t("Date Management")}
       documentationHref={DOCUMENTATION_URLS.dates}
       data={dateData}
       dataType={DataType.DATES}
@@ -431,7 +424,7 @@ export default function DatePage() {
       )}
       extraButtons={
         <ToggleButton
-          label="Set Date Range"
+          label={t("Set Date Range")}
           isToggled={mode === Mode.DATE_RANGE_EDITING}
           onToggle={handleStartEditingDateRange}
         />

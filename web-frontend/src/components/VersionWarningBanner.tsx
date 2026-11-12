@@ -19,6 +19,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useEffect } from 'react';
 import { FiAlertTriangle, FiX } from 'react-icons/fi';
 import AppVersionText from '@/components/AppVersionText';
@@ -28,6 +29,7 @@ import { WEBSITE_URL } from '@/constants/urls';
 type VersionStatus = 'match' | 'older' | 'dev' | 'error' | null;
 
 export default function VersionWarningBanner() {
+  const { t } = useI18n();
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
   const [fetchFailed, setFetchFailed] = useState(false);
@@ -109,8 +111,7 @@ export default function VersionWarningBanner() {
           <span className="text-sm">
             {versionStatus === 'error' ? (
               <>
-                Unable to check for updates. You might be using an older version (
-                <AppVersionText
+                {t("Unable to check for updates. You might be using an older version (")}<AppVersionText
                   version={CURRENT_APP_VERSION}
                   commitClassName="font-semibold underline hover:text-gray-900"
                 />
@@ -121,17 +122,15 @@ export default function VersionWarningBanner() {
                   rel="noopener noreferrer"
                   className="font-semibold underline hover:text-gray-900"
                 >
-                  Check releases
-                </a>.
+                  {t("Check releases")}</a>.
               </>
             ) : versionStatus === 'older' ? (
               <>
-                You are using an older version (
-                <AppVersionText
+                {t("You are using an older version (")}<AppVersionText
                   version={CURRENT_APP_VERSION}
                   commitClassName="font-semibold underline hover:text-amber-900"
                 />
-                ). Latest stable release:{' '}
+                {t("). Latest stable release:")}{' '}
                 <a
                   href={WEBSITE_URL}
                   target="_blank"
@@ -143,12 +142,11 @@ export default function VersionWarningBanner() {
               </>
             ) : (
               <>
-                You are using a development version (
-                <AppVersionText
+                {t("You are using a development version (")}<AppVersionText
                   version={CURRENT_APP_VERSION}
                   commitClassName="font-semibold underline hover:text-blue-900"
                 />
-                ). Latest stable release:{' '}
+                {t("). Latest stable release:")}{' '}
                 <a
                   href={WEBSITE_URL}
                   target="_blank"
@@ -164,7 +162,7 @@ export default function VersionWarningBanner() {
         <button
           onClick={() => setIsDismissed(true)}
           className={`${colors.button} p-1`}
-          title="Dismiss version warning"
+          title={t("Dismiss version warning")}
         >
           <FiX className="h-4 w-4" />
         </button>

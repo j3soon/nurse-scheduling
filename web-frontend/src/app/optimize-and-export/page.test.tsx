@@ -23,6 +23,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
@@ -1532,6 +1534,48 @@ describe('OptimizeAndExportPage error handling', () => {
     await expect(screen.findByText('Server error (422): request rejected by old API')).resolves.toBeInTheDocument();
   });
 
+  it.each(['success', 'no schedule', 'backend error'])('translates %s after changing language during and after a run', async outcome => {
+    const user = userEvent.setup();
+    let finishJob: (response: unknown) => void = () => {};
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ok: true, json: async () => optimizeJobResponse({ id: 'locale-test' }) })
+      .mockImplementationOnce(() => new Promise(resolve => { finishJob = resolve; }))
+      .mockResolvedValueOnce({
+        ok: true, blob: async () => new Blob(['xlsx']), headers: new Headers(),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
+    await user.click(screen.getByRole('button', { name: 'Optimize and Download' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      LOCAL_API_URL + '/optimize/locale-test', expect.objectContaining({ method: 'GET' }),
+    ));
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(vi.mocked(fetch).mock.calls.length).toBe(requestCount);
+
+    await act(async () => { finishJob({
+      ok: true,
+      json: async () => optimizeJobResponse({
+        id: 'locale-test', state: 'completed',
+        outcome: outcome === 'success' ? 'optimal' : 'infeasible',
+        solverStatus: 'DONE',
+        error: outcome === 'backend error' ? 'Backend supplied detail' : null,
+      }),
+    }); });
+    const chinese = outcome === 'success' ? '班表已成功完成最佳化並下載！'
+      : outcome === 'no schedule' ? '沒有可下載的班表。工作結果：infeasible' : 'Backend supplied detail';
+    expect(await screen.findByText(chinese)).toBeInTheDocument();
+
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    const english = outcome === 'success' ? 'Schedule optimized and downloaded successfully!'
+      : outcome === 'no schedule' ? 'No downloadable schedule is available. Job outcome: infeasible' : 'Backend supplied detail';
+    expect(screen.getByText(english)).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/schedule_spec/optimize'))).toHaveLength(1);
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
+  });
+
   it('keeps a successful download when best-effort job cleanup fails', async () => {
     const user = userEvent.setup();
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
@@ -1941,7 +1985,7 @@ describe('OptimizeAndExportPage error handling', () => {
         })),
       });
 
-    render(<OptimizeAndExportPage />);
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
     await user.click(screen.getByRole('button', { name: /optimize and download/i }));
     await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
 
@@ -1963,6 +2007,14 @@ describe('OptimizeAndExportPage error handling', () => {
       'http://localhost:8000/optimize/opt_control/cancel',
       expect.objectContaining({ method: 'POST' })
     );
+
+    expect(await screen.findByRole('button', { name: 'Cancelling...' })).toBeDisabled();
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('button', { name: '取消中…' })).toBeDisabled();
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
 
     act(() => {
       MockEventSource.instances[0].emit('job.state_changed', { state: 'cancelled' });
@@ -2188,6 +2240,28 @@ describe('OptimizeAndExportPage backend authentication', () => {
     await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
     expect(screen.getByText('Token set for this session')).toBeInTheDocument();
     expect(readStoredServers()).toEqual([{ endpoint: LOCAL_API_URL }]);
+  });
+
+  it.each([false, true])('keeps the entered backend token when another tab changes language: %s', async changesLocale => {
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
+    const user = userEvent.setup();
+    const fetchMock = respondByUrl(fetch as unknown as ReturnType<typeof vi.fn>);
+    render(<I18nProvider><OptimizeAndExportPage /></I18nProvider>);
+    await screen.findByText('Server: Credentials required');
+    await user.click(screen.getByRole('button', { name: `Enter token for ${LOCAL_API_URL}` }));
+    await user.type(screen.getByLabelText(`Token for ${LOCAL_API_URL}`), BACKEND_TOKEN);
+    await user.click(screen.getByRole('button', { name: `Save token for ${LOCAL_API_URL}` }));
+    await screen.findByText('Server: Online');
+    if (changesLocale) {
+      await act(async () => {
+        localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+        window.dispatchEvent(new StorageEvent('storage', { key: LOCALE_STORAGE_KEY, newValue: 'zh-TW' }));
+      });
+    }
+    const optionsCall = fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/optimize/options')).at(-1);
+    expect((optionsCall?.[1] as RequestInit).headers).toMatchObject({ Authorization: `Bearer ${BACKEND_TOKEN}` });
+    expect(screen.getByRole('button', { name: changesLocale ? '最佳化並下載' : 'Optimize and Download', exact: true })).toBeEnabled();
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
   });
 
   it('sends a remembered token with optimization requests', async () => {

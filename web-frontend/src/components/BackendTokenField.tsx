@@ -19,6 +19,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState } from 'react';
 import { FiEye, FiEyeOff, FiLock, FiUnlock } from 'react-icons/fi';
 
@@ -60,15 +61,16 @@ function BackendTokenEditor({
   onCancel,
   onSave,
 }: BackendTokenEditorProps) {
+  const { t } = useI18n();
   const [tokenDraft, setTokenDraft] = useState(initialToken);
   const [remember, setRemember] = useState(rememberToken);
   const [showToken, setShowToken] = useState(false);
   const trimmedToken = tokenDraft.trim();
   const tokenIsValid = isValidBackendToken(trimmedToken);
   const tokenWarning = tokenDraft.length > 0 && trimmedToken.length === 0
-    ? 'Token cannot contain only spaces.'
+    ? t("Token cannot contain only spaces.")
     : trimmedToken.length > 0 && !tokenIsValid
-      ? 'Use visible ASCII characters only.'
+      ? t("Use visible ASCII characters only.")
       : null;
 
   const submitToken = () => {
@@ -86,8 +88,8 @@ function BackendTokenEditor({
           autoComplete="off"
           autoFocus
           spellCheck={false}
-          placeholder="Backend token"
-          aria-label={`Token for ${endpoint}`}
+          placeholder={t("Backend token")}
+          aria-label={t("Token for {value0}", { value0: endpoint })}
           onChange={(event) => setTokenDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
@@ -103,9 +105,9 @@ function BackendTokenEditor({
         <button
           type="button"
           onClick={() => setShowToken((visible) => !visible)}
-          aria-label={`${showToken ? 'Hide' : 'Show'} token for ${endpoint}`}
+          aria-label={t("{value0} token for {value1}", { value0: t(showToken ? 'Hide' : 'Show'), value1: endpoint })}
           aria-pressed={showToken}
-          title={showToken ? 'Hide token' : 'Show token'}
+          title={showToken ? t("Hide token") : t("Show token")}
           className="rounded border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-50 hover:text-gray-900"
         >
           {showToken ? <FiEyeOff className="h-3.5 w-3.5" /> : <FiEye className="h-3.5 w-3.5" />}
@@ -121,26 +123,23 @@ function BackendTokenEditor({
           onChange={(event) => setRemember(event.target.checked)}
           className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
         />
-        Remember on this device (stored unencrypted)
-      </label>
+        {t("Remember on this device (stored unencrypted)")}</label>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
           onClick={submitToken}
           disabled={disabled || !tokenIsValid}
-          aria-label={`Save token for ${endpoint}`}
+          aria-label={t("Save token for {value0}", { value0: endpoint })}
           className="rounded border border-blue-600 bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-gray-300 disabled:bg-gray-100 disabled:text-gray-400"
         >
-          Save
-        </button>
+          {t("Save")}</button>
         <button
           type="button"
           onClick={onCancel}
-          aria-label={`Cancel token for ${endpoint}`}
+          aria-label={t("Cancel token for {value0}", { value0: endpoint })}
           className={CONTROL_CLASSES}
         >
-          Cancel
-        </button>
+          {t("Cancel")}</button>
       </div>
     </div>
   );
@@ -157,6 +156,7 @@ export default function BackendTokenField({
   onSave,
   onClear,
 }: BackendTokenFieldProps) {
+  const { t } = useI18n();
   // A remembered token is already readable in this browser, so editing prefills it for a
   // quick correction. A session-only token is not stored anywhere, so it starts blank.
   if (isEditing) {
@@ -177,28 +177,27 @@ export default function BackendTokenField({
       <span className={`inline-flex items-center gap-1 ${token ? 'text-gray-600' : 'text-amber-700'}`}>
         {token ? <FiUnlock className="h-3 w-3" /> : <FiLock className="h-3 w-3" />}
         {token
-          ? rememberToken ? 'Token saved on this device' : 'Token set for this session'
-          : 'Token required'}
+          ? rememberToken ? t("Token saved on this device") : t("Token set for this session")
+          : t("Token required")}
       </span>
       <button
         type="button"
         onClick={onEdit}
         disabled={disabled}
-        aria-label={`${token ? 'Change' : 'Enter'} token for ${endpoint}`}
+        aria-label={t("{value0} token for {value1}", { value0: t(token ? 'Change' : 'Enter'), value1: endpoint })}
         className={CONTROL_CLASSES}
       >
-        {token ? 'Change' : 'Enter token'}
+        {token ? t("Change") : t("Enter token")}
       </button>
       {token && (
         <button
           type="button"
           onClick={onClear}
           disabled={disabled}
-          aria-label={`Forget token for ${endpoint}`}
+          aria-label={t("Forget token for {value0}", { value0: endpoint })}
           className={CONTROL_CLASSES}
         >
-          Forget
-        </button>
+          {t("Forget")}</button>
       )}
     </div>
   );

@@ -17,23 +17,26 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { FiStar } from 'react-icons/fi';
 import { GITHUB_REPO_URL } from '@/constants/urls';
 
 export default function StarRepoNudge() {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-gray-600">
       <FiStar className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
       <p>
-        Finding this useful?{' '}
+        {t("Finding this useful?")}{' '}
         <a
           href={GITHUB_REPO_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900"
         >
-          Star the project on GitHub
-        </a>
+          {t("Star the project on GitHub")}</a>
         .
       </p>
     </div>

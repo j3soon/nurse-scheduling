@@ -19,7 +19,9 @@
 
 // This test is mostly AI generated.
 
-import { render } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import FeedbackWidget from '@/components/FeedbackWidget';
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +40,7 @@ function mockPhone(matches: boolean) {
 describe('FeedbackWidget', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mocks.createWidget.mockReturnValue(mocks.actor);
   });
 
@@ -61,4 +64,28 @@ describe('FeedbackWidget', () => {
     render(<FeedbackWidget />);
     expect(mocks.createWidget).toHaveBeenCalledTimes(1);
   });
+
+  it('localizes the widget and form, and reuses each language actor', async () => {
+    mockPhone(false);
+    mocks.pathname = '/';
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    const english = { appendToDom: vi.fn(), removeFromDom: vi.fn() };
+    const chinese = { appendToDom: vi.fn(), removeFromDom: vi.fn() };
+    mocks.createWidget.mockImplementation(options => options?.triggerLabel === '意見回饋' ? chinese : english);
+    render(<I18nProvider><FeedbackWidget /></I18nProvider>);
+    await waitFor(() => expect(mocks.createWidget).toHaveBeenLastCalledWith(expect.objectContaining({
+      triggerLabel: '意見回饋', formTitle: '傳送回饋', nameLabel: '姓名', emailLabel: '電子郵件',
+      cancelButtonLabel: '取消', addScreenshotButtonLabel: '新增螢幕截圖',
+      successMessageText: '感謝您的回報！',
+    })));
+    act(() => {
+      localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+      window.dispatchEvent(new StorageEvent('storage', { key: LOCALE_STORAGE_KEY, newValue: 'en' }));
+    });
+    expect(chinese.removeFromDom).toHaveBeenCalled();
+    expect(english.appendToDom).toHaveBeenCalled();
+    expect(mocks.createWidget).toHaveBeenCalledTimes(2);
+    localStorage.clear();
+  });
+
 });

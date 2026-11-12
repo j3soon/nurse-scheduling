@@ -19,6 +19,9 @@
 
 // A table component that allows reordering of rows by dragging the mouse.
 // Note that this file highly duplicates with DraggableCardList.tsx.
+'use client';
+
+import { useI18n } from '@/i18n/I18nProvider';
 import { ReorderButtons } from './ReorderButtons';
 import { ReactNode, useRef, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
@@ -34,6 +37,7 @@ interface Column<T> {
 
 interface DataTableProps<T> {
   title: string;
+  tableId?: string;
   columns: Column<T>[];
   data: T[];
   onReorder?: (newData: T[]) => void;
@@ -46,7 +50,8 @@ interface DataTableProps<T> {
   fixedLayout?: boolean;
 }
 
-export function DataTable<T>({ title, columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer, fixedLayout = false }: DataTableProps<T>) {
+export function DataTable<T>({ title, tableId = title.toLowerCase().replace(/[^a-z0-9]+/g, '-'), columns, data, onReorder, getRowClassName, onRowClick, headerAction, footer, fixedLayout = false }: DataTableProps<T>) {
+  const { t } = useI18n();
   const draggedRowIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ rowIndex: number; insertAfter: boolean } | null>(null);
 
@@ -105,7 +110,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
 
   return (
     // Named from the title so tests can select a whole table without matching style classes.
-    <div data-testid={`data-table-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`} className="bg-white shadow-md rounded-lg min-w-0 overflow-auto h-fit">
+    <div data-testid={`data-table-${tableId}`} className="bg-white shadow-md rounded-lg min-w-0 overflow-auto h-fit">
       <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap gap-2 justify-between items-center">
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         {headerAction && <div className="flex items-center">{headerAction}</div>}
@@ -167,7 +172,7 @@ export function DataTable<T>({ title, columns, data, onReorder, getRowClassName,
                       : String(item[column.accessor])}
                     {colIndex === 0 && isDraggable && (
                       <ReorderButtons
-                        label={`${title} row ${rowIndex + 1}`}
+                        label={t("{value0} row {value1}", { value0: title, value1: rowIndex + 1 })}
                         canMoveUp={rowIndex > 0 && !getRowClassName?.(data[rowIndex - 1], rowIndex - 1).includes('non-draggable')}
                         canMoveDown={rowIndex < data.length - 1 && !getRowClassName?.(data[rowIndex + 1], rowIndex + 1).includes('non-draggable')}
                         onMove={direction => {

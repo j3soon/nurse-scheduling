@@ -107,18 +107,18 @@ async function openChat(page: Page, backend: ExportBackend, options: { saved?: b
   backend.error = options.error ?? null;
   await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
   await page.goto('/experimental-ai');
-  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Export the saved chat.');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('textbox', { name: '詢問目前的排班設定' }).fill('Export the saved chat.');
+  await page.getByRole('button', { name: '傳送', exact: true }).click();
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
   return backend.requests;
 }
 
 test('one Export Chat control downloads the server ZIP without changing its bytes', async ({ page, backend }) => {
   const requests = await openChat(page, backend);
-  await page.getByRole('checkbox', { name: 'Show turn details' }).uncheck();
-  await page.getByRole('checkbox', { name: 'Show models', exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: '顯示此輪詳細資料' }).uncheck();
+  await page.getByRole('checkbox', { name: '顯示模型', exact: true }).uncheck();
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
   const delivered = await download;
   expect(delivered.url()).toBe(`${backend.endpoint}/v1/sessions/export-session/export?download=${"a".repeat(32)}`);
   expect(delivered.suggestedFilename()).toBe('complete-chat.zip');
@@ -131,39 +131,39 @@ test('one Export Chat control downloads the server ZIP without changing its byte
 
 test('an export preparation failure keeps the chat available for retry', async ({ page, backend }) => {
   await openChat(page, backend, { error: 'POST' });
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
   await expect(page.getByText('Saved history is temporarily unavailable.')).toBeVisible();
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '匯出對話', exact: true })).toBeEnabled();
   expect(page.context().pages()).toHaveLength(1);
   await expect(page.locator('iframe')).toHaveCount(0);
 });
 
 test('a native export GET failure appears inline and leaves the chat available', async ({ page, backend }) => {
   const requests = await openChat(page, backend, { error: 'GET' });
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
-  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
+  await expect(page.getByText('無法開始下載對話。請再次嘗試「匯出對話」。')).toBeVisible();
   expect(page.context().pages()).toHaveLength(1);
   expect(requests).toEqual(['POST', 'GET']);
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: '匯出對話', exact: true })).toBeEnabled();
 });
 
 test('delayed preparation downloads without a popup and a failed request can be retried', async ({ page, backend }) => {
   await openChat(page, backend);
   backend.error = 'GET';
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
-  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toBeVisible();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
+  await expect(page.getByText('無法開始下載對話。請再次嘗試「匯出對話」。')).toBeVisible();
   backend.error = null;
   // Exceed the transient user activation window used by popup-gated APIs.
   backend.preparationDelay = 6000;
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Preparing export…' })).toBeDisabled();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
+  await expect(page.getByRole('button', { name: '正在準備匯出…' })).toBeDisabled();
   const delivered = await download;
   expect((await readFile((await delivered.path())!)).equals(archiveBytes)).toBe(true);
   expect(page.context().pages()).toHaveLength(1);
-  await expect(page.getByText('The chat download could not start. Please try Export Chat again.')).toHaveCount(0);
+  await expect(page.getByText('無法開始下載對話。請再次嘗試「匯出對話」。')).toHaveCount(0);
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();
 });
 
@@ -171,16 +171,16 @@ test('export status and retry controls fit on a phone', async ({ page, backend }
   await page.setViewportSize({ width: 390, height: 844 });
   await openChat(page, backend);
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Export Chat', exact: true }).click();
+  await page.getByRole('button', { name: '匯出對話', exact: true }).click();
   await download;
-  await expect(page.getByText('Chat download requested. Check your browser’s downloads.')).toBeVisible();
+  await expect(page.getByText('已請求下載對話。請查看瀏覽器的下載項目。')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: '../artifacts/chat-export-phone.png' });
 });
 
 test('export is unavailable when the server does not retain saved history', async ({ page, backend }) => {
   const requests = await openChat(page, backend, { saved: false });
-  await expect(page.getByRole('button', { name: 'Export Chat', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '匯出對話', exact: true })).toBeDisabled();
   expect(requests).toEqual([]);
 });
 

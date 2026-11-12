@@ -1921,3 +1921,56 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
     await expect(page.getByText(`Turn details · ${display.startsWith('<') ? display : '~' + display} · 100 tok/s · 1 call`)).toBeVisible();
   });
 }
+
+test('keeps pending reasoning when language changes in another tab', async ({ page, context }) => {
+  const captured = await mockAiBackend(page, ['Answer complete.'], false, undefined, [], true, [], {
+    default_model: 'fast', models: [{ id: 'fast', name: 'Fast', context_tokens: 32000,
+      default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }, { id: 'high', label: 'High' }] }],
+  });
+  await page.goto('/experimental-ai');
+  await expect(page.getByLabel('AI model')).toBeEnabled();
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('First question');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('Answer complete.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Reasoning', { exact: true })).toBeEnabled();
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Next question');
+  let finishSave!: () => void;
+  const savePending = new Promise<void>(resolve => { finishSave = resolve; });
+  await page.route('**/v1/sessions/browser-session/model-selection', async route => {
+    if (route.request().method() === 'PUT') await savePending;
+    await route.fallback();
+  });
+  const started = page.waitForRequest(request => request.url().endsWith('/model-selection') && request.method() === 'PUT');
+  await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
+  await started;
+  const settings = await context.newPage();
+  await settings.goto('/');
+  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+  await expect(page.getByLabel('推理', { exact: true })).toBeVisible();
+  await settings.close();
+  await expect(page.getByRole('button', { name: '傳送', exact: true })).toBeDisabled();
+  const saved = page.waitForResponse(response => response.url().endsWith('/model-selection') && response.request().method() === 'PUT');
+  finishSave();
+  await saved;
+  await expect.poll(() => captured.modelSelections.at(-1)?.reasoning).toBe('high');
+  await expect(page.getByLabel('推理', { exact: true })).toHaveValue('high');
+  await expect(page.getByRole('button', { name: '傳送', exact: true })).toBeEnabled();
+});
+
+test('localizes AI cost and retention details while preserving reply text', async ({ page }) => {
+  const summary = { usd: '0.0123', calls: 1, pending: 0, unavailable: 0,
+    streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } };
+  await mockAiBackend(page, ['Costed answer.'], false, undefined, [], true, [
+    { type: 'cost_summary', data: { conversation: { ...summary, calls: 2, unavailable: 1 }, run: summary } },
+  ]);
+  await page.addInitScript(() => localStorage.setItem('nurse-scheduling-language', 'zh-TW'));
+  await page.goto('/experimental-ai');
+  await expect(page.getByText(/對話工作階段將在.*天.*未使用後到期/)).toBeVisible();
+  await page.getByRole('textbox', { name: '詢問目前的排班設定' }).fill('Cost this reply.');
+  await page.getByRole('button', { name: '傳送', exact: true }).click();
+  await expect(page.getByText('Costed answer.', { exact: true })).toBeVisible();
+  await page.getByText('此輪詳細資料 · ~$0.0123 · 100 tok/s · 1 次呼叫', { exact: true }).click();
+  await expect(page.getByText('預估費用：$0.0123', { exact: true })).toBeVisible();
+  await expect(page.getByText('已測量 1 次呼叫中的 1 次串流速度。', { exact: true })).toBeVisible();
+  await expect(page.getByText('預估費用：$0.0123 · 1 次費用無法取得', { exact: true })).toBeVisible();
+});

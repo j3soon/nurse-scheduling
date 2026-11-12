@@ -22,6 +22,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import { AI_HISTORY_STORAGE_KEY, chatKey, readChatHistory, saveChatHistory } from './chatHistory';
 import type { StoredChatConversation } from './chatConversation';
 import type { SessionEvent, SessionEventHandler, SessionStreamOptions } from './sessionEvents';
@@ -452,6 +454,37 @@ describe('ExperimentalAiPage', () => {
       expect(saved.retentionSeconds).toBe(100);
       expect(saved.expiresAt).toBeGreaterThanOrEqual(started + 99000);
     });
+  });
+
+  it('keeps uploads pending across language changes and translates authentication errors at render', async () => {
+    mockGetCapabilities.mockResolvedValue({
+      ...defaultCapabilities,
+      file_attachments: { ...defaultCapabilities.file_attachments, retained: true },
+    });
+    let rejectUploads: (error: Error) => void = () => {};
+    mockGetUploads.mockImplementation(() => new Promise((_resolve, reject) => { rejectUploads = reject; }));
+    const user = userEvent.setup();
+    render(<I18nProvider><ExperimentalAiPage /></I18nProvider>);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(mockGetUploads).toHaveBeenCalled());
+    const requestCount = mockGetUploads.mock.calls.length;
+    const signal = mockGetUploads.mock.calls.at(-1)![3] as AbortSignal;
+
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('heading', { name: '排班 AI 對話' })).toBeInTheDocument();
+    expect(mockGetUploads).toHaveBeenCalledTimes(requestCount);
+    expect(signal.aborted).toBe(false);
+
+    await act(async () => { rejectUploads(new MockAiHttpError('Invalid credentials', 401)); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('AI 驗證憑證遭拒。請輸入目前的 AI 權杖後重試。');
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'AI credentials were rejected. Enter the current AI token and try again.',
+    );
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
   });
 
   it('lists uploads before the assistant responds and removes an unused file', async () => {

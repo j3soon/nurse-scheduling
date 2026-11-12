@@ -19,12 +19,14 @@
 
 // This test is mostly AI generated.
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from './page';
+import { I18nProvider } from '@/i18n/I18nProvider';
+import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 
 const createNewState = vi.fn();
 const loadFromYaml = vi.fn();
@@ -70,6 +72,25 @@ describe('Home', () => {
 
     expect(createNewState).toHaveBeenCalledOnce();
     expect(loadFromYaml).not.toHaveBeenCalled();
+  });
+
+  it('translates a pending example-load failure and updates it when language changes again', async () => {
+    const user = userEvent.setup();
+    let finishLoad: (response: unknown) => void = () => {};
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { finishLoad = resolve; })));
+    render(<I18nProvider><Home /></I18nProvider>);
+    await user.click(screen.getByRole('button', { name: 'Choose new Schedule Spec type' }));
+    await user.click(screen.getByRole('button', { name: /87-person example/ }));
+    await user.click(screen.getByRole('button', { name: 'Load example' }));
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    await act(async () => { finishLoad({ ok: false }); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('無法載入範例排班設定。');
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en');
+    fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
+    expect(screen.getByRole('alert')).toHaveTextContent('The example Schedule Spec could not be loaded.');
+    expect(fetch).toHaveBeenCalledOnce();
+    localStorage.removeItem(LOCALE_STORAGE_KEY);
   });
 
   it('loads the realistic example through the normal YAML import path', async () => {

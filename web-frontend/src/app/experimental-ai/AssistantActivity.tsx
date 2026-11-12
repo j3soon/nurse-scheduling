@@ -21,6 +21,7 @@
 
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { activitySummary, characterCount, formatCharacterCount as formatCount, scheduleSpecChangeLines } from './chatPresentation';
 
 import AssistantMarkdown from './AssistantMarkdown';
@@ -93,6 +94,7 @@ export type ActivityEntry =
 const CHUNK_CHARS = 2000;
 
 function ChunkedText({ text, label }: { text: string; label: string }) {
+  const { t } = useI18n();
   const characters = Array.from(text);
   const chunks = Array.from({ length: Math.max(1, Math.ceil(characters.length / CHUNK_CHARS)) }, (_, index) => (
     characters.slice(index * CHUNK_CHARS, (index + 1) * CHUNK_CHARS).join('')
@@ -100,39 +102,40 @@ function ChunkedText({ text, label }: { text: string; label: string }) {
   return <div>
     <pre className="activity-output">{chunks[0]}</pre>
     {chunks.slice(1).map((chunk, index) => <details key={index} className="more-output">
-      <summary role="button">Show more {label} ({formatCount(characters.length - (index + 1) * CHUNK_CHARS)} characters left)</summary>
+      <summary role="button">{t("Show more ")}{label} ({formatCount(characters.length - (index + 1) * CHUNK_CHARS)}{t(" characters left)")}</summary>
       <pre className="activity-output">{chunk}</pre>
     </details>)}
   </div>;
 }
 
 function ToolBody({ entry }: { entry: ToolEntry }) {
+  const { t } = useI18n();
   return (
     <div className="tool-body">
       {entry.arguments && entry.arguments !== '{}' && (
-        <section aria-label="Tool arguments" className="tool-section">
+        <section aria-label={t("Tool arguments")} className="tool-section">
           <h3 className="tool-heading">
-            {entry.name === 'bash' ? 'Command' : 'Arguments'}{' '}
-            <span className="tool-count">· {formatCount(characterCount(entry.arguments))} characters</span>
+            {entry.name === 'bash' ? t("Command") : t("Arguments")}{' '}
+            <span className="tool-count">· {formatCount(characterCount(entry.arguments))}{t(" characters")}</span>
           </h3>
-          <ChunkedText text={entry.arguments} label="arguments" />
+          <ChunkedText text={entry.arguments} label={t("arguments")} />
         </section>
       )}
       {entry.result && (
-        <section aria-label="Tool result" className="tool-section">
+        <section aria-label={t("Tool result")} className="tool-section">
           <h3 className="tool-heading">
-            Result{' '}
-            <span className="tool-count">· {formatCount(characterCount(entry.result))} characters</span>
+            {t("Result")}{' '}
+            <span className="tool-count">· {formatCount(characterCount(entry.result))}{t(" characters")}</span>
           </h3>
-          <ChunkedText text={entry.result} label="output" />
+          <ChunkedText text={entry.result} label={t("output")} />
         </section>
       )}
       {entry.state === 'interrupted' && !entry.result && (
-        <p className="interrupted">The command did not return before the turn ended.</p>
+        <p className="interrupted">{t("The command did not return before the turn ended.")}</p>
       )}
       {entry.replayArguments !== undefined && (
-        <section aria-label="Arguments sent in model context" className="replay-arguments">
-          <p>Not executed. The original arguments above were truncated. Arguments sent in later model context:</p>
+        <section aria-label={t("Arguments sent in model context")} className="replay-arguments">
+          <p>{t("Not executed. The original arguments above were truncated. Arguments sent in later model context:")}</p>
           <pre>{entry.replayArguments}</pre>
         </section>
       )}
@@ -161,21 +164,23 @@ function activityColor(entry: ActivityEntry): string {
 }
 
 export function CompactionSummary({ entry }: { entry: CompactionActivity }) {
+  const { t } = useI18n();
   return <>
-    <p className="summary-explanation">{entry.invalidated ? 'Omitted from future model context because this run failed.'
-      : 'The app supplies this summary to AI using the user role.'}</p>
+    <p className="summary-explanation">{entry.invalidated ? t("Omitted from future model context because this run failed.")
+      : t("The app supplies this summary to AI using the user role.")}</p>
     {!entry.invalidated && <p className="summary-explanation">{entry.keepMessages
-      ? `The latest ${entry.keepMessages} messages remain unchanged after the summary.`
-      : 'The summary replaces all earlier conversation messages in model context.'}</p>}
-    <ChunkedText text={`[Conversation summary]\n${entry.summary}`} label="summary" />
+      ? t("The latest {value0} messages remain unchanged after the summary.", { value0: entry.keepMessages })
+      : t("The summary replaces all earlier conversation messages in model context.")}</p>}
+    <ChunkedText text={`[Conversation summary]\n${entry.summary}`} label={t("summary")} />
   </>;
 }
 
 export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
+  const { t } = useI18n();
   if (entries.length === 0) return null;
 
   return (
-    <div aria-label="Assistant activity">
+    <div aria-label={t("Assistant activity")}>
       {entries.map((entry, index) => (
         <div key={index} className={`activity-entry${entry.kind === 'schedule-spec-check' ? ' model-input' : entry.kind === 'schedule-spec-applied' || entry.kind === 'notice' ? ' app-notice' : ''}`}>
           {entry.kind === 'schedule-spec-applied' && entry.notice && (
@@ -187,20 +192,20 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
             <hr className="activity-separator" />
           )}
           {(entry.kind === 'response' || entry.kind === 'reasoning') && entry.context === 'omitted' && (
-            <p className="omitted-response">Incomplete response. Omitted from future model context.</p>
+            <p className="omitted-response">{t("Incomplete response. Omitted from future model context.")}</p>
           )}
           {entry.kind === 'notice' ? (
             <p role="status" className="notice-message">{entry.text}</p>
           ) : entry.kind === 'response' ? (
             <>
               <AssistantMarkdown content={entry.text} />
-              <p className="character-count">{formatCount(characterCount(entry.text))} characters</p>
+              <p className="character-count">{formatCount(characterCount(entry.text))}{t(" characters")}</p>
             </>
           ) : (
             <details open={entry.kind === 'schedule-spec-check' && !entry.ok ? true : undefined} className={`activity-details ${activityColor(entry)}`}>
-              <summary className="activity-summary">{activitySummary(entry)}</summary>
-              {entry.kind === 'schedule-spec-check' && <p>Validation result sent to AI.</p>}
-              {entry.kind === 'schedule-spec-applied' && <p>Not sent to AI.</p>}
+              <summary className="activity-summary">{activitySummary(entry, t)}</summary>
+              {entry.kind === 'schedule-spec-check' && <p>{t("Validation result sent to AI.")}</p>}
+              {entry.kind === 'schedule-spec-applied' && <p>{t("Not sent to AI.")}</p>}
               <div className="activity-body">
                 {entry.kind === 'tool'
                   ? <ToolBody entry={entry} />
@@ -211,7 +216,7 @@ export function AssistantActivity({ entries }: { entries: ActivityEntry[] }) {
                     </>
                   : entry.kind === 'schedule-spec-change'
                     ? <ScheduleSpecChangePreview entry={entry} />
-                    : <ChunkedText text={entry.text} label={entry.kind === 'reasoning' ? 'reasoning' : 'details'} />}
+                    : <ChunkedText text={entry.text} label={entry.kind === 'reasoning' ? t("reasoning") : t("details")} />}
               </div>
             </details>
           )}

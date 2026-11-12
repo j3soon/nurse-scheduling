@@ -20,6 +20,7 @@
 // A form component for adding and editing a single item or group and managing its relationships.
 'use client';
 
+import { useI18n } from '@/i18n/I18nProvider';
 import { useState } from 'react';
 import { FormInput } from '@/components/FormInput';
 import { CheckboxList } from '@/components/CheckboxList';
@@ -74,6 +75,7 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
   onSave,
   onCancel,
 }: AddEditItemGroupFormProps<T, G>) {
+  const { t } = useI18n();
   const [sourceId, setSourceId] = useState('');
   const [operation, setOperation] = useState<SelectionOperation>('replace');
   // The form opens only after a click, so reading the screen width here cannot mismatch server markup.
@@ -82,8 +84,8 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
     typeof window === 'undefined' || !window.matchMedia?.('(max-width: 639px)').matches
   ));
   const isItem = draft.isItem;
-  const title = `${mode === Mode.ADDING ? 'Add New' : 'Edit'} ${isItem ? itemLabel : "Group"}`;
-  const placeholder = `Enter ${isItem ? itemLabel.toLowerCase() : "group"} ID`;
+  const title = mode === Mode.ADDING ? t("Add New {label}", { label: isItem ? itemLabel : t("Group") }) : t("Edit {label}", { label: isItem ? itemLabel : t("Group") });
+  const placeholder = t("Enter {value0} ID", { value0: isItem ? itemLabel.toLowerCase() : t("group") });
   const filteredItems = filterItemGroups(items) as T[];
   const filteredGroups = filterItemGroups(groups) as G[];
   const sources = (isItem ? filteredItems : filteredGroups)
@@ -103,34 +105,33 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
       : selectedIds.filter(id => !sourceIdSet.has(id));
   const visibleSelectedCount = selectedIds.filter(id => availableIds.has(id)).length;
   const visibleAppliedCount = appliedIds.filter(id => availableIds.has(id)).length;
-  const sourceLabel = isItem ? itemLabel.toLowerCase() : 'group';
+  const sourceLabel = isItem ? itemLabel.toLowerCase() : t('group');
   const applyFrom = sources.length > 0 && (
     <details open={applyFromOpen} onToggle={event => setApplyFromOpen(event.currentTarget.open)} data-membership-apply className="rounded-lg border border-gray-200 bg-gray-50 p-3">
       <summary className="cursor-pointer text-sm font-medium text-blue-700">
-        Apply selection from another {sourceLabel}
+        {t("Apply selection from another ")}{sourceLabel}
       </summary>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="flex min-w-40 flex-1 flex-col gap-1 text-sm text-gray-700">
-          Source {sourceLabel}
+          {t("Source ")}{sourceLabel}
           <select
             value={validSourceId}
             onChange={event => setSourceId(event.target.value)}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
           >
-            <option value="">Choose {sourceLabel}</option>
+            <option value="">{t("Choose ")}{sourceLabel}</option>
             {sources.map(source => <option key={source.id} value={source.id}>{source.id}</option>)}
           </select>
         </label>
         <label className="flex min-w-36 flex-col gap-1 text-sm text-gray-700">
-          Operation
-          <select
+          {t("Operation")}<select
             value={operation}
             onChange={event => setOperation(event.target.value as SelectionOperation)}
             className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
           >
-            <option value="replace">Replace</option>
-            <option value="add">Add missing</option>
-            <option value="remove">Remove matching</option>
+            <option value="replace">{t("Replace")}</option>
+            <option value="add">{t("Add missing")}</option>
+            <option value="remove">{t("Remove matching")}</option>
           </select>
         </label>
         <button
@@ -139,22 +140,19 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           onClick={() => onApplySelection(appliedIds)}
           className="rounded-md border border-blue-600 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Apply to draft
-        </button>
+          {t("Apply to draft")}</button>
       </div>
       {validSourceId && (
         <p className="mt-2 text-xs text-gray-600">
-          {visibleSelectedCount} selected → {visibleAppliedCount} after applying. Save to keep the change.
-        </p>
+          {visibleSelectedCount}{t(" selected → ")}{visibleAppliedCount}{t(" after applying. Save to keep the change.")}</p>
       )}
     </details>
   );
   const memberSelector = filteredItems.length === 0 ? (
     <div className="space-y-2">
-      <h3 className="text-sm font-medium text-gray-700">Members</h3>
+      <h3 className="text-sm font-medium text-gray-700">{t("Members")}</h3>
       <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-        No {itemLabelPlural.toLowerCase()} available. Please set up {itemLabelPlural.toLowerCase()} first.
-      </div>
+        {t("No ")}{itemLabelPlural.toLowerCase()}{t(" available. Please set up ")}{itemLabelPlural.toLowerCase()}{t(" first.")}</div>
     </div>
   ) : renderGroupMemberSelector ? renderGroupMemberSelector({
     items: filteredItems,
@@ -165,22 +163,21 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
       items={filteredItems}
       selectedIds={draft.members}
       onToggle={onMemberToggle}
-      label="Members"
+      label={t("Members")}
     />
   );
   const groupSelector = filteredGroups.length === 0 ? (
     <div className="space-y-2">
-      <h3 className="text-sm font-medium text-gray-700">Groups</h3>
+      <h3 className="text-sm font-medium text-gray-700">{t("Groups")}</h3>
       <div className="text-sm text-gray-500 italic p-4 text-center border border-gray-200 rounded-lg bg-gray-50">
-        No groups available.
-      </div>
+        {t("No groups available.")}</div>
     </div>
   ) : (
     <CheckboxList
       items={filteredGroups}
       selectedIds={draft.groups}
       onToggle={onMemberToggle}
-      label="Groups"
+      label={t("Groups")}
     />
   );
 
@@ -193,12 +190,12 @@ export function AddEditItemGroupForm<T extends Item, G extends Group>({
           itemPlaceholder={placeholder}
           onItemChange={onIdChange}
           descriptionValue={draft.description}
-          descriptionPlaceholder={`Enter ${isItem ? itemLabel.toLowerCase() : "group"} description (optional)`}
+          descriptionPlaceholder={t("Enter {value0} description (optional)", { value0: isItem ? itemLabel.toLowerCase() : t("group") })}
           onDescriptionChange={onDescriptionChange}
           error={error}
           onAction={onSave}
           onCancel={onCancel}
-          actionText={mode === Mode.ADDING ? 'Add' : 'Update'}
+          actionText={mode === Mode.ADDING ? t("Add") : t("Update")}
         >
           {!draft.isItem ? memberSelector : groupSelector}
           {applyFrom}

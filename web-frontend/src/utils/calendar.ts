@@ -37,8 +37,8 @@ export function addDays(date: Date, days: number): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
 }
 
-export function formatMonthYear(date: Date): string {
-  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+export function formatMonthYear(date: Date, locale = 'en-US'): string {
+  return date.toLocaleDateString(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function getCalendarMonthDates(date: Date): Array<Date | undefined> {
