@@ -30,6 +30,7 @@ from nurse_scheduling.solver_interface import SolverProgress
 
 REAL_TESTCASE = Path(__file__).parents[1] / "testcases" / "real" / "large-ward-with-87-people-2025-11.yaml"
 SMOKE_TEST_TIMEOUT_SECONDS = 300
+SEARCH_TIMEOUT_SECONDS = 1200
 ZERO_CRITICAL_NOTES_STABILITY_SECONDS = 60
 EXPECTED_SOLUTION_SIZE = 30 * 11 * 87
 CRITICAL_REQUEST_NOTE_PREFIX = "Critical unsatisfied request:"
@@ -115,7 +116,7 @@ def run_real_schedule_smoke_test(solver: str):
         file_content,
         prettify=True,
         solver=solver,
-        timeout=None if supports_progress_stop else SMOKE_TEST_TIMEOUT_SECONDS,
+        timeout=SEARCH_TIMEOUT_SECONDS if supports_progress_stop else SMOKE_TEST_TIMEOUT_SECONDS,
         progress_callback=track_critical_notes if supports_progress_stop else None,
         should_stop=has_stable_zero_critical_notes if supports_progress_stop else None,
     )

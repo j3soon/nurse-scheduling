@@ -1,8 +1,14 @@
 name: Test Core Real Scenario Windows
 
 on:
-  - push
-  - pull_request
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_search:
+        description: Run the slow search for a new real-world schedule
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,12 +31,18 @@ jobs:
       - name: Install dependencies
         working-directory: core
         run: python -m pip install -r requirements-optional.txt
+      - name: Replay the real-world assignment and verify its exact score
+        working-directory: core
+        run: pytest -q --durations=20 tests/real/schedule_score_ground_truth.py
       - name: Test real-world scenario until OR-Tools clears critical violations
+        if: github.event_name == 'workflow_dispatch' && inputs.run_search
         working-directory: core
         run: pytest tests/real/schedule_ortools_cp_sat.py
       - name: Test bounded real-world scenario with CBC
+        if: github.event_name == 'workflow_dispatch' && inputs.run_search
         working-directory: core
         run: pytest tests/real/schedule_pulp_cbc.py
       - name: Test bounded real-world scenario with cuOpt
+        if: github.event_name == 'workflow_dispatch' && inputs.run_search
         working-directory: core
         run: pytest tests/real/schedule_pulp_cuopt.py

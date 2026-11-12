@@ -89,8 +89,11 @@ pytest --log-cli-level=INFO tests/test_schedule_pulp_cuopt.py
 Note that setting `WRITE_TO_CSV=True` in `core/tests/schedule_test_helper.py` is often useful for creating new test cases.
 
 The checks under `core/tests/real/` intentionally omit pytest's `test_` filename prefix so they are not included in the
-normal core suite. They solve larger real-world scenarios with fixed optimization budgets and run in the separate
-`test-core-real.yaml` GitHub Actions workflow.
+normal core suite. The real-scenario CI workflows replay the saved 87-person assignment. They check the exact score,
+all assignments, and the absence of critical request violations without searching for a new schedule.
+Use the workflows' **Run workflow** action with `run_search` enabled for a new search, or run
+`pytest tests/real/schedule_ortools_cp_sat.py` locally. That search has a 20-minute solver budget and stops after
+critical request violations remain absent for one minute. It measures search behavior that the fixed replay cannot check.
 
 Note: The frontend now has Vitest coverage plus Playwright browser integration tests. The root GitHub Actions badge currently still points at the core workflow.
 

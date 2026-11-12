@@ -53,5 +53,5 @@ def test_ortools_real_smoke_test_stops_after_progress_has_no_critical_notes(monk
 
     schedule_real_helper.run_real_schedule_smoke_test("ortools/cp-sat")
 
-    assert seen["timeout"] is None
+    assert seen["timeout"] == schedule_real_helper.SEARCH_TIMEOUT_SECONDS
     assert seen["prettify"] is True
