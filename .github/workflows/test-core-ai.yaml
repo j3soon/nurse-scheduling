@@ -4,14 +4,17 @@
 name: Test Core AI
 
 on:
-  - push
-  - pull_request
+  push:
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-validate
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +34,11 @@ jobs:
 
   behavior:
     needs: validate
-    if: github.event_name == 'push' && github.repository == 'j3soon/nurse-scheduling'
+    if: >-
+      github.repository == 'j3soon/nurse-scheduling' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
