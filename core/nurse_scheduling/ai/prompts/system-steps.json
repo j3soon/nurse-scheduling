@@ -930,7 +930,66 @@
     ],
     "comparison_mode": "ablation",
     "reviewed_cases": [
-      "basics/02_schedule-spec-optimize.yaml"
+      "basics/02_schedule-spec-optimize.yaml",
+      "basics/02_schedule-spec-guidance-2.yaml",
+      "basics/02_schedule-spec-guidance.yaml",
+      "basics/02_edit-only-without-optimization.yaml"
+    ],
+    "reviewed_evidence": [
+      {
+        "comparison": "previous_production_prompt",
+        "model": "unsloth/Qwen3.8-27B-NVFP4",
+        "jobs": 4,
+        "section_sha256": "e1dbafeff1f2606c45c23481621890628059d3e9d00d4a763b96256fdce72ceb",
+        "prompt_before_sha256": "93853e09f3d1bff6a3cd3d58a62604f5a45f641da424c4ba8b27ad93bc4276b5",
+        "prompt_after_sha256": "b6601b0dd972f6fa4243ce23e16426d045908e012e6118c9a2febdc1627c63b0",
+        "case": "basics/02_schedule-spec-guidance-2.yaml",
+        "parsed_case_sha256": "e8d4baea2442b9a16f73528290cfe39aeedd2475a0f1c696bbdbd06fd7648869",
+        "input_sha256": "edb344e226e9df7b03ca06f394c87a71fface0850143b5d77c3512c5bf2cd38d",
+        "before": {
+          "passed": 2,
+          "behavior_failures": 2,
+          "provider_errors": 1
+        },
+        "after": {
+          "passed": 3,
+          "behavior_failures": 0,
+          "provider_errors": 0
+        },
+        "controls": [
+          {
+            "case": "basics/02_schedule-spec-guidance.yaml",
+            "parsed_case_sha256": "f5533918c10fbd55462f3a6c11621a38b6620a6af9f7877c2f4bb56dd64026d2",
+            "input_sha256": "b6039879801580aa1ed6e2a76af952c445bcd0fd18c5244f135f1096faa065b7",
+            "before": {
+              "passed": 3,
+              "behavior_failures": 0,
+              "provider_errors": 2
+            },
+            "after": {
+              "passed": 3,
+              "behavior_failures": 0,
+              "provider_errors": 0
+            }
+          },
+          {
+            "case": "basics/02_edit-only-without-optimization.yaml",
+            "parsed_case_sha256": "b1f35850b9f5a772b84c29f49bc7fadfdcdfbe2ce2e9d021414e0b8bb4700b87",
+            "input_sha256": "4dcf31801b8b35fd98df07f21ef9a9a0a4e38c653b925af7cc0d7be94d9e5cc5",
+            "before": {
+              "passed": 3,
+              "behavior_failures": 0,
+              "provider_errors": 0
+            },
+            "after": {
+              "passed": 3,
+              "behavior_failures": 0,
+              "provider_errors": 0
+            }
+          }
+        ],
+        "note": "Failing baseline replies asked whether A belongs to Day only for shift streaks. The revised prompt asks about Day membership for rest rules and the Night-to-administrative ban together. Provider HTTP 520/530 failures remain separate from completed-reply failures. The witness covers clarification and scope only. One revised reply miscounted seven daily slots as nine and falsely claimed infeasibility. Staffing arithmetic needs separate regression coverage. Missing provider usage prevents token comparisons."
+      }
     ]
   },
   {
