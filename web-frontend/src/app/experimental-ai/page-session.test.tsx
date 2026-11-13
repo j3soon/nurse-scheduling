@@ -34,7 +34,9 @@ import {
 } from '@/test/experimentalAiPage';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLayoutEffect } from 'react';
 import ExperimentalAiPage from './page';
+import * as chatHooks from './useAiChat';
 import type { SessionStreamOptions } from './sessionEvents';
 
 describe('ExperimentalAiPage', () => {
@@ -180,6 +182,43 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Completed once')).toBeInTheDocument();
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
     await act(async () => finish?.());
+  });
+
+  it('saves a visible retry notice with its event cursor before passive effects run', async () => {
+    const useAiChat = chatHooks.useAiChat;
+    const notice = 'The provider timed out. Retrying in 2 s (attempt 2 of 5).';
+    vi.spyOn(chatHooks, 'useAiChat').mockImplementation(function useChatWithImmediateUnload(options) {
+      const chat = useAiChat(options);
+      useLayoutEffect(() => {
+        if (JSON.stringify(chat.messages).includes(notice)) window.dispatchEvent(new Event('pagehide'));
+      }, [chat.messages]);
+      return chat;
+    });
+    mockRunEvents.mockImplementation(async (_id: string, _question: string, stream: SessionStreamOptions) => {
+      const sessionStream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+      sessionStream.onEventId?.(7);
+      stream.onEvent({ type: 'provider_retry', message: notice });
+      await new Promise<void>(() => {});
+    });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Build a schedule.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    const saved = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(saved.sessionEventId).toBe(7);
+    expect(JSON.stringify(saved.messages)).toContain(notice);
+
+    let beforeCommit = '';
+    act(() => {
+      const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+      stream.onEventId?.(8);
+      runEvents(stream, 'user-run-1')?.onEvent({ type: 'delta', text: 'Recovered output.' });
+      window.dispatchEvent(new Event('pagehide'));
+      beforeCommit = window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}';
+    });
+    expect(JSON.parse(beforeCommit).sessionEventId).toBe(7);
+    expect(beforeCommit).not.toContain('Recovered output.');
   });
 
   it('delivers queued steering during optimizer review without sending it again', async () => {

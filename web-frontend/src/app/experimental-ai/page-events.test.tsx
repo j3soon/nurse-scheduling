@@ -541,8 +541,16 @@ describe('ExperimentalAiPage', () => {
       disconnect?.();
     });
     await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const beforeAcceptance = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(beforeAcceptance.sessionEventId).toBe(0);
+    expect(JSON.stringify(beforeAcceptance.messages)).not.toContain('Earlier review.');
     await act(async () => accept?.('accepted'));
     expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const afterAcceptance = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(afterAcceptance.sessionEventId).toBe(3);
+    expect(JSON.stringify(afterAcceptance.messages)).toContain('Earlier review.');
     const next = mockStreamSessionEvents.mock.calls[1][1] as SessionStreamOptions;
     act(() => {
       runEvents(next, 'accepted')?.onEvent({ type: 'delta', text: 'Current answer.' });

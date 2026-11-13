@@ -48,6 +48,8 @@ duration alone does not justify a split.
 Keep shared mocks and fixtures in `src/test/`, outside production
 TypeScript and source coverage. Import mock setup before the component under
 test, and reset mutable fixtures for each test.
+When changing chat persistence, test `pagehide` before passive effects run.
+Save the event cursor with the transcript that has processed those events.
 
 Prepare chat archives before starting a native download in a hidden frame. Keep
 preparation and download errors on the chat page. Test both failure paths in

@@ -25,6 +25,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useEffectEvent,
   useRef,
   useState,
@@ -212,6 +213,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const [historyError, setHistoryError] = useState<string | null>(null);
   const lastActivityRef = useRef(Date.now());
   const observedEventIdRef = useRef(0);
+  const [sessionEventId, setSessionEventId] = useState(0);
   const historyCreateRef = useRef(false);
   const historyForgottenRef = useRef(false);
   const preserveBrowserScheduleSpecRef = useRef(false);
@@ -304,6 +306,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     preserveBrowserScheduleSpecRef.current = false;
     resumedRequestRef.current = null;
     observedEventIdRef.current = 0;
+    setSessionEventId(0);
     eventRouterRef.current = new SessionEventRouter();
     setUploadedFiles([]);
     setSteeringAssistantId(null);
@@ -386,11 +389,13 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     sessionRetentionSecondsRef.current = sessionRetentionSeconds;
   }, [scheduleSpecYaml, sessionRetentionSeconds]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isClientReady) return;
     if (conversationStorageTimerRef.current !== null) {
       clearTimeout(conversationStorageTimerRef.current);
     }
+    // An unload can precede passive effects. Save the committed transcript with
+    // its cursor, rather than combining old messages with a newer reader cursor.
     const persistConversation = () => {
       try {
         if (
@@ -414,7 +419,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           syncedScheduleSpec: syncedScheduleSpecRef.current ?? scheduleSpecYaml,
           syncedBrowserScheduleSpec: syncedBrowserScheduleSpecRef.current ?? scheduleSpecYaml,
           appliedScheduleSpecRuns: appliedScheduleSpecRunsRef.current,
-          sessionEventId: lastSessionEventIdRef.current,
+          sessionEventId,
           activeOptimization,
           backendVersion,
           contextUsage,
@@ -467,7 +472,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     aiEndpoint,
     isClientReady,
     lifecycle,
-    lastSessionEventIdRef,
+    sessionEventId,
     messages,
     scheduleSpecYaml,
     sessionExpiresAt,
@@ -726,6 +731,9 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       onEventId: id => {
         if (id > observedEventIdRef.current) lastActivityRef.current = Date.now();
         observedEventIdRef.current = Math.max(observedEventIdRef.current, id);
+        // Deferred events have not reached the transcript until POST identifies their run.
+        const foreground = eventRouterRef.current.foreground;
+        if (!foreground || foreground.runId) setSessionEventId(id);
         setIsReconnecting(false);
       },
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
@@ -1017,6 +1025,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           setMessages(previous => previous.map(message => runMessageIds.has(message.id)
             ? { ...message, runId: id, requestId: request.id } : message));
         });
+        setSessionEventId(lastSessionEventIdRef.current);
         if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
           // Stop may have reached the server before the message was admitted.
           await stopSession(sessionId, authToken, sessionEndpoint, request.id).catch(stopError => {
@@ -1176,6 +1185,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       });
       if (!lifecycle.owns(operation)) return;
       eventRouterRef.current.acknowledge(foreground, runId, () => {});
+      setSessionEventId(lastSessionEventIdRef.current);
       if (!runFinished && lifecycle.getSnapshot().foreground?.phase === 'stopping') {
         await stopSession(sessionId, authToken, endpoint, request.id).catch(stopError => {
           if (!lifecycle.owns(operation)) return;
@@ -1265,6 +1275,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       }));
       setSessionRetentionSeconds(storedConversation.retentionSeconds);
       lastSessionEventIdRef.current = storedConversation.sessionEventId ?? 0;
+      setSessionEventId(lastSessionEventIdRef.current);
       observedEventIdRef.current = lastSessionEventIdRef.current;
       setContextUsage(storedConversation.contextUsage ?? null);
       setCostSummary(storedConversation.costSummary ?? null);
