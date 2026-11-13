@@ -168,6 +168,8 @@ test('the navigation globe switches language with the keyboard and preserves uns
   const bounds = await language.boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(redo!.x + redo!.width);
   await language.focus();
+  // Open the native picker first. On macOS, ArrowDown alone opens it without moving the selection.
+  await page.keyboard.press('Space');
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Escape');
