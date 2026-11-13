@@ -27,9 +27,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: core/requirements*.txt
-      - name: Install dependencies
-        run: cd core && python -m pip install -r requirements-optional.txt
+          cache-dependency-path: .github/workflows/lint-core.yaml
+      - name: Install Ruff
+        run: python -m pip install ruff
       - name: Check core Python formatting with Ruff
         run: cd core && ruff format --check nurse_scheduling tests
       - name: Lint core Python with Ruff
