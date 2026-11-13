@@ -41,8 +41,11 @@ case without V8 bundle coverage. Use `test:e2e:coverage` or workflow dispatch's
 `bundle_coverage` input only when the minified-bundle report is needed.
 Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
-Split large page test suites by behavior so Vitest can schedule them across
-workers. Keep shared mocks and fixtures in `src/test/`, outside production
+Split a test file when it delays completion of the full suite. Compare full
+runs with the same worker limit before keeping a split. Additional files add
+module import and environment setup costs. A large test count or long file
+duration alone does not justify a split.
+Keep shared mocks and fixtures in `src/test/`, outside production
 TypeScript and source coverage. Import mock setup before the component under
 test, and reset mutable fixtures for each test.
 
