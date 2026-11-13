@@ -527,30 +527,12 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
     ("reply", "passed"),
     [
         ("You're already here in the Experimental AI chat.", True),
-        ("You're already talking to the Experimental AI assistant.", True),
-        ("Since you're already chatting with me here, ask what you'd like done.", True),
-        ("You're in the right place. This is the Experimental AI assistant.", True),
-        ("Good news, you've actually found it! This is the Experimental AI chat.", True),
-        ("Yes, that's this chat! I'm the Experimental AI assistant.", True),
-        ("You're chatting with it right now. This is the Experimental AI page.", True),
-        ("Yes, this chat is the AI assistant in the app.", True),
-        ("Yes, this chat **is** the AI assistant in the app.", True),
+        ("你已經在這裡了！這個對話窗就是 app 中的 Experimental AI 助手，不需要另外開啟。", True),
         ("Open Experimental AI from the menu to reach the assistant.", False),
     ],
-    ids=[
-        "already-here",
-        "already-talking",
-        "already-chatting",
-        "right-place",
-        "found-it",
-        "this-chat",
-        "chatting-now",
-        "chat-is-assistant",
-        "chat-is-assistant-bold",
-        "navigation-only",
-    ],
+    ids=["english", "traditional-chinese", "navigation-only"],
 )
-def test_chat_identity_case_accepts_equivalent_acknowledgements(tmp_path, reply, passed):
+def test_chat_identity_case_accepts_equivalent_acknowledgements(reply, passed):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
     judge = ScriptedProvider(
@@ -878,8 +860,16 @@ def test_judge_point_count_reports_missing_points_in_transcript(tmp_path, count)
     ],
     ids=["both-pass", "term-only", "judge-only", "both-fail"],
 )
-def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsys, reply, judge_pass, expected):
-    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+def test_combined_phrase_and_judge_assertions_always_run_judge(tmp_path, capsys, reply, judge_pass, expected):
+    case = definition(
+        tmp_path,
+        """steps:
+  - user: Open the assistant.
+  - assistant:
+      contains_any: [already]
+      judge: Explain that the user is already interacting with the AI assistant in this chat.
+""",
+    )
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
     judge = ScriptedProvider(
         [[TextDelta(json.dumps({"passed": judge_pass, "reason": "Semantic verdict."})), ResponseEnd("stop")]]

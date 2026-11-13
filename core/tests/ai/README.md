@@ -128,8 +128,8 @@ before a tool call. They exclude reasoning and failed responses. Matching is
 case-insensitive unless `case_sensitive: true` is set.
 
 `assistant.judge` is a nonempty rubric string. Write it as a positive pass
-condition. It can be used alone for semantic
-checks such as reply language. A judge-only assertion requires a nonempty reply.
+condition. Prefer judge-only assertions for meaning. Add phrase matching only
+when the words themselves are required. A judge-only assertion requires a nonempty reply.
 When phrase matching is also supplied, both matching and the LLM judge must pass.
 The language cases use judge-only assertions for English and Chinese script.
 For a numbered rubric, optional `assistant.count: 12` asks the judge to include
