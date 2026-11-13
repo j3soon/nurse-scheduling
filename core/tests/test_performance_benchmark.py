@@ -23,9 +23,11 @@ import json
 from argparse import Namespace
 from types import SimpleNamespace
 
+import pytest
+
 from nurse_scheduling.solver_interface import SchedulePhaseProgress, SolverProgress
 from tests.real import performance_benchmark
-from tests.real.assignment_fixture import deserialize_assignment_fixture
+from tests.real.assignment_fixture import deserialize_assignment_fixture, serialize_assignment_fixture
 
 VALID_SCENARIO = b"""\
 apiVersion: alpha
@@ -218,6 +220,18 @@ def test_write_schedule_artifacts_keeps_replayable_assignment(tmp_path):
     replay_solution, expected_score = deserialize_assignment_fixture(VALID_SCENARIO, fixture)
     assert replay_solution == solution
     assert expected_score == 123
+
+
+@pytest.mark.parametrize("source_newline", [b"\n", b"\r\n"], ids=["source-lf", "source-crlf"])
+@pytest.mark.parametrize("replay_newline", [b"\n", b"\r\n"], ids=["replay-lf", "replay-crlf"])
+def test_assignment_fixture_accepts_checkout_line_endings(source_newline, replay_newline):
+    solution = {(0, 0, 0): 1, (1, 0, 0): 0}
+    fixture = serialize_assignment_fixture(VALID_SCENARIO.replace(b"\n", source_newline), solution, 123)
+    replay_content = VALID_SCENARIO.replace(b"\n", replay_newline)
+
+    assert deserialize_assignment_fixture(replay_content, fixture) == (solution, 123)
+    with pytest.raises(ValueError, match="does not match the scenario content"):
+        deserialize_assignment_fixture(replay_content.replace(b"id: nurse", b"id: another-nurse"), fixture)
 
 
 def test_summarize_compute_runs_scores_median_target_time():

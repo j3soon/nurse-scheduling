@@ -6,6 +6,11 @@ They are slower and less deterministic than the normal unit and regression tests
 The Python files in this directory intentionally omit pytest's `test_` filename
 prefix so that the default test suite does not collect them.
 
+Routine CI replays a saved assignment with
+`pytest tests/real/schedule_score_ground_truth.py` to verify its exact score.
+Assignment fixtures hash Schedule Spec text with LF line endings so that Windows
+checkouts can replay them. Other content changes invalidate the fixture.
+
 Run real-world checks explicitly:
 
 ```sh

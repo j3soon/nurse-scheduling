@@ -30,6 +30,11 @@ from nurse_scheduling.loader import load_schedule_spec
 ASSIGNMENT_FIXTURE_SCHEMA_VERSION = 1
 
 
+def _scenario_sha256(file_content: bytes) -> str:
+    """Identify Schedule Spec text independently of checkout line endings."""
+    return hashlib.sha256(file_content.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def serialize_assignment_fixture(
     file_content: bytes,
     solution: Mapping[tuple[int, int, int], int],
@@ -73,7 +78,7 @@ def serialize_assignment_fixture(
 
     return {
         "schemaVersion": ASSIGNMENT_FIXTURE_SCHEMA_VERSION,
-        "scenarioSha256": hashlib.sha256(file_content).hexdigest(),
+        "scenarioSha256": _scenario_sha256(file_content),
         "capturedScore": score,
         "dates": [str(start_date + timedelta(days=day)) for day in range(n_days)],
         "assignments": assignments,
@@ -87,7 +92,7 @@ def deserialize_assignment_fixture(
     """Return a complete indexed solution and expected score from a fixture."""
     if fixture.get("schemaVersion") != ASSIGNMENT_FIXTURE_SCHEMA_VERSION:
         raise ValueError(f"Unsupported assignment fixture schema version: {fixture.get('schemaVersion')!r}")
-    scenario_sha256 = hashlib.sha256(file_content).hexdigest()
+    scenario_sha256 = _scenario_sha256(file_content)
     if fixture.get("scenarioSha256") != scenario_sha256:
         raise ValueError("Assignment fixture does not match the scenario content.")
 
