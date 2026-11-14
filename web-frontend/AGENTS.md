@@ -293,6 +293,8 @@ replacement snapshots even when their IDs are at or below the stored cursor.
 Browser timers have a maximum delay of about 24.8 days. Schedule longer session
 expiry in bounded intervals and recheck the timestamp after each wake. Cover
 both the intermediate wake and the final expiry with a clock-controlled test.
+When advancing many days in a component test, fake only the clock and timeout
+APIs under test. Leave unrelated periodic refresh intervals on real time.
 
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,

@@ -225,7 +225,8 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('keeps a thirty-day chat through the browser timer limit until its real expiry', async () => {
-    vi.useFakeTimers();
+    // Advance expiry timeouts without replaying a month of unrelated history refresh intervals.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
       const now = Date.parse('2026-09-19T08:30:00Z');
       vi.setSystemTime(now);
