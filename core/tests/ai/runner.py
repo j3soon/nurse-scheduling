@@ -275,10 +275,10 @@ async def run_case(
                     verdict = await evaluate(
                         judge,
                         step.value["judge"],
-                        trace[:judge_turn],
+                        trace[judge_turn - 1 : judge_turn],
                         model,
                         count=step.value.get("count"),
-                        context=step.value.get("judge_context", "conversation"),
+                        context=step.value.get("judge_context", "replies"),
                     )
                 finally:
                     elapsed = perf_counter() - judge_started

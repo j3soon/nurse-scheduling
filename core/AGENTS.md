@@ -773,6 +773,9 @@ and current session recovery working.
   discovery limits each run separately, not their combined load.
   Fail turns without a completed, nonempty assistant reply locally. Skip their
   model judges and record the reason. Judge earlier completed turns as usual.
+  Each judge grades only its turn's latest completed reply, with the current user
+  request and rubric. Exclude previous turns and intermediate replies. Include
+  current-turn tool evidence only when the assertion explicitly requests it.
   Let production provider retries finish before reporting an execution failure.
   Keep interrupted drafts in transcripts, but exclude them from assertions and
   judge input.

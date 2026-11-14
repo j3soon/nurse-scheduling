@@ -16,7 +16,6 @@ steps:
       invoked: false
   - assistant:
       count: 2
-      judge_context: replies
       judge: >-
         Pass when both points are satisfied:
         (1) The response asks whether P1 and P2 also count as seniors for the

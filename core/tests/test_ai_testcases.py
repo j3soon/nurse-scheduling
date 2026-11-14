@@ -1010,10 +1010,19 @@ def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, con
     assertion = {"judge": "Check the reply."}
     if context is not None:
         assertion["judge_context"] = context
-    case = definition(tmp_path, json.dumps({"steps": [{"user": "Read the Schedule Spec."}, {"assistant": assertion}]}))
+    case = definition(
+        tmp_path,
+        json.dumps(
+            {"steps": [{"user": "Earlier request."}, {"user": "Read the Schedule Spec."}, {"assistant": assertion}]}
+        ),
+    )
     provider = ScriptedProvider(
         [
-            [tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("Earlier answer."), ResponseEnd("stop")],
+            [
+                TextDelta("Intermediate answer."),
+                tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),
+            ],
             [TextDelta("The Schedule Spec is empty."), ResponseEnd("stop")],
         ]
     )
@@ -1023,19 +1032,22 @@ def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, con
         run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
     )
     evidence = json.loads(judge.requests[0][1]["content"])["conversation"]
+    assert len(evidence) == 1
     assert evidence[0]["user"] == "Read the Schedule Spec."
     events = evidence[0]["events"]
     assert [event["text"] for event in events if event["kind"] == "assistant" and event["text"]] == [
         "The Schedule Spec is empty."
     ]
-    if context == "replies":
+    if context != "conversation":
         assert all(event["kind"] == "assistant" for event in events)
     else:
         assert {event["kind"] for event in events} == {"assistant", "tool", "tool_result"}
     saved = transcript.read_text(encoding="utf-8")
+    assert "Earlier answer." in saved and "Intermediate answer." in saved
+    assert "Earlier answer." in json.dumps(provider.requests[-1])
     assert "### Tool Result" in saved and "people:" in saved
     assert "Known failure." in saved and "Verdict: **FAIL**" in saved
-    assert f"Judge context: `{context or 'conversation'}`." in saved
+    assert f"Judge context: `{context or 'replies'}`." in saved
 
 
 @pytest.mark.parametrize("context", [None, "", True, ["replies"], {"mode": "replies"}, "tools"])
@@ -1048,6 +1060,30 @@ def test_invalid_judge_context_fails_without_credentials(tmp_path, context):
 def test_judge_context_requires_judge(tmp_path):
     with pytest.raises(DefinitionError, match="judge_context requires judge"):
         definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [hi], judge_context: replies}}]")
+
+
+def test_direct_judge_ignores_previous_turns_and_incomplete_latest_drafts():
+    provider = ScriptedProvider(
+        [[TextDelta('{"passed": true, "reason": "Latest reply checked."}'), ResponseEnd("stop")]]
+    )
+    trace = [
+        {"user": "Earlier request", "events": [{"kind": "assistant", "text": "Earlier answer", "stop_reason": "stop"}]},
+        {
+            "user": "Current request",
+            "events": [
+                {"kind": "assistant", "text": "Latest answer", "stop_reason": "stop"},
+                {"kind": "assistant", "text": "Interrupted draft", "stop_reason": "length"},
+                {"kind": "assistant", "text": "Omitted answer", "stop_reason": "stop", "context_omitted": True},
+                {"kind": "assistant", "text": "   ", "stop_reason": "stop"},
+            ],
+        },
+    ]
+    result = asyncio.run(evaluate(provider, "Check the latest reply.", trace, "test"))
+    assert result["passed"]
+    evidence = json.loads(provider.requests[0][1]["content"])["conversation"]
+    assert evidence == [
+        {"user": "Current request", "events": [{"kind": "assistant", "text": "Latest answer", "stop_reason": "stop"}]}
+    ]
 
 
 @pytest.mark.parametrize("count", [True, False, 0, -1, 1.5, "12", [], {}])
