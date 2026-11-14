@@ -759,6 +759,8 @@ and current session recovery working.
 - Add human-reviewed AI regression conversations under `tests/ai/testcases/`.
   Use the target script in basic Chinese-language tests. Keep cross-script
   override checks separate.
+  Keep a script-ambiguous greeting separate from a request with explicit script
+  cues. The first reply checks the system prompt's language policy.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.

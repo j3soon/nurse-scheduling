@@ -1,6 +1,7 @@
 # This file is part of Nurse Scheduling Project.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 steps:
+  # The shared-script greeting checks the system prompt's language policy.
   - user: 你好
   - assistant:
       judge_context: characters
@@ -9,6 +10,7 @@ steps:
   - schedule:
       unchanged: true
 
+  # This follow-up supplies explicit Traditional Chinese script cues.
   - user: 請簡短介紹你能幫我做什麼。
   - assistant:
       judge_context: characters
