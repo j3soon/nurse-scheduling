@@ -769,6 +769,10 @@ and current session recovery working.
   When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
   saved replies first. Include known failures and valid alternatives before
   starting new live agent runs.
+  Run local live comparisons after CI when they share a provider. Concurrency
+  discovery limits each run separately, not their combined load.
+  Fail turns without a completed, nonempty assistant reply locally. Skip their
+  model judges and record the reason. Judge earlier completed turns as usual.
   Let production provider retries finish before reporting an execution failure.
   Keep interrupted drafts in transcripts, but exclude them from assertions and
   judge input.

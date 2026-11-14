@@ -42,6 +42,15 @@ def _partial(expected: Any, observed: Any) -> bool:
     return type(expected) is type(observed) and expected == observed
 
 
+def is_completed_assistant(event: dict) -> bool:
+    """Exclude interrupted drafts and replies omitted from model context."""
+    return (
+        event["kind"] == "assistant"
+        and event.get("stop_reason") not in {"error", "aborted", "length"}
+        and not event.get("context_omitted")
+    )
+
+
 def check_event(step: Step, events: list[dict], cursor: int) -> int:
     """Consume the next matching event, allowing unrelated events in between."""
     if step.kind == "optimizer":
@@ -53,9 +62,7 @@ def check_event(step: Step, events: list[dict], cursor: int) -> int:
         return cursor
     for index in range(cursor, len(events)):
         event = events[index]
-        if event["kind"] == "assistant" and (
-            event.get("stop_reason") in {"error", "aborted", "length"} or event.get("context_omitted")
-        ):
+        if event["kind"] == "assistant" and not is_completed_assistant(event):
             continue
         if step.kind == "tool":
             matched = (

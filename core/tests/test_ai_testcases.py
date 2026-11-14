@@ -352,8 +352,8 @@ def test_attempt_timings_include_workspace_retries_and_every_judge(tmp_path, mon
     assert saved.count("Judge time:") == len(verdicts)
 
 
-@pytest.mark.parametrize(("agent_seconds", "judge_seconds"), [(0, 0), (5, 2)], ids=["tied-clock", "stream-failure"])
-def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds, judge_seconds):
+@pytest.mark.parametrize("agent_seconds", [0, 5], ids=["tied-clock", "stream-failure"])
+def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds):
     from tests.ai import runner
 
     case = definition(tmp_path, "steps: [{user: hi}, {assistant: {judge: Reply in English.}}]")
@@ -364,13 +364,7 @@ def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds, j
             yield TextDelta("Partial reply.")
             raise RuntimeError("Agent stream failed.")
 
-    class TimedJudge(ScriptedProvider):
-        async def stream_events(self, messages, tools=()):
-            timing_clock(judge_seconds)
-            async for event in super().stream_events(messages, tools):
-                yield event
-
-    judge = TimedJudge([[TextDelta('{"passed": false, "reason": "No completed reply."}'), ResponseEnd("stop")]])
+    judge = ScriptedProvider([])
     timing = runner.AttemptTiming()
     transcript = tmp_path / "failed.md"
     assert not asyncio.run(
@@ -385,14 +379,15 @@ def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds, j
         )
     )
     assert (timing.total_seconds, timing.agent_seconds, timing.judge_seconds) == (
-        agent_seconds + judge_seconds,
         agent_seconds,
-        judge_seconds,
+        agent_seconds,
+        0,
     )
+    assert not judge.requests
     saved = transcript.read_text(encoding="utf-8")
     assert "Agent stream failed." in saved
     assert f"Agent time: {agent_seconds:.3f} s." in saved
-    assert f"Judge time: {judge_seconds:.3f} s." in saved
+    assert "### Judge Skipped" in saved and "No completed assistant reply to judge." in saved
 
 
 def test_diagnostic_attempt_timings_reach_summary_and_json(tmp_path, capsys, timing_clock):
@@ -992,7 +987,7 @@ def test_judge_only_assistant_assertions(tmp_path, reply, verdict, expected):
         [[TextDelta(json.dumps({"passed": verdict, "reason": "Language checked."})), ResponseEnd("stop")]]
     )
     assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is expected
-    assert len(judge.requests) == 1
+    assert len(judge.requests) == int(bool(reply.strip()))
 
 
 @pytest.mark.parametrize(
@@ -1175,17 +1170,60 @@ def test_judge_diagnostics_preserve_initial_failure_without_replaying_agent(tmp_
             assert f"(judge): attempt {attempt}:" in saved
 
 
-def test_judge_still_runs_when_agent_execution_fails(capsys):
+@pytest.mark.parametrize("stop_reason", ["stop", "length"])
+def test_judge_skips_missing_completed_replies(capsys, stop_reason):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
-    provider = ScriptedProvider([[TextDelta("Partial reply."), ResponseEnd("length")]])
+    reply = "   " if stop_reason == "stop" else "Partial reply."
+    provider = ScriptedProvider([[TextDelta(reply), ResponseEnd(stop_reason)]])
+    judge = ScriptedProvider([])
+    assert not asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, judge_attempts=3)
+    )
+    log = capsys.readouterr().out
+    assert "No completed assistant reply to judge." in log
+    assert "### Judge Skipped" in log
+    assert not judge.requests
+    if stop_reason != "stop":
+        assert "(execution):" in log and "Partial reply." in log
+
+
+def test_judge_runs_after_execution_failure_when_completed_reply_exists(capsys):
+    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+    provider = ScriptedProvider(
+        [
+            [
+                TextDelta("I will inspect the Schedule Spec."),
+                tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),
+            ],
+            [TextDelta("Partial reply."), ResponseEnd("length")],
+        ]
+    )
     judge = ScriptedProvider(
-        [[TextDelta('{"passed": false, "reason": "Incomplete acknowledgement."}'), ResponseEnd("stop")]]
+        [[TextDelta('{"passed": true, "reason": "Completed introduction."}'), ResponseEnd("stop")]]
     )
     assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge))
     log = capsys.readouterr().out
     assert "(execution):" in log and "Partial reply." in log
-    assert "Verdict: **FAIL**" in log
+    assert "Verdict: **PASS**" in log
     assert len(judge.requests) == 1
+    request = json.loads(judge.requests[0][1]["content"])
+    replies = [event["text"] for event in request["conversation"][0]["events"] if event["kind"] == "assistant"]
+    assert replies == ["I will inspect the Schedule Spec."]
+
+
+def test_earlier_reply_does_not_trigger_judging_an_incomplete_later_turn(tmp_path, capsys):
+    case = definition(
+        tmp_path, "steps: [{user: hi}, {assistant: {judge: English.}}, {user: again}, {assistant: {judge: English.}}]"
+    )
+    provider = ScriptedProvider(
+        [[TextDelta("Hello."), ResponseEnd("stop")], [TextDelta("Partial reply."), ResponseEnd("length")]]
+    )
+    judge = ScriptedProvider([[TextDelta('{"passed": true, "reason": "English."}'), ResponseEnd("stop")]])
+    assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge))
+    assert len(judge.requests) == 1
+    log = capsys.readouterr().out
+    assert "turn 2, step 4 (judge): No completed assistant reply to judge." in log
+    assert "Verdict: **PASS**" in log
 
 
 def test_judge_cancellation_closes_stream():

@@ -151,10 +151,12 @@ instructions. `count` requires `judge` and must be a positive integer or null.
 Chinese-language users always receive Traditional Chinese with Taiwan vocabulary
 and phrasing, including when they use or request Simplified Chinese. Support for
 other Chinese scripts is deferred. English-language users receive English.
-The judge always runs for an
-executed turn, even when phrase matching or agent execution fails. It reads the
-conversation in a separate request with no tools and returns a boolean verdict
-and explanation. Invalid verdicts and exhausted provider retries fail the attempt.
+The judge runs when the executed turn has a completed, nonempty assistant reply,
+even when phrase matching or a later agent operation fails. A turn without such
+a reply fails locally and records why judging was skipped. It makes no judge
+requests or diagnostic judge retries. Earlier completed turns are still judged.
+The judge reads the conversation in a separate request with no tools and returns
+a boolean verdict and explanation. Invalid verdicts and exhausted provider retries fail the attempt.
 The judge uses the provider's configured request timeout and retry budget.
 All saved transcripts include the rubric, model, full judge
 request, raw response, verdict, and explanation. The judge uses the configured

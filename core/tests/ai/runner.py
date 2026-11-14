@@ -57,7 +57,7 @@ from nurse_scheduling.ai.transcript import AppEventEntry, UserMessage
 from nurse_scheduling.ai.workspace import AgentAnalysis, SandboxAttachment, WorkspaceLimits
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
-from .assertions import check_event, check_schedule
+from .assertions import check_event, check_schedule, is_completed_assistant
 from .judge import evaluate
 from .reporting import AttemptTiming, print_attempt, print_summary
 from .schema import FIXTURES, ROOT, TESTCASES, Case, DefinitionError, Step, load_case
@@ -261,6 +261,12 @@ async def run_case(
         if step.kind == "user":
             judge_turn += 1
         elif step.kind == "assistant" and "judge" in step.value and judge_turn <= len(trace):
+            turn_events = trace[judge_turn - 1]["events"]
+            if not any(is_completed_assistant(event) and event.get("text", "").strip() for event in turn_events):
+                reason = "No completed assistant reply to judge."
+                errors.append({"turn": judge_turn, "step": step.number, "kind": "judge", "error": reason})
+                turn_events.append({"kind": "judge_skipped", "step": step.number, "reason": reason})
+                continue
             judge = judge_provider if judge_provider is not None else provider
             model = getattr(getattr(judge, "identity", None), "model", settings.provider_model)
             for attempt in range(1, judge_attempts + 1):
