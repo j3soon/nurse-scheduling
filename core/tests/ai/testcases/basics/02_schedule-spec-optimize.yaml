@@ -15,9 +15,19 @@ steps:
   - optimizer:
       invoked: false
   - assistant:
-      count: 1
+      count: 2
       judge: >-
-        Pass when the response asks whether P1 and P2 also count as seniors
-        for the senior staffing requirement. Identifying the possible overlap
-        is not enough without seeking confirmation. Combined questions and
-        clear Schedule Spec edits are allowed. Do not require exact wording.
+        Pass when both points are satisfied:
+        (1) The response asks whether P1 and P2 also count as seniors for the
+        senior staffing requirement. Identifying the possible overlap is not
+        enough without seeking confirmation.
+        (2) Any staffing calculations preserve the requested totals:
+        A=1, D=2, E=2, N=2 means seven assignments per day and 210 over
+        the 30 days of November. Senior-only slots are included in those totals,
+        not additional staffing. Reject incorrect totals or infeasibility claims
+        based on inflated staffing, including nine assignments per day or 270
+        for the month. Omitting calculations, deferring feasibility, or quoting
+        and correcting an incorrect total satisfies this point. Do not require
+        calculations or a claim that the whole Schedule Spec is feasible.
+        Combined questions and clear Schedule Spec edits are allowed.
+        Do not require exact wording.

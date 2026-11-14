@@ -766,6 +766,9 @@ and current session recovery working.
   guidance. Accept equivalent phrasing in
   text assertions and require tool calls only when their use is part of the
   intended behavior. Do not weaken assertions to hide a live behavior failure.
+  When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
+  saved replies first. Include known failures and valid alternatives before
+  starting new live agent runs.
   Let production provider retries finish before reporting an execution failure.
   Keep interrupted drafts in transcripts, but exclude them from assertions and
   judge input.
