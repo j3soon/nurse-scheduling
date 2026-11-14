@@ -43,8 +43,8 @@ test('upload can replace the current renamed save-load preview with an older sav
   });
 
   await page.goto('/save-and-load');
-  const originalYaml = await page.locator('pre').textContent();
   await expect(page.locator('pre')).toContainText('P1');
+  const originalYaml = await page.locator('pre').textContent();
 
   await page.goto('/people');
   const peopleTable = page.getByRole('heading', { name: 'People', exact: true }).locator('xpath=ancestor::div[contains(@class,"bg-white")][1]');
@@ -54,6 +54,7 @@ test('upload can replace the current renamed save-load preview with an older sav
   await expect(page.getByText('1. P1X', { exact: true })).toBeVisible();
 
   await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('P1X');
   await page.locator('input[type="file"]').setInputFiles({
     name: 'original.yaml',
     mimeType: 'application/x-yaml',

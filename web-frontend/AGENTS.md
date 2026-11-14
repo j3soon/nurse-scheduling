@@ -73,8 +73,9 @@ Scope form locators to their page or dialog so global navigation controls do not
 change the selected field. Use Playwright locator actions for form controls.
 For native selects, choose values with `selectOption`. Test that picker keys
 keep native defaults and do not reach page shortcuts.
-Before interacting with statically rendered controls, wait for an observable result of client
-initialization, such as loaded backend options enabling Optimize.
+Before interacting with statically rendered controls or capturing a preview, wait
+for an observable result of client initialization, such as seeded content or
+loaded backend options enabling Optimize.
 Keep independent page checks in separate Playwright tests so each page has its
 own timeout and failure report.
 
