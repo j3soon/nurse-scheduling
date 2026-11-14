@@ -4,16 +4,15 @@ steps:
   - user: 你好
   - assistant:
       judge: >-
-        Pass when the assistant replies in Traditional Chinese.
-        Reject Simplified Chinese prose.
+        Pass when the reply uses Traditional Chinese.
+        English app names and code identifiers are allowed.
   - schedule:
       unchanged: true
 
-  - user: 请简短介绍你能帮我做什么。
+  - user: 請簡短介紹你能幫我做什麼。
   - assistant:
       judge: >-
-        Pass when the assistant replies in Traditional Chinese, even though the
-        user writes in Simplified Chinese. English app names and code identifiers
-        are allowed.
+        Pass when the reply uses Traditional Chinese.
+        English app names and code identifiers are allowed.
   - schedule:
       unchanged: true

@@ -757,6 +757,8 @@ and current session recovery working.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
 - Add human-reviewed AI regression conversations under `tests/ai/testcases/`.
+  Use the target script in basic Chinese-language tests. Keep cross-script
+  override checks separate.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
