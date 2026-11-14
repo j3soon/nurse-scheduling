@@ -21,7 +21,7 @@
 
 import json
 from contextlib import aclosing
-from typing import Any
+from typing import Any, Literal
 
 from nurse_scheduling.ai.provider import ProviderRetry, ReasoningDelta, ResponseEnd, TextDelta, ToolCallRequest
 
@@ -36,7 +36,15 @@ Return exactly one JSON object with two fields: "passed" (boolean) and "reason"
 (a nonempty, concise explanation). Do not use Markdown fences or extra text."""
 
 
-async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *, count: int | None = None) -> dict:
+async def evaluate(
+    provider: Any,
+    rubric: str,
+    trace: list[dict],
+    model: str,
+    *,
+    count: int | None = None,
+    context: Literal["conversation", "replies"] = "conversation",
+) -> dict:
     """Keep the judge request and raw reply even when grading fails."""
     if count is not None:
         rubric += (
@@ -44,6 +52,7 @@ async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *,
             "Identify every omitted or incomplete point by number and briefly explain what is missing. "
             f'If all points are satisfied, say "{count}/{count}. All points are satisfied."'
         )
+    kinds = {"assistant"} if context == "replies" else {"assistant", "tool", "tool_result"}
     conversation = [
         {
             "user": turn["user"],
@@ -54,8 +63,7 @@ async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *,
                     if key in {"kind", "text", "name", "arguments", "ok", "stop_reason"}
                 }
                 for event in turn["events"]
-                if event["kind"] in {"assistant", "tool", "tool_result"}
-                and (event["kind"] != "assistant" or is_completed_assistant(event))
+                if event["kind"] in kinds and (event["kind"] != "assistant" or is_completed_assistant(event))
             ],
         }
         for turn in trace
@@ -67,6 +75,7 @@ async def evaluate(provider: Any, rubric: str, trace: list[dict], model: str, *,
     record = {
         "kind": "judge",
         "model": model,
+        "context": context,
         "rubric": rubric,
         "messages": messages,
         "response": "",

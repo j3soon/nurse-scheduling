@@ -148,6 +148,14 @@ For a numbered rubric, optional `assistant.count: 12` asks the judge to include
 `N/12` in its explanation and identify omitted or incomplete points by number.
 The entire rubric must still pass. An omitted or null `count` adds no scoring
 instructions. `count` requires `judge` and must be a positive integer or null.
+
+Optional `assistant.judge_context: replies` sends only user messages and completed
+assistant messages to the judge. The default, `conversation`, also includes tool
+calls and results. Use `replies` only when those messages contain every fact
+needed by the rubric. Keep `conversation` when grading needs source data. Assert
+Schedule Spec changes and required tools explicitly. Both modes retain the full
+tool trace in the saved transcript. `judge_context` requires `judge`.
+
 Chinese-language users always receive Traditional Chinese with Taiwan vocabulary
 and phrasing, including when they use or request Simplified Chinese. Support for
 other Chinese scripts is deferred. English-language users receive English.

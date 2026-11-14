@@ -1005,6 +1005,51 @@ def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
         definition(tmp_path, text)
 
 
+@pytest.mark.parametrize("context", [None, "conversation", "replies"], ids=["default", "conversation", "replies"])
+def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, context):
+    assertion = {"judge": "Check the reply."}
+    if context is not None:
+        assertion["judge_context"] = context
+    case = definition(tmp_path, json.dumps({"steps": [{"user": "Read the Schedule Spec."}, {"assistant": assertion}]}))
+    provider = ScriptedProvider(
+        [
+            [tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("The Schedule Spec is empty."), ResponseEnd("stop")],
+        ]
+    )
+    judge = ScriptedProvider([[TextDelta('{"passed": false, "reason": "Known failure."}'), ResponseEnd("stop")]])
+    transcript = tmp_path / "attempt.md"
+    assert not asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    )
+    evidence = json.loads(judge.requests[0][1]["content"])["conversation"]
+    assert evidence[0]["user"] == "Read the Schedule Spec."
+    events = evidence[0]["events"]
+    assert [event["text"] for event in events if event["kind"] == "assistant" and event["text"]] == [
+        "The Schedule Spec is empty."
+    ]
+    if context == "replies":
+        assert all(event["kind"] == "assistant" for event in events)
+    else:
+        assert {event["kind"] for event in events} == {"assistant", "tool", "tool_result"}
+    saved = transcript.read_text(encoding="utf-8")
+    assert "### Tool Result" in saved and "people:" in saved
+    assert "Known failure." in saved and "Verdict: **FAIL**" in saved
+    assert f"Judge context: `{context or 'conversation'}`." in saved
+
+
+@pytest.mark.parametrize("context", [None, "", True, ["replies"], {"mode": "replies"}, "tools"])
+def test_invalid_judge_context_fails_without_credentials(tmp_path, context):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "English.", "judge_context": context}}]})
+    with pytest.raises(DefinitionError, match="judge_context must be conversation or replies"):
+        definition(tmp_path, text)
+
+
+def test_judge_context_requires_judge(tmp_path):
+    with pytest.raises(DefinitionError, match="judge_context requires judge"):
+        definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [hi], judge_context: replies}}]")
+
+
 @pytest.mark.parametrize("count", [True, False, 0, -1, 1.5, "12", [], {}])
 def test_invalid_judge_point_counts(tmp_path, count):
     text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "Cover both points.", "count": count}}]})
