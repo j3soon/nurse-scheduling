@@ -769,6 +769,8 @@ and current session recovery working.
   When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
   saved replies first. Include known failures and valid alternatives before
   starting new live agent runs.
+  When a rubric candidate must pass every check, reject it on the first wrong
+  verdict before scheduling more judgments. Preserve its wording and evidence.
   Run local live comparisons after CI when they share a provider. Concurrency
   discovery limits each run separately, not their combined load.
   Fail turns without a completed, nonempty assistant reply locally. Skip their
