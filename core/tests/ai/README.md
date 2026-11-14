@@ -79,6 +79,18 @@ with a separate file for each case and attempt. The final summary shows each
 outcome and failed/total attempt counts. Assertion failures do not stop later turns.
 Execution errors stop that attempt.
 
+Completion lines and the CI summary report total, agent, and judge wall-clock
+seconds for every attempt. Agent time covers workspace execution, including
+sandbox setup, tools, provider requests, retries, and cleanup. Transcripts show
+agent time per turn and elapsed time for every judge attempt. Judge time includes
+every verdict attempt and its provider retries. Attempt totals also include test
+preparation and assertions, but exclude queue wait and transcript writing.
+
+Each run saves these measurements in `timings.json` beside `concurrency.json`.
+Use them together when comparing runs. Run wall time covers the parallel case
+execution and attempt reporting, so adding individual attempt times can exceed
+it. Initial capacity discovery and CI template building are outside that interval.
+
 ## Authoring
 
 Use the ordered `steps` list in

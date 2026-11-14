@@ -20,11 +20,28 @@
 # This test is mostly AI generated.
 
 import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from nurse_scheduling.ai.config import AiSettings
 
 from .schema import Case
+
+
+@dataclass
+class AttemptTiming:
+    """Wall-clock work for one conversation attempt, excluding queue wait."""
+
+    total_seconds: float = 0.0
+    agent_seconds: float = 0.0
+    judge_seconds: float = 0.0
+
+
+def _timing_text(timing: dict[str, float]) -> str:
+    return (
+        f"total {timing['total_seconds']:.3f} s, "
+        f"agent {timing['agent_seconds']:.3f} s, judge {timing['judge_seconds']:.3f} s"
+    )
 
 
 def _block(text: str, language: str = "") -> str:
@@ -37,10 +54,18 @@ def _block(text: str, language: str = "") -> str:
 def _transcript(record: dict) -> str:
     lines = [f"# {Path(record['case']).name}: {'PASS' if record['passed'] else 'FAIL'}\n"]
     lines.append(f"Model: `{record['model']}`. Sandbox template: `{record['template']}`.\n")
+    lines.append(f"Timing: {_timing_text(record['timing'])}.\n")
     if record["error"]:
         lines.extend(["## Failures\n", _block(record["error"])])
     for turn in record["turns"]:
-        lines.extend([f"## Turn {turn['turn']}\n", "### User\n", _block(turn["user"])])
+        lines.extend(
+            [
+                f"## Turn {turn['turn']}\n",
+                f"Agent time: {turn['agent_seconds']:.3f} s.\n",
+                "### User\n",
+                _block(turn["user"]),
+            ]
+        )
         if turn["attachments"]:
             lines.extend(["### Attachments\n", _block(json.dumps(turn["attachments"], indent=2), "json")])
         for event in turn["events"]:
@@ -62,6 +87,7 @@ def _transcript(record: dict) -> str:
             elif event["kind"] == "judge":
                 if "attempt" in event:
                     lines.append(f"Judge attempt: {event['attempt']}.\n")
+                lines.append(f"Judge time: {event['elapsed_seconds']:.3f} s.\n")
                 lines.append(f"Verdict: **{'PASS' if event['passed'] else 'FAIL'}**. Model: `{event['model']}`.\n")
                 lines.extend(["Rubric:\n", _block(event["rubric"]), "Explanation:\n", _block(event["reason"])])
                 if event["error"]:
@@ -101,6 +127,8 @@ def print_attempt(
     trace: list[dict],
     settings: AiSettings,
     transcript_path: Path | None = None,
+    *,
+    timing: AttemptTiming,
 ) -> None:
     record = {
         "case": str(case.path),
@@ -111,6 +139,7 @@ def print_attempt(
             f"turn {item['turn']}, step {item['step']} ({item['kind']}): {item['error']}" for item in errors
         ),
         "turns": trace,
+        "timing": asdict(timing),
     }
     text = _transcript(record)
     for secret in (settings.provider_api_key, settings.e2b_api_key):
@@ -123,16 +152,21 @@ def print_attempt(
     if errors:
         print(text + (f"\nTranscript: {transcript_path}" if transcript_path is not None else ""), flush=True)
     else:
-        print(f"PASS {case.path} ({len(trace)} turns){location}", flush=True)
+        print(f"PASS {case.path} ({len(trace)} turns){location}; {_timing_text(record['timing'])}", flush=True)
 
 
-def print_summary(results: list[dict]) -> None:
+def print_summary(results: list[dict], *, elapsed_seconds: float) -> None:
     text = (
         "# AI testcase attempts\n\nAny failed attempt keeps CI failed. Later attempts provide diagnostic evidence.\n\n"
     )
-    text += "| Case | Attempt | Outcome |\n| --- | --- | --- |\n"
+    text += f"Run wall time: {elapsed_seconds:.3f} s.\n\n"
+    text += "| Case | Attempt | Outcome | Total (s) | Agent (s) | Judge (s) |\n| --- | --- | --- | --- | --- | --- |\n"
     for item in results:
-        text += f"| {item['case']} | {item['attempt']} | {'PASS' if item['passed'] else 'FAIL'} |\n"
+        timing = item["timing"]
+        text += (
+            f"| {item['case']} | {item['attempt']} | {'PASS' if item['passed'] else 'FAIL'} | "
+            f"{timing['total_seconds']:.3f} | {timing['agent_seconds']:.3f} | {timing['judge_seconds']:.3f} |\n"
+        )
     text += "\n| Case | Failed / executed attempts |\n| --- | --- |\n"
     for case in dict.fromkeys(item["case"] for item in results):
         attempts = [item for item in results if item["case"] == case]

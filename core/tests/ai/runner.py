@@ -29,6 +29,7 @@ from contextlib import aclosing
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from nurse_scheduling.ai.agent import Agent
@@ -58,7 +59,7 @@ from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .assertions import check_event, check_schedule
 from .judge import evaluate
-from .reporting import print_attempt, print_summary
+from .reporting import AttemptTiming, print_attempt, print_summary
 from .schema import FIXTURES, ROOT, TESTCASES, Case, DefinitionError, Step, load_case
 
 
@@ -107,8 +108,12 @@ async def run_case(
     judge_provider: Any = None,
     judge_attempts: int = 1,
     transcript_path: Path | None = None,
+    timing: AttemptTiming | None = None,
 ) -> bool:
     """Execute one isolated conversation and retain all assertions and messages."""
+    started = perf_counter()
+    timing = timing if timing is not None else AttemptTiming()
+    timing.total_seconds = timing.agent_seconds = timing.judge_seconds = 0.0
     schedule = (FIXTURES / "empty.yaml").read_text(encoding="utf-8")
     history = []
     attachments = []
@@ -174,65 +179,71 @@ async def run_case(
                     "before": before,
                     "events": events,
                     "after": schedule,
+                    "agent_seconds": 0.0,
                     "attachments": [
                         {"name": item.filename, "media_type": item.media_type, "bytes": len(item.data)}
                         for item in uploaded
                     ],
                 }
                 trace.append(entry)
-                stream = run_workspace(
-                    provider,
-                    clock,
-                    schedule,
-                    messages,
-                    WorkspaceLimits.from_settings(settings),
-                    agent=agent,
-                    attachments=attachments,
-                    analysis=analysis,
-                    timezone=_timezone(clock.date),
-                    execute_optimizer=(
-                        unsupported_optimizer if any(item.kind == "optimizer" for item in case.steps) else None
-                    ),
-                )
-                last_response = None
-                async with aclosing(stream):
-                    async for event in stream:
-                        if isinstance(event, AgentMessageEnd):
-                            last_response = event.message
-                            events.append({"kind": "assistant", **asdict(event.message)})
-                        elif isinstance(event, ProviderRetry):
-                            events.append({"kind": "provider_retry", "message": event.message})
-                        elif isinstance(event, AgentToolStart):
-                            events.append(
-                                {
-                                    "kind": "tool",
-                                    "name": event.name,
-                                    "arguments": json.loads(event.arguments),
-                                    "id": event.tool_call_id,
-                                }
-                            )
-                        elif isinstance(event, AgentToolUse):
-                            events.append(
-                                {
-                                    "kind": "tool_result",
-                                    "name": event.name,
-                                    "ok": event.ok,
-                                    "text": event.result,
-                                    "id": event.tool_call_id,
-                                    "details": event.details,
-                                }
-                            )
-                        elif isinstance(event, AgentProposal):
-                            schedule = event.text
-                            entry["after"] = schedule
-                        elif isinstance(event, AgentAnalysis):
-                            analysis = event
-                if last_response is not None and last_response.stop_reason in {"error", "aborted", "length"}:
-                    raise RuntimeError(f"assistant response ended with {last_response.stop_reason}")
-                completed = retained_entries([UserMessage(step.value), *agent.state.messages])
-                history.extend(completed)
-                cap_transcript(history, settings.max_history_messages, settings.max_history_chars, len(completed))
-                pending = True
+                agent_started = perf_counter()
+                try:
+                    stream = run_workspace(
+                        provider,
+                        clock,
+                        schedule,
+                        messages,
+                        WorkspaceLimits.from_settings(settings),
+                        agent=agent,
+                        attachments=attachments,
+                        analysis=analysis,
+                        timezone=_timezone(clock.date),
+                        execute_optimizer=(
+                            unsupported_optimizer if any(item.kind == "optimizer" for item in case.steps) else None
+                        ),
+                    )
+                    last_response = None
+                    async with aclosing(stream):
+                        async for event in stream:
+                            if isinstance(event, AgentMessageEnd):
+                                last_response = event.message
+                                events.append({"kind": "assistant", **asdict(event.message)})
+                            elif isinstance(event, ProviderRetry):
+                                events.append({"kind": "provider_retry", "message": event.message})
+                            elif isinstance(event, AgentToolStart):
+                                events.append(
+                                    {
+                                        "kind": "tool",
+                                        "name": event.name,
+                                        "arguments": json.loads(event.arguments),
+                                        "id": event.tool_call_id,
+                                    }
+                                )
+                            elif isinstance(event, AgentToolUse):
+                                events.append(
+                                    {
+                                        "kind": "tool_result",
+                                        "name": event.name,
+                                        "ok": event.ok,
+                                        "text": event.result,
+                                        "id": event.tool_call_id,
+                                        "details": event.details,
+                                    }
+                                )
+                            elif isinstance(event, AgentProposal):
+                                schedule = event.text
+                                entry["after"] = schedule
+                            elif isinstance(event, AgentAnalysis):
+                                analysis = event
+                    if last_response is not None and last_response.stop_reason in {"error", "aborted", "length"}:
+                        raise RuntimeError(f"assistant response ended with {last_response.stop_reason}")
+                    completed = retained_entries([UserMessage(step.value), *agent.state.messages])
+                    history.extend(completed)
+                    cap_transcript(history, settings.max_history_messages, settings.max_history_chars, len(completed))
+                    pending = True
+                finally:
+                    entry["agent_seconds"] = perf_counter() - agent_started
+                    timing.agent_seconds += entry["agent_seconds"]
             elif step.kind == "schedule":
                 checks.append(step)
             else:
@@ -253,10 +264,17 @@ async def run_case(
             judge = judge_provider if judge_provider is not None else provider
             model = getattr(getattr(judge, "identity", None), "model", settings.provider_model)
             for attempt in range(1, judge_attempts + 1):
-                verdict = await evaluate(
-                    judge, step.value["judge"], trace[:judge_turn], model, count=step.value.get("count")
+                judge_started = perf_counter()
+                try:
+                    verdict = await evaluate(
+                        judge, step.value["judge"], trace[:judge_turn], model, count=step.value.get("count")
+                    )
+                finally:
+                    elapsed = perf_counter() - judge_started
+                    timing.judge_seconds += elapsed
+                trace[judge_turn - 1]["events"].append(
+                    {**verdict, "step": step.number, "attempt": attempt, "elapsed_seconds": elapsed}
                 )
-                trace[judge_turn - 1]["events"].append({**verdict, "step": step.number, "attempt": attempt})
                 if not verdict["passed"]:
                     reason = verdict["error"] or verdict["reason"]
                     errors.append(
@@ -269,7 +287,8 @@ async def run_case(
                     )
                 if attempt == 1 and verdict["passed"]:
                     break
-    print_attempt(case, errors, trace, settings, transcript_path)
+    timing.total_seconds = perf_counter() - started
+    print_attempt(case, errors, trace, settings, transcript_path, timing=timing)
     return not errors
 
 
@@ -288,6 +307,7 @@ async def run_cases(
     """Run independent conversations concurrently, retaining every failure."""
     if jobs < 1 or repeat < 1:
         raise ValueError("jobs and repeat must be positive")
+    started = perf_counter()
     semaphore = asyncio.Semaphore(jobs)
 
     async def run(case, repetition):
@@ -304,6 +324,7 @@ async def run_cases(
             if repeat > 1:
                 directory /= f"run-{repetition}"
             transcript_path = output_dir / directory / f"attempt-{attempt}.md" if output_dir is not None else None
+            timing = AttemptTiming()
             passed = await run_case(
                 case,
                 provider,
@@ -312,12 +333,15 @@ async def run_cases(
                 judge_provider=judge_provider,
                 judge_attempts=diagnostic_attempts,
                 transcript_path=transcript_path,
+                timing=timing,
             )
             results.append(
                 {
                     "case": label,
+                    "testcase": relative.as_posix(),
                     "attempt": attempt,
                     "passed": passed,
+                    "timing": asdict(timing),
                 }
             )
             if attempt == 1 and passed:
@@ -326,7 +350,13 @@ async def run_cases(
 
     batches = await asyncio.gather(*(run(case, repetition) for case in cases for repetition in range(1, repeat + 1)))
     results = [result for batch in batches for result in batch]
-    print_summary(results)
+    elapsed = perf_counter() - started
+    if output_dir is not None:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "timings.json").write_text(
+            json.dumps({"elapsed_seconds": elapsed, "attempts": results}, indent=2) + "\n", encoding="utf-8"
+        )
+    print_summary(results, elapsed_seconds=elapsed)
     return all(result["passed"] for result in results)
 
 

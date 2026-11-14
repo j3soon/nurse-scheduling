@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import re
 from dataclasses import replace
 from datetime import datetime
 
@@ -257,6 +258,198 @@ def settings():
         provider_model="test",
         e2b_api_key="sandbox-secret",
     )
+
+
+@pytest.fixture
+def timing_clock(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr("tests.ai.runner.perf_counter", lambda: now, raising=False)
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    return advance
+
+
+@pytest.mark.parametrize("first_verdict", [True, False, None], ids=["pass", "failed-judge", "invalid-judge"])
+def test_attempt_timings_include_workspace_retries_and_every_judge(tmp_path, monkeypatch, timing_clock, first_verdict):
+    from tests.ai import runner
+
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {judge: Reply in English.}}, "
+        "{user: again}, {assistant: {judge: Reply in English.}}]",
+    )
+
+    class TimedProvider(ScriptedProvider):
+        def __init__(self, responses, durations):
+            super().__init__(responses)
+            self.durations = iter(durations)
+
+        async def stream_events(self, messages, tools=()):
+            timing_clock(next(self.durations))
+            async for event in super().stream_events(messages, tools):
+                if isinstance(event, ProviderRetry):
+                    timing_clock(4)
+                yield event
+
+    class TimedFactory(FakeSandboxFactory):
+        async def create(self, **kwargs):
+            timing_clock(1)
+            return await super().create(**kwargs)
+
+    provider = TimedProvider(
+        [
+            [ProviderRetry("Agent retry."), tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("Hello."), ResponseEnd("stop")],
+            [tool_call("read-2", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("Again."), ResponseEnd("stop")],
+        ],
+        [0.5, 1.5, 1, 2],
+    )
+    verdicts = [True, True] if first_verdict is True else [first_verdict, True, True, True]
+    judge = TimedProvider(
+        [
+            [
+                *([ProviderRetry("Judge retry.")] if i == 0 else []),
+                TextDelta("invalid" if verdict is None else json.dumps({"passed": verdict, "reason": "Checked."})),
+                ResponseEnd("stop"),
+            ]
+            for i, verdict in enumerate(verdicts)
+        ],
+        [0.5, 2] if first_verdict is True else [0.5, 1, 1.5, 2],
+    )
+    original_check = runner.check_schedule
+
+    def check_schedule_with_overhead(*args):
+        timing_clock(0.25)
+        original_check(*args)
+
+    monkeypatch.setattr(runner, "check_schedule", check_schedule_with_overhead)
+    timing = runner.AttemptTiming()
+    transcript = tmp_path / "attempt.md"
+    assert asyncio.run(
+        run_case(
+            case,
+            provider,
+            settings(),
+            TimedFactory(),
+            judge_provider=judge,
+            judge_attempts=3,
+            transcript_path=transcript,
+            timing=timing,
+        )
+    ) is (first_verdict is True)
+    judge_seconds = 6.5 if first_verdict is True else 9
+    assert timing.agent_seconds == 11
+    assert timing.judge_seconds == judge_seconds
+    assert timing.total_seconds == 11 + judge_seconds + 0.5
+    saved = transcript.read_text(encoding="utf-8")
+    assert f"Timing: total {timing.total_seconds:.3f} s, agent 11.000 s, judge {judge_seconds:.3f} s." in saved
+    assert "Agent time: 7.000 s." in saved and "Agent time: 4.000 s." in saved
+    assert "Judge time: 4.500 s." in saved
+    assert saved.count("Judge time:") == len(verdicts)
+
+
+@pytest.mark.parametrize(("agent_seconds", "judge_seconds"), [(0, 0), (5, 2)], ids=["tied-clock", "stream-failure"])
+def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds, judge_seconds):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {judge: Reply in English.}}]")
+
+    class BrokenProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            timing_clock(agent_seconds)
+            yield TextDelta("Partial reply.")
+            raise RuntimeError("Agent stream failed.")
+
+    class TimedJudge(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            timing_clock(judge_seconds)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    judge = TimedJudge([[TextDelta('{"passed": false, "reason": "No completed reply."}'), ResponseEnd("stop")]])
+    timing = runner.AttemptTiming()
+    transcript = tmp_path / "failed.md"
+    assert not asyncio.run(
+        run_case(
+            case,
+            BrokenProvider([]),
+            settings(),
+            FakeSandboxFactory(),
+            judge_provider=judge,
+            transcript_path=transcript,
+            timing=timing,
+        )
+    )
+    assert (timing.total_seconds, timing.agent_seconds, timing.judge_seconds) == (
+        agent_seconds + judge_seconds,
+        agent_seconds,
+        judge_seconds,
+    )
+    saved = transcript.read_text(encoding="utf-8")
+    assert "Agent stream failed." in saved
+    assert f"Agent time: {agent_seconds:.3f} s." in saved
+    assert f"Judge time: {judge_seconds:.3f} s." in saved
+
+
+def test_diagnostic_attempt_timings_reach_summary_and_json(tmp_path, capsys, timing_clock):
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [expected]}}]")
+
+    class TimedProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            timing_clock(len(self.requests) + 1)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    provider = TimedProvider([[TextDelta(reply), ResponseEnd("stop")] for reply in ["wrong", "expected", "expected"]])
+    output = tmp_path / "results"
+    assert not asyncio.run(
+        run_cases([case], provider, settings(), FakeSandboxFactory(), diagnostic_attempts=3, output_dir=output)
+    )
+    record = json.loads((output / "timings.json").read_text(encoding="utf-8"))
+    assert record["elapsed_seconds"] == 6
+    for i, attempt in enumerate(record["attempts"], 1):
+        assert attempt["case"] == "case" and attempt["testcase"] == "case.yaml"
+        assert attempt["attempt"] == i and attempt["passed"] is (i != 1)
+        assert attempt["timing"] == {"total_seconds": i, "agent_seconds": i, "judge_seconds": 0}
+    log = capsys.readouterr().out
+    assert "Run wall time: 6.000 s." in log
+    assert "| case | 1 | FAIL | 1.000 | 1.000 | 0.000 |" in log
+    assert "| case | 3 | PASS | 3.000 | 3.000 | 0.000 |" in log
+
+
+def test_parallel_wall_time_is_not_the_sum_of_attempt_times(tmp_path, monkeypatch, capsys, timing_clock):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+
+    async def exercise():
+        ready = asyncio.Event()
+        entered = 0
+
+        async def attempt(*args, timing, **kwargs):
+            nonlocal entered
+            entered += 1
+            if entered == 2:
+                timing_clock(3)
+                ready.set()
+            await ready.wait()
+            timing.total_seconds = timing.agent_seconds = 3
+            return True
+
+        monkeypatch.setattr(runner, "run_case", attempt)
+        return await asyncio.wait_for(
+            run_cases([case], None, settings(), None, jobs=2, repeat=2, output_dir=tmp_path / "results"), timeout=5
+        )
+
+    assert asyncio.run(exercise())
+    record = json.loads((tmp_path / "results/timings.json").read_text(encoding="utf-8"))
+    assert record["elapsed_seconds"] == 3
+    assert sum(attempt["timing"]["total_seconds"] for attempt in record["attempts"]) == 6
+    assert "Run wall time: 3.000 s." in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -764,7 +957,11 @@ def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed
     assert ("# case.yaml: PASS" if passed else "# case.yaml: FAIL") in saved
     log = capsys.readouterr().out
     if passed:
-        assert log == f"PASS {case.path} (2 turns); transcript: {transcript}\n"
+        assert re.fullmatch(
+            re.escape(f"PASS {case.path} (2 turns); transcript: {transcript}")
+            + r"; total \d+\.\d{3} s, agent \d+\.\d{3} s, judge \d+\.\d{3} s\n",
+            log,
+        )
         return
     assert log.count("## Turn ") == 2
     assert all(
@@ -886,7 +1083,11 @@ def test_combined_phrase_and_judge_assertions_always_run_judge(tmp_path, capsys,
     assert "Semantic verdict." in saved and "Judge request:" in saved
     log = capsys.readouterr().out
     if expected:
-        assert log == f"PASS {case.path} (1 turns); transcript: {transcript}\n"
+        assert re.fullmatch(
+            re.escape(f"PASS {case.path} (1 turns); transcript: {transcript}")
+            + r"; total \d+\.\d{3} s, agent \d+\.\d{3} s, judge \d+\.\d{3} s\n",
+            log,
+        )
     else:
         assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
         rubric = next(step.value["judge"] for step in case.steps if step.kind == "assistant" and "judge" in step.value)
