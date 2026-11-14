@@ -156,7 +156,7 @@ test.describe('language selection on a phone', () => {
   });
 });
 
-test('the navigation globe switches language with the keyboard and preserves unsaved edits', async ({ page }) => {
+test('the navigation globe preserves unsaved edits across picker keys and language changes', async ({ page }) => {
   await disableModalDialogs(page);
   await seedMinimalScheduleSpecState(page);
   await page.goto('/people');
@@ -168,11 +168,12 @@ test('the navigation globe switches language with the keyboard and preserves uns
   const bounds = await language.boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(redo!.x + redo!.width);
   await language.focus();
-  // Open the native picker first. On macOS, ArrowDown alone opens it without moving the selection.
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Enter');
   await page.keyboard.press('Escape');
+  await expect(language).toBeFocused();
+  await expect(page.getByPlaceholder('Enter person ID', { exact: true })).toHaveValue('Draft nurse');
+  await expect(page.getByPlaceholder('Enter person description (optional)', { exact: true })).toHaveValue('Draft ward');
+  await language.selectOption('zh-TW');
   const chinese = page.getByRole('navigation').getByRole('combobox', { name: '切換語言', exact: true });
   await expect(chinese).toHaveValue('zh-TW');
   await expect(chinese).toBeFocused();

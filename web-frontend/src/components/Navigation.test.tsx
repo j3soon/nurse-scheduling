@@ -299,15 +299,18 @@ describe('Navigation', () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
-  it('keeps picker keys away from document-level form shortcuts', () => {
+  it('keeps native picker key defaults and isolates document-level form shortcuts', () => {
     const pageShortcut = vi.fn();
     document.addEventListener('keydown', pageShortcut);
     try {
       renderNavigation();
       const select = screen.getByRole('combobox', { name: 'Change language' });
       select.focus();
-      fireEvent.keyDown(select, { key: 'Enter' });
-      fireEvent.keyDown(select, { key: 'Escape' });
+      for (const key of ['Enter', 'Escape', 'ArrowDown', 'ArrowUp', ' ']) {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+        fireEvent(select, event);
+        expect(event.defaultPrevented).toBe(false);
+      }
       expect(pageShortcut).not.toHaveBeenCalled();
     } finally {
       document.removeEventListener('keydown', pageShortcut);
