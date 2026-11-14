@@ -163,8 +163,8 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
         if "judge_context" in value:
             if "judge" not in value:
                 raise DefinitionError("assistant.judge_context requires judge")
-            if value["judge_context"] not in ("conversation", "replies"):
-                raise DefinitionError("assistant.judge_context must be conversation or replies")
+            if value["judge_context"] not in ("conversation", "replies", "characters"):
+                raise DefinitionError("assistant.judge_context must be conversation, replies, or characters")
         if "count" in value:
             if "judge" not in value:
                 raise DefinitionError("assistant.count requires judge")

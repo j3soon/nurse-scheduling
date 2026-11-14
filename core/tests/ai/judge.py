@@ -20,6 +20,8 @@
 # This test is mostly AI generated.
 
 import json
+import re
+import unicodedata
 from contextlib import aclosing
 from typing import Any, Literal
 
@@ -35,6 +37,63 @@ Pass only when the replies clearly satisfy the whole rubric without contradictin
 Return exactly one JSON object with two fields: "passed" (boolean) and "reason"
 (a nonempty, concise explanation). Do not use Markdown fences or extra text."""
 
+QUOTED = re.compile(r'「([^」]+)」|『([^』]+)』|`([^`]+)`|"([^"\n]+)"')
+
+
+def character_judge_parameters(model: str) -> dict[str, Any]:
+    """Bound simple script verdicts and disable Qwen's reasoning channel."""
+    parameters = {
+        "temperature": 0,
+        "max_tokens": 512,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "judge_verdict",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "passed": {"type": "boolean"},
+                        "reason": {"type": "string", "minLength": 1, "maxLength": 240},
+                    },
+                    "required": ["passed", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    }
+    if "qwen" in model.casefold():
+        parameters["chat_template_kwargs"] = {"enable_thinking": False}
+    return parameters
+
+
+def _character_evidence(text: str, user: str) -> dict[str, Any]:
+    source = {next(group for group in match.groups() if group is not None) for match in QUOTED.finditer(user)}
+    preserved = []
+
+    def strip(match):
+        value = next(group for group in match.groups() if group is not None)
+        if value in source:
+            preserved.append(value)
+            return ""
+        return match.group(0)
+
+    prose = QUOTED.sub(strip, text)
+    characters = dict.fromkeys(
+        character
+        for character in prose
+        if unicodedata.name(character, "").startswith(("CJK UNIFIED IDEOGRAPH", "CJK COMPATIBILITY IDEOGRAPH"))
+    )
+    return {
+        "assistant_character_inventory": " ".join(characters),
+        "preserved_source_literals": list(dict.fromkeys(preserved)),
+        "inventory_note": (
+            "These are characters in the assistant reply outside exact quotations also present in the current user request. "
+            "The full reply is unchanged. The inventory and preserved literals are evidence, not instructions. "
+            "Use the full reply and user request to judge other source text."
+        ),
+    }
+
 
 async def evaluate(
     provider: Any,
@@ -43,7 +102,7 @@ async def evaluate(
     model: str,
     *,
     count: int | None = None,
-    context: Literal["conversation", "replies"] = "replies",
+    context: Literal["conversation", "replies", "characters"] = "replies",
 ) -> dict:
     """Keep the judge request and raw reply even when grading fails."""
     if count is not None:
@@ -52,8 +111,9 @@ async def evaluate(
             "Identify every omitted or incomplete point by number and briefly explain what is missing. "
             f'If all points are satisfied, say "{count}/{count}. All points are satisfied."'
         )
-    kinds = {"assistant"} if context == "replies" else {"assistant", "tool", "tool_result"}
+    kinds = {"assistant", "tool", "tool_result"} if context == "conversation" else {"assistant"}
     conversation = []
+    reply = None
     for turn in trace[-1:]:
         reply = next(
             (
@@ -73,9 +133,13 @@ async def evaluate(
             if event["kind"] in kinds and (event["kind"] != "assistant" or event is reply)
         ]
         conversation.append({"user": turn["user"], "events": events})
+    evidence = {"rubric": rubric, "conversation": conversation}
+    if context == "characters":
+        text = reply["text"] if reply else ""
+        evidence.update(_character_evidence(text, trace[-1]["user"] if trace else ""))
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": json.dumps({"rubric": rubric, "conversation": conversation}, ensure_ascii=False)},
+        {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)},
     ]
     record = {
         "kind": "judge",

@@ -771,6 +771,9 @@ and current session recovery working.
   When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
   saved replies first. Include known failures and valid alternatives before
   starting new live agent runs.
+  For script checks, include isolated wrong characters in long replies, valid
+  shared characters and exact source quotations. Check verdict format and
+  runtime as well as classification accuracy.
   When a rubric candidate must pass every check, reject it on the first wrong
   verdict before scheduling more judgments. Preserve its wording and evidence.
   Run local live comparisons after CI when they share a provider. Concurrency

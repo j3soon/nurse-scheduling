@@ -58,7 +58,7 @@ from nurse_scheduling.ai.workspace import AgentAnalysis, SandboxAttachment, Work
 from nurse_scheduling.ai.workspace_tools import run_workspace
 
 from .assertions import check_event, check_schedule, is_completed_assistant
-from .judge import evaluate
+from .judge import character_judge_parameters, evaluate
 from .reporting import AttemptTiming, print_attempt, print_summary
 from .schema import FIXTURES, ROOT, TESTCASES, Case, DefinitionError, Step, load_case
 
@@ -106,6 +106,7 @@ async def run_case(
     factory: SandboxFactory,
     *,
     judge_provider: Any = None,
+    character_judge_provider: Any = None,
     judge_attempts: int = 1,
     transcript_path: Path | None = None,
     timing: AttemptTiming | None = None,
@@ -268,6 +269,8 @@ async def run_case(
                 turn_events.append({"kind": "judge_skipped", "step": step.number, "reason": reason})
                 continue
             judge = judge_provider if judge_provider is not None else provider
+            if step.value.get("judge_context") == "characters" and character_judge_provider is not None:
+                judge = character_judge_provider
             model = getattr(getattr(judge, "identity", None), "model", settings.provider_model)
             for attempt in range(1, judge_attempts + 1):
                 judge_started = perf_counter()
@@ -311,6 +314,7 @@ async def run_cases(
     diagnostic_attempts: int = 1,
     *,
     judge_provider=None,
+    character_judge_provider=None,
     output_dir: Path | None = None,
     jobs: int = 1,
     repeat: int = 1,
@@ -342,6 +346,7 @@ async def run_cases(
                 settings,
                 factory,
                 judge_provider=judge_provider,
+                character_judge_provider=character_judge_provider,
                 judge_attempts=diagnostic_attempts,
                 transcript_path=transcript_path,
                 timing=timing,
@@ -383,6 +388,15 @@ async def _run(cases: list[Case], diagnostic_attempts: int, jobs: int | None = N
     judge_provider = OpenAiCompatibleProvider(
         replace(settings, provider_model=judge_model), parameters={"temperature": 0}
     )
+    character_judge_provider = None
+    if any(
+        step.kind == "assistant" and step.value.get("judge_context") == "characters"
+        for case in cases
+        for step in case.steps
+    ):
+        character_judge_provider = OpenAiCompatibleProvider(
+            replace(settings, provider_model=judge_model), parameters=character_judge_parameters(judge_model)
+        )
     output_dir = TRANSCRIPTS / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     capacity = await asyncio.to_thread(
         discover_capacity, settings.provider_base_url, settings.provider_api_key, settings.provider_model
@@ -402,6 +416,7 @@ async def _run(cases: list[Case], diagnostic_attempts: int, jobs: int | None = N
             factory,
             diagnostic_attempts,
             judge_provider=judge_provider,
+            character_judge_provider=character_judge_provider,
             output_dir=output_dir,
             jobs=selected_jobs,
             repeat=repeat,

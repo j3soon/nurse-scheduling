@@ -1005,7 +1005,7 @@ def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
         definition(tmp_path, text)
 
 
-@pytest.mark.parametrize("context", [None, "conversation", "replies"], ids=["default", "conversation", "replies"])
+@pytest.mark.parametrize("context", [None, "conversation", "replies", "characters"])
 def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, context):
     assertion = {"judge": "Check the reply."}
     if context is not None:
@@ -1053,7 +1053,7 @@ def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, con
 @pytest.mark.parametrize("context", [None, "", True, ["replies"], {"mode": "replies"}, "tools"])
 def test_invalid_judge_context_fails_without_credentials(tmp_path, context):
     text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "English.", "judge_context": context}}]})
-    with pytest.raises(DefinitionError, match="judge_context must be conversation or replies"):
+    with pytest.raises(DefinitionError, match="judge_context must be conversation, replies, or characters"):
         definition(tmp_path, text)
 
 
@@ -1084,6 +1084,103 @@ def test_direct_judge_ignores_previous_turns_and_incomplete_latest_drafts():
     assert evidence == [
         {"user": "Current request", "events": [{"kind": "assistant", "text": "Latest answer", "stop_reason": "stop"}]}
     ]
+
+
+def test_character_judge_preserves_full_reply_and_separates_exact_quoted_source():
+    provider = ScriptedProvider([[TextDelta('{"passed": false, "reason": "个 is Simplified."}'), ResponseEnd("stop")]])
+    user = "保留人名「张伟」與檔名 `简体排班.yaml`，其餘使用繁體中文。"
+    reply = "你好個个個𠀀。來源「张伟」與 `简体排班.yaml`。另說「这里」。"
+    trace = [
+        {"user": "前一個問題", "events": [{"kind": "assistant", "text": "以前丙", "stop_reason": "stop"}]},
+        {
+            "user": user,
+            "events": [
+                {"kind": "assistant", "text": "中間乙", "stop_reason": "stop"},
+                {"kind": "tool_result", "text": "工具丁"},
+                {"kind": "assistant", "text": reply, "reasoning": "隱藏戊", "stop_reason": "stop"},
+                {"kind": "assistant", "text": "中斷己", "stop_reason": "length"},
+            ],
+        },
+    ]
+    result = asyncio.run(evaluate(provider, "Check Traditional Chinese.", trace, "test", context="characters"))
+    assert not result["passed"]
+    evidence = json.loads(provider.requests[0][1]["content"])
+    assert evidence["assistant_character_inventory"] == "你 好 個 个 𠀀 來 源 與 另 說 这 里"
+    assert evidence["preserved_source_literals"] == ["张伟", "简体排班.yaml"]
+    assert evidence["conversation"] == [
+        {"user": user, "events": [{"kind": "assistant", "text": reply, "stop_reason": "stop"}]}
+    ]
+
+
+def test_character_judge_routes_separately_from_normal_judges(tmp_path):
+    case = definition(
+        tmp_path,
+        json.dumps(
+            {
+                "steps": [
+                    {"user": "你好"},
+                    {"assistant": {"judge": "Traditional Chinese.", "judge_context": "characters"}},
+                    {"user": "Hello"},
+                    {"assistant": {"judge": "English."}},
+                ]
+            }
+        ),
+    )
+    agent = ScriptedProvider([[TextDelta("你好。"), ResponseEnd("stop")], [TextDelta("Hello."), ResponseEnd("stop")]])
+    normal = ScriptedProvider([[TextDelta('{"passed": true, "reason": "English."}'), ResponseEnd("stop")]])
+    characters = ScriptedProvider([[TextDelta('{"passed": true, "reason": "Traditional."}'), ResponseEnd("stop")]])
+    assert asyncio.run(
+        run_case(
+            case,
+            agent,
+            settings(),
+            FakeSandboxFactory(),
+            judge_provider=normal,
+            character_judge_provider=characters,
+        )
+    )
+    assert len(characters.requests) == len(normal.requests) == 1
+    assert json.loads(characters.requests[0][1]["content"])["assistant_character_inventory"] == "你 好"
+    ordinary = json.loads(normal.requests[0][1]["content"])
+    assert "assistant_character_inventory" not in ordinary
+    assert ordinary["conversation"][0]["events"][0]["text"] == "Hello."
+
+
+@pytest.mark.parametrize("judge_model", ["unsloth/Qwen3.8-27B-NVFP4", "other-model"])
+def test_cli_character_judge_bounds_output_without_changing_normal_judges(tmp_path, monkeypatch, judge_model):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: 你好}, {assistant: {judge: Traditional., judge_context: characters}}]")
+    providers = [
+        ScriptedProvider([[TextDelta("你好。"), ResponseEnd("stop")]]),
+        ScriptedProvider([]),
+        ScriptedProvider([[TextDelta('{"passed": true, "reason": "Traditional."}'), ResponseEnd("stop")]]),
+    ]
+    configured = []
+
+    def create_provider(configuration, **kwargs):
+        configured.append((configuration.provider_max_attempts, kwargs.get("parameters")))
+        return providers[len(configured) - 1]
+
+    monkeypatch.setenv("AI_TEST_JUDGE_MODEL", judge_model)
+    monkeypatch.setattr(AiSettings, "from_env", lambda: replace(settings(), provider_max_attempts=8))
+    monkeypatch.setattr(runner, "OpenAiCompatibleProvider", create_provider)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda *_: FakeSandboxFactory())
+    monkeypatch.setattr(runner, "TRANSCRIPTS", tmp_path / "transcripts")
+    assert main(["run", str(case.path)]) == 0
+    assert [attempts for attempts, _ in configured] == [5, 5, 5]
+    assert configured[0][1] is None
+    assert configured[1][1] == {"temperature": 0}
+    parameters = configured[2][1]
+    assert parameters["max_tokens"] == 512
+    assert parameters["response_format"]["type"] == "json_schema"
+    reason = parameters["response_format"]["json_schema"]["schema"]["properties"]["reason"]
+    assert reason["minLength"] == 1 and reason["maxLength"] == 240
+    assert ("chat_template_kwargs" in parameters) is ("qwen" in judge_model.casefold())
+    if "qwen" in judge_model.casefold():
+        assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
+    assert not providers[1].requests
+    assert len(providers[2].requests) == 1
 
 
 @pytest.mark.parametrize("count", [True, False, 0, -1, 1.5, "12", [], {}])

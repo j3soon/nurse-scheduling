@@ -157,6 +157,16 @@ current turn's tool calls and results. This option never includes earlier turns.
 Assert Schedule Spec changes and required tools explicitly. Both modes retain
 the full conversation in the saved transcript. `judge_context` requires `judge`.
 
+Use `judge_context: characters` for Chinese script checks. It adds a deduplicated
+Han character inventory from the latest reply. Exact quoted strings also present
+in the current user request are listed separately. The full reply remains
+visible. This evidence does not convert text or classify characters by script.
+The CLI uses a separate judge with a strict JSON schema, a 512-token output
+limit, and a reason limited to 240 characters. Qwen judges use non-thinking mode
+for these checks. Other assertions keep the normal judge. The endpoint must
+support JSON schema output. Validate script rubrics against both mixed-script
+failures and valid shared characters, source quotations and identifiers.
+
 Chinese-language users always receive Traditional Chinese with Taiwan vocabulary
 and phrasing, including when they use or request Simplified Chinese. Support for
 other Chinese scripts is deferred. English-language users receive English.

@@ -3,16 +3,16 @@
 steps:
   - user: 你好
   - assistant:
+      judge_context: characters
       judge: >-
-        Pass when the reply uses Traditional Chinese.
-        English app names and code identifiers are allowed.
+        助理回覆必須使用繁體中文。先排除英文名稱、程式識別字，以及使用者原文中已有且助理逐字保留的人名、檔名或引述。這些保留字串即使含有簡體字，也必須允許。只檢查其餘中文敘述的實際字形，不檢查使用者訊息。繁體／簡體範例：個／个、頁／页、現／现、導／导、見／见、灣／湾、幫／帮、會／会、銷／销、繼／继、續／续、頭／头、員／员、無／无、這／这、興／兴、優／优、數／数。其餘中文只要出現一個簡體字，即不通過。台、同、只、面等共用字不算錯。失敗時逐字引用回覆中實際出現、且不屬上述保留字串的錯誤片段，並列出繁體寫法。
   - schedule:
       unchanged: true
 
   - user: 請簡短介紹你能幫我做什麼。
   - assistant:
+      judge_context: characters
       judge: >-
-        Pass when the reply uses Traditional Chinese.
-        English app names and code identifiers are allowed.
+        助理回覆必須使用繁體中文。先排除英文名稱、程式識別字，以及使用者原文中已有且助理逐字保留的人名、檔名或引述。這些保留字串即使含有簡體字，也必須允許。只檢查其餘中文敘述的實際字形，不檢查使用者訊息。繁體／簡體範例：個／个、頁／页、現／现、導／导、見／见、灣／湾、幫／帮、會／会、銷／销、繼／继、續／续、頭／头、員／员、無／无、這／这、興／兴、優／优、數／数。其餘中文只要出現一個簡體字，即不通過。台、同、只、面等共用字不算錯。失敗時逐字引用回覆中實際出現、且不屬上述保留字串的錯誤片段，並列出繁體寫法。
   - schedule:
       unchanged: true
