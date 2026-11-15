@@ -539,6 +539,43 @@ test('keeps formatted paste in native text undo history', async ({ page, context
   await expect(input).toHaveValue('**New text**');
 });
 
+test('keeps the first chat when another tab refreshes an earlier history snapshot', async ({ page, context }) => {
+  await mockAiBackend(page);
+  await page.goto('/experimental-ai');
+  const background = await context.newPage();
+  await mockAiBackend(background);
+  await background.goto('/experimental-ai');
+  const backgroundHistory = background.getByRole('complementary', { name: 'Recent chats' });
+  await expect(background.getByText('Backend v0.4.3-backend')).toBeVisible();
+  await expect(backgroundHistory.getByText('No recent chats.')).toBeVisible();
+
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Keep this first chat.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  const history = page.getByRole('complementary', { name: 'Recent chats' });
+  await expect(history.getByRole('button', { name: /^Keep this first chat/ })).toBeVisible();
+  // Return the empty snapshot this tab could have read before the first save.
+  await background.evaluate(() => {
+    const getItem = Storage.prototype.getItem;
+    let readEarlierHistory = true;
+    Storage.prototype.getItem = function (key) {
+      if (this === localStorage && key === 'nurse-scheduling-ai-history' && readEarlierHistory) {
+        readEarlierHistory = false;
+        return null;
+      }
+      return getItem.call(this, key);
+    };
+    window.dispatchEvent(new StorageEvent('storage', { key: 'nurse-scheduling-ai-history' }));
+  });
+  await expect(backgroundHistory.getByRole('button', { name: /^Keep this first chat/ })).toBeVisible();
+  await expect(history.getByRole('button', { name: /^Keep this first chat/ })).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.reload();
+  await expect(history.getByRole('button', { name: /^Keep this first chat/ })).toBeVisible();
+  await expect(page.getByText('The image and schedule were received.')).toBeVisible();
+  await background.close();
+});
+
 test('asks about the current Schedule Spec and renders a streamed answer', async ({ page }) => {
   const captured = await mockAiBackend(page);
 

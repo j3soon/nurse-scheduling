@@ -47,7 +47,10 @@ function writeHistory(entries: RecentChat[]): void {
 
 /** Expiration is based on chat activity, never on viewing or saving a snapshot. */
 export function readChatHistory(now = Date.now()): RecentChat[] {
-  const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+  return parseChatHistory(localStorage.getItem(AI_HISTORY_STORAGE_KEY), now);
+}
+
+function parseChatHistory(raw: string | null, now: number): RecentChat[] {
   if (!raw) return [];
   let stored: { appVersion?: string; entries?: unknown[] };
   try { stored = JSON.parse(raw); } catch { return []; }
@@ -90,10 +93,13 @@ export function clearChatHistory(): void {
 }
 
 export function pruneChatHistory(): RecentChat[] {
-  const entries = readChatHistory();
-  // Do not dispatch a change while reading in a storage event handler.
   const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+  const entries = parseChatHistory(raw, Date.now());
   const next = entries.length ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries }) : null;
+  const current = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+  // Another tab can save or forget a chat while cleanup prepares its replacement.
+  if (current !== raw) return parseChatHistory(current, Date.now());
+  // Do not dispatch a change while reading in a storage event handler.
   if (next !== raw) {
     if (next) localStorage.setItem(AI_HISTORY_STORAGE_KEY, next);
     else localStorage.removeItem(AI_HISTORY_STORAGE_KEY);

@@ -180,8 +180,8 @@ explicitly when an E2E build must use another version.
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve
 unrecognized versioned settings until a migration is defined.
-After decoding legacy browser storage, check the current key again so a newer
-save from another tab takes precedence over the migration.
+After decoding browser storage, check the current key again before rewriting it.
+Preserve newer saves and deletions from another tab during migration or cleanup.
 
 Send backend requests through the page's authorized fetch helper so the selected
 backend's token is attached. Job events use `EventSource` with the backend's

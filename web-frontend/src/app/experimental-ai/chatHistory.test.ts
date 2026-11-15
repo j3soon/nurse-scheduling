@@ -87,6 +87,52 @@ describe('recent chat storage', () => {
     expect(readChatHistory()).toHaveLength(1);
   });
 
+  it('keeps a first chat saved by another tab while history is being read', () => {
+    saveChatHistory(conversation(), true);
+    const latest = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    vi.spyOn(Storage.prototype, 'getItem').mockReturnValueOnce(null);
+
+    expect(pruneChatHistory()).toHaveLength(1);
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBe(latest);
+  });
+
+  it('keeps a newer transcript saved by another tab while history is being read', () => {
+    const chat = conversation();
+    saveChatHistory(chat, true);
+    const earlier = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    saveChatHistory({ ...chat, messages: [...chat.messages, { id: 'answer', role: 'assistant', content: 'Latest answer' }] });
+    const latest = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    vi.spyOn(Storage.prototype, 'getItem').mockReturnValueOnce(earlier);
+
+    expect(pruneChatHistory()[0].conversation.messages.at(-1)?.content).toBe('Latest answer');
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBe(latest);
+  });
+
+  it('keeps a chat forgotten by another tab from returning while history is being read', () => {
+    saveChatHistory(conversation(), true);
+    const earlier = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    clearChatHistory();
+    vi.spyOn(Storage.prototype, 'getItem').mockReturnValueOnce(earlier);
+
+    expect(pruneChatHistory()).toEqual([]);
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBeNull();
+  });
+
+  it('keeps a newer save made while the cleaned history is being serialized', () => {
+    const chat = conversation();
+    saveChatHistory(chat, true);
+    const updated = { ...chat, messages: [...chat.messages, { id: 'answer', role: 'assistant' as const, content: 'Latest answer' }] };
+    const latest = JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries: [{ conversation: updated, lastActivityAt: chat.lastActivityAt }] });
+    const stringify = JSON.stringify;
+    vi.spyOn(JSON, 'stringify').mockImplementationOnce(value => {
+      localStorage.setItem(AI_HISTORY_STORAGE_KEY, latest);
+      return stringify(value);
+    });
+
+    expect(pruneChatHistory()[0].conversation.messages.at(-1)?.content).toBe('Latest answer');
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBe(latest);
+  });
+
   it('forgets individual sessions and never recreates them from a later tab save', () => {
     const chat = conversation();
     saveChatHistory(chat, true);

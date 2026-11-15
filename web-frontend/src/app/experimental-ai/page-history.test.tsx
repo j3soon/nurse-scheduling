@@ -131,6 +131,28 @@ describe('ExperimentalAiPage', () => {
     expect(mockStopSession).not.toHaveBeenCalled();
   });
 
+  it('keeps saving the open chat when a history refresh overlaps its first save', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
+    await user.type(input, 'First conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await within(history).findByRole('button', { name: /^First conversation/ });
+    vi.spyOn(Storage.prototype, 'getItem').mockReturnValueOnce(null);
+
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: AI_HISTORY_STORAGE_KEY })));
+    expect(within(history).getByRole('button', { name: /^First conversation/ })).toBeInTheDocument();
+
+    await user.type(input, 'Continue this conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(readChatHistory()[0].conversation.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'user', content: 'Continue this conversation' }),
+    ]));
+    expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull();
+  });
+
   it('restores the transcript and live session after navigating away', async () => {
     const user = userEvent.setup();
     const firstRender = render(<ExperimentalAiPage />);
