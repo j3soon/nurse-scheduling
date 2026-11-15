@@ -23,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_APP_VERSION } from '@/utils/version';
 import { AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, saveChatHistory } from './chatHistory';
 import { type StoredChatConversation } from './chatConversation';
+import { applyModelInput, type ChatMessage } from './chatTranscript';
 
 const conversation = (sessionId = 'one', endpoint = '/ai'): StoredChatConversation => ({
   sessionId, endpoint, lastActivityAt: Date.now(), expiresAt: Date.now() + 30 * 86400_000,
@@ -33,6 +34,23 @@ const conversation = (sessionId = 'one', endpoint = '/ai'): StoredChatConversati
 afterEach(() => { localStorage.clear(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('recent chat storage', () => {
+  it('saves long chats that repeatedly use one large unchanged Schedule Spec', () => {
+    const yaml = `# ${'a'.repeat(100_000)}\npeople: []\n`;
+    let messages: ChatMessage[] = [];
+    for (let index = 0; index < 55; index += 1) {
+      const turn = { questionId: `question-${index}`, assistantId: `assistant-${index}` };
+      messages.push({ id: turn.questionId, role: 'user', content: `Question ${index}` },
+        { id: turn.assistantId, role: 'assistant', content: `Answer ${index}` });
+      messages = applyModelInput(messages, { system: 'Policy', scheduleSpecYaml: yaml,
+        messages: [{ kind: 'question', content: `Question ${index}` }] }, turn);
+    }
+    expect(() => saveChatHistory({ ...conversation(), syncedScheduleSpec: yaml, messages }, true)).not.toThrow();
+    const saved = readChatHistory()[0].conversation;
+    expect(saved.messages.at(-1)?.content).toBe('Answer 54');
+    expect(saved.messages.filter(message => message.source === 'schedule')).toHaveLength(1);
+    expect(saved.messages.find(message => message.source === 'schedule')?.content).toBe(yaml);
+  });
+
   it('keeps sessions distinct by endpoint and sorts by actual activity', () => {
     vi.useFakeTimers();
     const first = conversation();

@@ -276,6 +276,8 @@ When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 
 Store AI chat history with the saving frontend `appVersion`, without a separate
 numeric storage version.
+Keep repeated large payloads out of per-message metadata. Test browser storage
+quota and reload behavior when extending saved chat state.
 
 When switching saved AI chats, preserve browser Schedule Spec during event replay.
 Reset pending model and reasoning choices on explicit chat switches. Preserve

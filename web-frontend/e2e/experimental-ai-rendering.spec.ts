@@ -28,6 +28,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import fixture from '../../core/tests/ai_fixtures/chat-rendering.json';
+import { seedScheduleSpecState } from './helpers';
 
 const root = path.resolve(__dirname, '../..');
 const storageKey = 'nurse-scheduling-ai-conversation';
@@ -374,6 +375,51 @@ async function compareTranscript(page: Page, exported: Page, dir: string, state:
 }
 
 test.use({ locale: 'en-US', timezoneId: 'UTC' });
+
+test('persists many questions with one unchanged large Schedule Spec', async ({ page, baseURL }) => {
+  test.setTimeout(90_000);
+  const snapshot = scenario('empty');
+  const template = snapshot.runs[0];
+  const input = snapshot.events.find(event => event.type === 'model_input')!.data;
+  snapshot.runs = [];
+  snapshot.events = [];
+  for (let index = 0; index < 55; index += 1) {
+    const id = `storage-${index}`;
+    const question = `Question ${index}`;
+    const start = template.started_at + index * 1000;
+    snapshot.runs.push({ ...template, id, prompt: question, started_at: start, finished_at: start + 750 });
+    snapshot.events.push(
+      { type: 'run_start', occurred_at: start, data: { run_id: id, trigger: 'user' } },
+      { type: 'model_input', occurred_at: start + 250,
+        data: { ...input, run_id: id, messages: [{ kind: 'question', content: question }] } },
+      { type: 'delta', occurred_at: start + 500, data: { run_id: id, text: `Answer ${index}` } },
+      { type: 'done', occurred_at: start + 750, data: { run_id: id } },
+    );
+  }
+  const backend = await startBackend(new URL(baseURL!).origin, snapshot);
+  try {
+    await page.clock.setFixedTime(template.started_at);
+    await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
+    await seedScheduleSpecState(page, {
+      apiVersion: 'test', description: 'a'.repeat(100_000), dates: { range: {}, groups: [] },
+      people: { items: [], groups: [], history: [] }, shiftTypes: { items: [], groups: [] },
+      preferences: [], export: { formatting: [] },
+    });
+    await page.goto('/experimental-ai');
+    await replay(page, snapshot, backend);
+    expect((snapshot.events.find(event => event.type === 'model_input')!.data.schedule_spec_yaml as string).length).toBeGreaterThan(100_000);
+    const lastSavedAnswer = await page.evaluate(() => {
+      const history = JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!);
+      return history.entries[0].conversation.messages.at(-1).content;
+    });
+    expect(lastSavedAnswer).toBe('Answer 54');
+    await page.reload();
+    await expect(page.getByText('Answer 54', { exact: true })).toBeVisible();
+    await expect(page.getByText('Initial Schedule Spec sent', { exact: true })).toHaveCount(1);
+  } finally {
+    await backend.close();
+  }
+});
 
 for (const variant of variants) test(`current Python export follows the live transcript: ${variant}`, async ({ page, context, baseURL }) => {
   test.setTimeout(90_000);

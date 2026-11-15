@@ -26,7 +26,7 @@ import { messageId } from './assistantEvents';
 export interface ChatMessageContent {
   role: 'system' | 'user' | 'assistant' | 'optimizer';
   source?: 'app' | 'status' | 'optimizer' | 'schedule';
-  // Latest schedule accepted by the backend at this point in the conversation.
+  // Accepted Schedule Spec at a change boundary, so unchanged inputs do not repeat large YAML.
   scheduleSpecYaml?: string;
   // Topic of an app event or status message, shown after its role label.
   title?: string;
@@ -126,7 +126,10 @@ export function applyModelInput(
     }
     // Replayed input must not replace a later schedule accepted from this same run.
     if (!result[assistantIndex].activity?.some(entry => entry.kind === 'schedule-spec-applied')) {
-      result[assistantIndex] = { ...result[assistantIndex], scheduleSpecYaml: input.scheduleSpecYaml };
+      const assistant = { ...result[assistantIndex] };
+      if (input.scheduleSpecYaml === previousSchedule) delete assistant.scheduleSpecYaml;
+      else assistant.scheduleSpecYaml = input.scheduleSpecYaml;
+      result[assistantIndex] = assistant;
     }
   }
   result.splice(insertAt, 0, ...before);
