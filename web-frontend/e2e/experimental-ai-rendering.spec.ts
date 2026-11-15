@@ -176,7 +176,7 @@ function scenario(variant: typeof variants[number]): Snapshot {
     append('delta', { text: 'Checked staff.csv twice.' }); append('done');
   } else if (variant === 'chinese') {
     append('delta', { text: '软件和鼠标。数据' });
-    append('delta', { text: '库\n\n`软件`\n\n```yaml\n名字: 张三\n```\n\n> 软件原文\n\n[软件链接](https://example.test/软件)' });
+    append('delta', { text: '库\n\n`软件`\n\n```yaml\n名字: 张三\n```\n\n> 软件原文\n\n[软件链接](https://example.test/软件)\n\n![软件和鼠标](https://example.test/image.png)\n\n[![软件图片](https://example.test/image.png)](https://example.test)' });
     append('done');
   } else if (variant === 'empty') append('done');
   const last = snapshot.runs.at(-1)!;
@@ -420,6 +420,7 @@ for (const variant of variants) test(`current Python export follows the live tra
     if (variant === 'chinese') {
       const html = await exportHtml(snapshot);
       expect(html).toContain('软件和鼠标。数据库');
+      expect(html).toContain('[Remote image omitted: 软件和鼠标]');
       const filename = path.join(dir, 'chat.html');
       await writeFile(filename, html);
       await exported.goto(pathToFileURL(filename).href);
@@ -428,11 +429,14 @@ for (const variant of variants) test(`current Python export follows the live tra
         const toggle = current.getByRole('checkbox', { name: current === page ? 'Convert to Taiwan Traditional Chinese' : name, exact: true });
         await expect(toggle).toBeChecked();
         await expect(current.locator('article.assistant .content').last()).toContainText('軟體和滑鼠。資料庫');
+        await expect(current.getByText('[Remote image omitted: 軟體和滑鼠]', { exact: true })).toBeVisible();
+        await expect(current.getByRole('link', { name: '[Remote image omitted: 软件图片]', exact: true })).toBeVisible();
         await expect(current.locator('article.assistant .content pre').last()).toHaveText('名字: 张三\n');
         await expect(current.locator('article.assistant .content blockquote').last()).toHaveText('软件原文');
         await expect(current.getByRole('link', { name: '软件链接' })).toHaveAttribute('href', encodeURI('https://example.test/软件'));
         await toggle.uncheck();
         await expect(current.locator('article.assistant .content').last()).toContainText('软件和鼠标。数据库');
+        await expect(current.getByText('[Remote image omitted: 软件和鼠标]', { exact: true })).toBeVisible();
         await toggle.check();
         await expect(current.locator('article.assistant .content').last()).toContainText('軟體和滑鼠。資料庫');
       }

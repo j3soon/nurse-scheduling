@@ -118,6 +118,19 @@ people: []
     expect(screen.getByText('資料庫')).toBeInTheDocument();
   });
 
+  it('converts omitted image descriptions while preserving descriptions in links and quotes', () => {
+    const content = '![软件和鼠标](https://example.test/image.png)\n\n[![软件图片](https://example.test/image.png)](https://example.test)\n\n> ![软件原图](https://example.test/image.png)';
+    const { container, rerender } = render(<AssistantMarkdown content={content} />);
+    expect(screen.getByText('[Remote image omitted: 軟體和滑鼠]')).toBeInTheDocument();
+    expect(container.querySelector('a')).toHaveTextContent('[Remote image omitted: 软件图片]');
+    expect(container.querySelector('blockquote')).toHaveTextContent('[Remote image omitted: 软件原图]');
+    expect(container.querySelector('img')).not.toBeInTheDocument();
+    rerender(<AssistantMarkdown content={content} convertChinese={false} />);
+    expect(screen.getByText('[Remote image omitted: 软件和鼠标]')).toBeInTheDocument();
+    rerender(<AssistantMarkdown content={content} />);
+    expect(screen.getByText('[Remote image omitted: 軟體和滑鼠]')).toBeInTheDocument();
+  });
+
   it('reconverts the accumulated message when a streamed phrase completes', () => {
     const { rerender } = render(<AssistantMarkdown content="数据" />);
     rerender(<AssistantMarkdown content="数据库" />);

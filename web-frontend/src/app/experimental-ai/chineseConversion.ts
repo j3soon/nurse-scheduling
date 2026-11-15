@@ -5,7 +5,7 @@
 
 import { Converter } from '../../../../thirdparty/opencc/cn2t';
 
-type ProseNode = { type: string; tagName?: string; value?: string; children?: ProseNode[] };
+type ProseNode = { type: string; tagName?: string; value?: string; properties?: { alt?: string }; children?: ProseNode[] };
 
 let converter: ((text: string) => string) | undefined;
 
@@ -16,6 +16,9 @@ export function traditionalChinese() {
     const visit = (node: ProseNode) => {
       if (node.type === 'element' && ['pre', 'code', 'blockquote', 'a'].includes(node.tagName ?? '')) return;
       if (node.type === 'text' && node.value !== undefined) node.value = convert(node.value);
+      if (node.type === 'element' && node.tagName === 'img' && typeof node.properties?.alt === 'string') {
+        node.properties.alt = convert(node.properties.alt);
+      }
       node.children?.forEach(visit);
     };
     visit(tree);
