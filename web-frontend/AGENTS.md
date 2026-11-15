@@ -293,6 +293,8 @@ and `done`. Isolated server and UI mocks can both pass while their contracts dif
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.
+Cursor recovery must retain saved message metadata when its defining event
+precedes the cursor. Test this separately from replacement snapshots.
 Use each event's `run_id` to identify replayed messages when `run_start` was trimmed.
 Validate the whole SSE frame and every recovery entry before updating the cursor
 or transcript. Acknowledge validated frames before consumer callbacks. Apply
