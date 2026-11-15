@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs offline vendor integrity checks, documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -23,7 +23,10 @@ inside a dev container, where project packages are installed system-wide.
 
 The script intentionally:
 
-- Runs documentation link-checker regression tests before the module checks.
+- Runs offline vendor integrity checks and their regression tests, followed by
+  documentation link-checker regression tests, before the module checks.
+  The Check Vendor Integrity workflow separately compares the pinned upstream
+  npm package. Local CI does not require that network request.
 - Uses `--solver-profile=primary` for the complete CP-SAT and CBC schedule
   fixture sweeps, CP-SAT workbook fixtures, and low-level OR-Tools adapters.
   Other backend sweeps remain available with `--solver-profile=all`.

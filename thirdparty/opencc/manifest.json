@@ -1,0 +1,22 @@
+{
+  "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
+  "_comment": "This file is mostly AI generated.",
+  "package": "opencc-js",
+  "version": "1.4.2",
+  "url": "https://registry.npmjs.org/opencc-js/-/opencc-js-1.4.2.tgz",
+  "sha256": "acde2ed46fecc53eb1c329ff093886bf702975be24ace4caa3d01321167d69c8",
+  "files": {
+    "cn2t.js": {
+      "path": "package/dist/umd/cn2t.js",
+      "sha256": "d66d920069ab526db08c6f2bc15fcf6feb7d07de3cf98e7e27c0aaf7d136baee"
+    },
+    "LICENSE": {
+      "path": "package/LICENSE",
+      "sha256": "960f7fc16d8baa126802316a7df9078a383af4fb6bc60033adb28e85c08d5e5e"
+    },
+    "THIRD_PARTY_LICENSES.md": {
+      "path": "package/THIRD_PARTY_LICENSES.md",
+      "sha256": "42c7dbe71c178fcca97ba945e9ac9ff360fb69bbfea4cb50556f6c65bfa59806"
+    }
+  }
+}
