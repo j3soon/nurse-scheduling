@@ -1,4 +1,4 @@
-# Shift Type Requirements
+# Shift Type Requirements (班別需求)
 
 [Open Shift Type Requirements](https://nursescheduling.org/shift-type-requirements){ .md-button .md-button--primary }
 

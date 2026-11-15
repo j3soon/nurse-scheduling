@@ -1,4 +1,4 @@
-# Shift Type Successions
+# Shift Type Successions (班別接續)
 
 [Open Shift Type Successions](https://nursescheduling.org/shift-type-successions){ .md-button .md-button--primary }
 

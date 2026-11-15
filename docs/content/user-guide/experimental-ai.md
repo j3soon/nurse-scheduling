@@ -1,4 +1,4 @@
-# Experimental AI Chat
+# Experimental AI (實驗性 AI)
 
 [Open Experimental AI](https://nursescheduling.org/experimental-ai){ .md-button .md-button--primary }
 

@@ -81,6 +81,10 @@
   phrase such as "shift families." Distinguish a nurse's monthly primary shift
   from actual daily assignments. Define new concepts, such as near-hard
   constraints, before using them in explanations.
+- At the first mention of a web UI page in each user-guide page, write its
+  English name followed by the exact Traditional Chinese label from
+  `web-frontend/src/i18n/zh-TW.ts` in parentheses. Keep the screen reference
+  complete and in navigation order so the AI assistant can find every label.
 - Use **Schedule Spec** for input defining people, dates, shift types, constraints,
   preferences, and export settings. Use **Schedule** for actual shift assignments.
   A fixed assignment in a Schedule Spec remains an input constraint. Name formats

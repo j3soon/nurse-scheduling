@@ -1,4 +1,4 @@
-# Shift Types
+# Shift Types (班別)
 
 [Open Shift Types](https://nursescheduling.org/shift-types){ .md-button .md-button--primary }
 

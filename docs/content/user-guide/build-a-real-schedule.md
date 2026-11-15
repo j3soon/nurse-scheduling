@@ -7,7 +7,7 @@ rationale behind each step, including the ward's
 workload, staff qualifications, rest policies, and preference priorities. These
 explanations help users and AI assistants adapt the Schedule Spec to another
 ward. The steps start from an empty Schedule Spec.
-**Save and Load → Download** produces the same Schedule Spec as the bundled
+**Save and Load (儲存與載入)** → **Download** produces the same Schedule Spec as the bundled
 example (`large-ward-with-87-people-2025-11.yaml`). The exported YAML is not
 byte-for-byte identical: the running app stamps `appVersion` and can write
 requests or fields in a different order. See
@@ -165,10 +165,10 @@ imported from a file.
 
 ## 1. Start from empty and set the dates
 
-1. On the app home page, select **New Schedule Spec**, then **Create empty Schedule Spec**,
+1. On **Home (首頁)**, select **New Schedule Spec**, then **Create empty Schedule Spec**,
    and confirm. The new Schedule Spec already includes the default *at most one shift
    per day* preference.
-2. Open **Dates** and select **Set Date Range**.
+2. Open **Dates (日期)** and select **Set Date Range**.
 3. Set the start date to `2025-11-01` and the end date to `2025-11-30` (30 days
    selected).
 4. Keep **Import Taiwan holidays into date groups** checked. This creates
@@ -251,7 +251,7 @@ ward's actual free days before using it elsewhere.
 
 ## 3. Add the 87 people
 
-1. Open **People** and select **Upload People**.
+1. Open **People (人員)** and select **Upload People**.
 2. Choose `people.txt`. It has one person ID per line and no heading. Wait for
    the upload confirmation before leaving the page.
 
@@ -342,7 +342,7 @@ to select them.
 
 Create the 11 shift types listed under `shiftTypes.items` in `reference.yaml`,
 in that order: `D`, `D+`, `E`, `E+`, `N`, `N+`, `A`, `D~`, `E~`, `N~`, and `K`.
-Open **Shift Types**, select **Add Shift Type**, enter the ID and description,
+Open **Shift Types (班別)**, select **Add Shift Type**, enter the ID and description,
 and select **Add**. Repeat for each shift type.
 
 The automatic `OFF` shift type and `ALL` group are always present and cannot be
@@ -422,12 +422,12 @@ Positive finite weights reward preferred assignments or patterns. Negative
 finite weights penalize discouraged assignments or patterns. Their values
 specify relative priorities selected through scheduling experience and
 adjusted after reviewing optimization results. The
-[Shift Requests](shift-requests.md),
-[Shift Type Requirements](shift-type-requirements.md), and
-[Shift Type Successions](shift-type-successions.md) pages explain how each rule
+[Shift Requests (排班請求)](shift-requests.md),
+[Shift Type Requirements (班別需求)](shift-type-requirements.md), and
+[Shift Type Successions (班別接續)](shift-type-successions.md) pages explain how each rule
 is scored.
 
-Open **Shift Type Requirements** and select **Add Requirement** for each row
+Open **Shift Type Requirements (班別需求)** and select **Add Requirement** for each row
 below, in this order. Select one **Shift Types** option, enter **Required Number
 of People**, select one **Qualified People** group and one **Dates** group,
 then select **Add**. Set **Preferred Number of People** and **Weight** for the
@@ -484,7 +484,7 @@ Add staffing requirements if the ward needs a daily count.
 
 ## 7. Add previous-shift history
 
-1. Open **Shift Requests** and select **Quick Add Preference**.
+1. Open **Shift Requests (排班請求)** and select **Quick Add Preference**.
 2. Select **Upload People History (shorthand)** and choose `people-history.csv`.
    Wait for the confirmation that 87 history entries were processed before
    continuing. Keep **Quick Add Preference** open for the next step.
@@ -659,7 +659,7 @@ bundled example even when every selector and weight matches.
 ## 10. Add the succession rules
 
 Create the 14 shift-type successions listed under `successions` in
-`reference.yaml`, in that order. For each one, open **Shift Type Successions**
+`reference.yaml`, in that order. For each one, open **Shift Type Successions (班別接續)**
 and select **Add Succession**. Enter its **Description**, check `ALL` under
 **People**, and click the buttons under **Shift Type Pattern** in the listed
 order. Repeated pattern members require repeated clicks. Check `ALL` under
@@ -714,7 +714,7 @@ weights are empirical and may vary across wards.
 ## 11. Add the workload counts
 
 Create the 3 shift counts listed under `shiftCounts` in `reference.yaml`, in
-that order. Open **Shift Counts** and select **Add Shift Count** for each.
+that order. Open **Shift Counts (班次計數)** and select **Add Shift Count** for each.
 Enter its **Description**, check its groups under **People**, select its
 **Count Dates** group, and check `OFF` under **Count Shift Types**. Keep
 **Expression** at `|x - T|^2`, enter its **Target Value**, set **Weight** to
@@ -786,7 +786,7 @@ group memberships, the dates in `WORKDAY` and `FREEDAY`, previous-shift history,
 and every `-inf` rule. Also confirm which finite preferences may be traded off
 when the schedule is crowded. Review every staffing coverage warning.
 
-1. Open **Optimize and Export**. Leave **Backend** at `Auto` or choose an
+1. Open **Optimize and Export (最佳化與匯出)**. Leave **Backend** at `Auto` or choose an
    online compatible server, then select **Check all** and wait for
    **Server: Online**. Check the available solver and its timeout range.
 2. For a quick feasibility check, enter `300` in **Solver Timeout** and select
