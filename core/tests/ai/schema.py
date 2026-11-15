@@ -150,14 +150,16 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
     elif kind == "assistant":
         if (
             not isinstance(value, dict)
-            or set(value) - {"contains_any", "case_sensitive", "judge", "count", "judge_context"}
-            or not {"contains_any", "judge"}.intersection(value)
+            or set(value) - {"contains_any", "contains_all", "case_sensitive", "judge", "count", "judge_context"}
+            or not {"contains_any", "contains_all", "judge"}.intersection(value)
         ):
-            raise DefinitionError("assistant requires contains_any, judge, or both")
+            raise DefinitionError("assistant requires contains_any, contains_all, judge, or a combination")
         if "contains_any" in value:
             _strings(value["contains_any"], "contains_any")
-        elif "case_sensitive" in value:
-            raise DefinitionError("case_sensitive requires contains_any")
+        if "contains_all" in value:
+            _strings(value["contains_all"], "contains_all")
+        if "case_sensitive" in value and not {"contains_any", "contains_all"}.intersection(value):
+            raise DefinitionError("case_sensitive requires contains_any or contains_all")
         if "case_sensitive" in value and type(value["case_sensitive"]) is not bool:
             raise DefinitionError("case_sensitive must be a boolean")
         if "judge" in value and (not isinstance(value["judge"], str) or not value["judge"].strip()):

@@ -1,0 +1,37 @@
+# This file is part of Nurse Scheduling Project.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+steps:
+  - user: >-
+      請依網頁介面的分頁順序，用繁體中文簡短說明首頁及其餘每個頁面的用途。
+      請使用介面顯示的繁體中文頁名。
+  - assistant:
+      contains_all:
+        - 首頁
+        - 日期
+        - 人員
+        - 班別
+        - 班別需求
+        - 排班請求
+        - 班別接續
+        - 班次計數
+        - 同班偏好
+        - 匯出版面
+        - 儲存與載入
+        - 最佳化與匯出
+        - 實驗性 AI
+      case_sensitive: true
+      count: 13
+      judge: >-
+        Pass only when the reply briefly describes all 13 navigation pages in order
+        and identifies each page by its exact Traditional Chinese UI label:
+        0 首頁 (Home), 1 日期 (Dates), 2 人員 (People), 3 班別 (Shift Types),
+        4 班別需求 (Shift Type Requirements), 5 排班請求 (Shift Requests),
+        6 班別接續 (Shift Type Successions), 7 班次計數 (Shift Counts),
+        8 同班偏好 (Shift Affinities), 9 匯出版面 (Export Layout),
+        10 儲存與載入 (Save and Load), 11 最佳化與匯出 (Optimize and Export),
+        12 實驗性 AI (Experimental AI). Each Chinese label must name the
+        corresponding page, not merely appear in unrelated prose. Reject any
+        omitted page, mismatched or paraphrased Chinese page label, incorrect
+        page purpose, or reply whose descriptions are not in Traditional Chinese.
+  - schedule:
+      unchanged: true

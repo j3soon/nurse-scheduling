@@ -262,6 +262,35 @@ def test_ordered_events_and_case_matching():
         check_event(tool, [], 0)  # A prior turn's calls cannot satisfy this turn.
 
 
+def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {contains_all: [首頁, 排班請求, 實驗性 AI], case_sensitive: true}}]",
+    )
+    assertion = case.steps[1]
+    assert check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 AI"}], 0) == 1
+    with pytest.raises(AssertionError):
+        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求"}], 0)
+    with pytest.raises(AssertionError):
+        check_event(
+            assertion,
+            [
+                {"kind": "assistant", "text": "首頁、排班請求"},
+                {"kind": "assistant", "text": "實驗性 AI"},
+            ],
+            0,
+        )
+    with pytest.raises(AssertionError):
+        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 ai"}], 0)
+
+
+@pytest.mark.parametrize("phrases", [[], [True], ["valid", ""]])
+def test_invalid_contains_all_definitions(tmp_path, phrases):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_all": phrases}}]})
+    with pytest.raises(DefinitionError, match="contains_all"):
+        definition(tmp_path, text)
+
+
 def test_schedule_additions_are_exact_and_keep_existing_item_order():
     steps = [Step(2, "schedule", {"added": {"people.items": [{"id": "Alice"}]}}, {})]
     before = "people: {items: [{id: Bob}, {id: Carol}]}\n"

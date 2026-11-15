@@ -116,7 +116,7 @@ and workspace state. Each step has exactly one primary key:
 | `yaml` | Schedule fixture name relative to `fixtures/`. Replaces current Schedule Spec. |
 | `user` | Starts a new turn. Optional `attachment` accepts a fixture name or list. |
 | `tool` | Requires a tool call with the exact name and matching supplied arguments. |
-| `assistant` | Requires `contains_any`, a `judge` rubric, or both. Optional `case_sensitive` applies to matching. |
+| `assistant` | Requires `contains_any`, `contains_all`, a `judge` rubric, or a combination. Optional `case_sensitive` applies to phrase matching. |
 | `schedule` | Requires `unchanged: true`, an `added` mapping, `equals: <fixture.yaml>`, or `allow_changes: true`. |
 | `optimizer` | Requires `invoked: false` to forbid optimizer calls during the preceding user turn. |
 
@@ -155,7 +155,10 @@ case-insensitive unless `case_sensitive: true` is set.
 `assistant.judge` is a nonempty rubric string. Write it as a positive pass
 condition. Prefer judge-only assertions for meaning. Add phrase matching only
 when the words themselves are required. A judge-only assertion requires a nonempty reply.
-When phrase matching is also supplied, both matching and the LLM judge must pass.
+`contains_any` matches at least one literal phrase; `contains_all` requires every
+literal phrase in the same completed reply. When both are supplied, both must
+match. Phrase matching is case-insensitive by default. When phrase matching and
+the LLM judge are supplied, both must pass.
 The language cases use judge-only assertions for English and Chinese script.
 For a numbered rubric, optional `assistant.count: 12` asks the judge to include
 `N/12` in its explanation and identify omitted or incomplete points by number.
