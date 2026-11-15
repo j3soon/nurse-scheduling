@@ -176,7 +176,7 @@ function assistantEventCallbacks(
     },
     onScheduleSpecApplied: applied => {
       const { notice, browserApplied } = applySchedule(applied);
-      apply({ type: 'schedule_spec_applied', runId: applied.runId, diff: applied.diff, browserApplied, ...(notice ? { notice } : {}) });
+      apply({ type: 'schedule_spec_applied', runId: applied.runId, diff: applied.diff, scheduleSpecYaml: applied.scheduleSpecYaml, browserApplied, ...(notice ? { notice } : {}) });
     },
   };
 }
@@ -816,6 +816,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           request: { ...request, activeAssistantId: assistantId },
           ...(resume?.recover && original ? {
             content: original.content, activity: original.activity, runId: original.runId,
+            scheduleSpecYaml: original.scheduleSpecYaml,
             modelSelection: original.modelSelection, providerCalls: original.providerCalls, costSummary: original.costSummary,
           } : {}),
         };

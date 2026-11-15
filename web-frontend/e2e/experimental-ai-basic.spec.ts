@@ -1599,6 +1599,8 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         if (messageIds.length > 1) { json({ run_id: 'run-1' }, 202); return; }
         executions += 1;
         publish('run_start', { trigger: 'user' });
+        publish('model_input', { system: 'Policy', schedule_spec_yaml: '',
+          messages: [{ kind: 'question', content: 'Continue while disconnected' }] });
         publish('delta', { text: 'First part and ' });
         // The run is accepted, but its acknowledgement is lost. The browser asks again with the same ID.
         response.destroy();
@@ -1657,8 +1659,14 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
       expect(executions).toBe(1);
       expect(unauthorized).toBe(0);
       expect(new Set(messageIds).size).toBe(1);
+      const acceptedSpec = await page.evaluate(() => {
+        window.dispatchEvent(new Event('pagehide'));
+        const saved = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+        return saved.messages.find((message: { role: string }) => message.role === 'assistant').scheduleSpecYaml;
+      });
+      expect(acceptedSpec).toBe('');
       // The reconnecting reader continued from its saved cursor instead of replaying everything.
-      expect(cursors.at(-1)).toBeGreaterThanOrEqual(steered ? 4 : 2);
+      expect(cursors.at(-1)).toBeGreaterThanOrEqual(steered ? 5 : 3);
     } finally {
       await context.setOffline(false);
       server.closeAllConnections();

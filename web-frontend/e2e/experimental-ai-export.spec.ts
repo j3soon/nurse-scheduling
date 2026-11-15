@@ -186,7 +186,7 @@ test('export is unavailable when the server does not retain saved history', asyn
 
 test('bundled Python HTML remains readable at desktop and phone widths', async ({ page }) => {
   await page.setContent(reference.html);
-  await expect(page.locator('script')).toHaveCount(0);
+  await expect(page.locator('script')).toHaveCount(1);
   // The Session files index links the same file, so name the uploaded-file entry exactly.
   await expect(page.getByRole('link', { name: 'staff.csv (1 KB)', exact: true })).toHaveAttribute('href', /^attachments\//);
   await expect(page.getByText('Stopped before completion.')).toBeVisible();

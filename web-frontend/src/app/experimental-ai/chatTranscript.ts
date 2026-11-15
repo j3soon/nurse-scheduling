@@ -25,7 +25,9 @@ import { messageId } from './assistantEvents';
 
 export interface ChatMessageContent {
   role: 'system' | 'user' | 'assistant' | 'optimizer';
-  source?: 'app' | 'status' | 'optimizer';
+  source?: 'app' | 'status' | 'optimizer' | 'schedule';
+  // Accepted Schedule Spec at a change boundary, so unchanged inputs do not repeat large YAML.
+  scheduleSpecYaml?: string;
   // Topic of an app event or status message, shown after its role label.
   title?: string;
   content: string;
@@ -68,6 +70,7 @@ export function applyModelInput(
   turn: { questionId: string | null; assistantId: string },
 ): ChatMessage[] {
   const statusId = `status-${turn.assistantId}`;
+  const scheduleId = `schedule-${turn.assistantId}`;
   // Replay can replace this request's status. Earlier requests remain visible.
   const result = messages.filter(message => message.id !== statusId);
   const known = new Set(result.map(message => message.historyIndex));
@@ -114,6 +117,21 @@ export function applyModelInput(
     }
   }
   const insertAt = questionIndex >= 0 ? questionIndex : assistantIndex;
+  if (input.scheduleSpecYaml !== undefined) {
+    const previousSchedule = result.slice(0, insertAt).findLast(message => message.scheduleSpecYaml !== undefined)?.scheduleSpecYaml;
+    if (!result.some(message => message.id === scheduleId)
+      && questionText !== null && input.scheduleSpecYaml !== previousSchedule) {
+      before.push({ id: scheduleId, role: 'user', source: 'schedule', content: input.scheduleSpecYaml,
+        title: previousSchedule === undefined ? 'Initial Schedule Spec sent' : 'Updated Schedule Spec sent' });
+    }
+    // Replayed input must not replace a later schedule accepted from this same run.
+    if (!result[assistantIndex].activity?.some(entry => entry.kind === 'schedule-spec-applied')) {
+      const assistant = { ...result[assistantIndex] };
+      if (input.scheduleSpecYaml === previousSchedule) delete assistant.scheduleSpecYaml;
+      else assistant.scheduleSpecYaml = input.scheduleSpecYaml;
+      result[assistantIndex] = assistant;
+    }
+  }
   result.splice(insertAt, 0, ...before);
   assistantIndex += before.length;
   if (status !== null) result.splice(assistantIndex, 0, status);

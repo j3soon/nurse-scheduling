@@ -253,12 +253,29 @@ Raw HTML is ignored. Remote images written in an answer are not loaded.
 Uploaded file names and sizes appear beside their upload event in the chat and
 exports. The file panel shows the files currently retained by the session.
 
+The chat shows a centered **Initial Schedule Spec sent** bubble with the first
+message. It shows **Updated Schedule Spec sent** when a later message sends
+an updated Schedule Spec from the app. Expand **View Schedule Spec YAML** to read the
+complete saved version. You can copy or download that version without changing
+the current Schedule Spec. These snapshots also appear in chat exports.
+
+The **Convert to Taiwan Traditional Chinese** checkbox converts assistant prose to Taiwan
+Traditional Chinese, including Taiwan vocabulary. It is enabled by default and
+saved on this browser. Code, links, block quotes, user messages, and tool data
+keep their original text. Names within prose can also change. Uncheck the option
+to see the original wording.
+
 Use **Export Chat** to download one ZIP from the server. Extract it and open
 `chat.html` for a styled transcript or `chat.md` for Markdown. Both link to files
 under `attachments/`, including removed uploads, generated ZIPs, and optimizer
 files. The ZIP also contains the current `schedule-spec.yaml`, structured `chat.json`,
 and `manifest.json` with file origins and hashes. Work still in progress is marked
 as unfinished. Export is unavailable on servers without saved chat history.
+
+Exports retain the original message text. The offline `chat.html` has its own
+conversion checkbox, enabled by default. You can uncheck it after export to see
+the original wording. Conversion works without an internet connection. The
+Markdown and JSON files always contain the original text.
 
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed

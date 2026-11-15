@@ -26,11 +26,13 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 from jinja2 import Environment, StrictUndefined
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
 
+from ..version import REPOSITORY_ROOT
 from .chat_projection import project_saved_chat
 
 MAX_MARKDOWN_DEPTH = 64
@@ -381,7 +383,7 @@ def _append_activity_bubble(parts, base, entry, presentation=None):
 def _context_message_count(message) -> int:
     role = message["role"]
     presentation = message.get("presentation")
-    if role in {"system", "optimizer"} or presentation == "notice":
+    if role in {"system", "optimizer"} or presentation == "notice" or message.get("source") == "schedule":
         return 0
     if presentation == "summary":
         return 0 if message["compaction"].get("invalidated") else 1
@@ -551,6 +553,8 @@ def _display_messages(messages):
 
 
 def message_label(message):
+    if message.get("source") == "schedule":
+        return message.get("title", "Schedule Spec sent")
     if message.get("presentation") == "notice":
         return "App notice"
     if message.get("presentation") == "summary":
@@ -838,6 +842,19 @@ def build_markdown_chat(messages, metadata):
             lines += ["", summary or "[No message text]"]
             if details:
                 lines += ["", *[f"- **{label}:** " + value.replace("\n", "\n  ") for label, value in details]]
+        elif message.get("source") == "schedule":
+            fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", message["content"])), default=0))
+            lines += [
+                "",
+                "<details>",
+                "<summary>View Schedule Spec YAML</summary>",
+                "",
+                fence + "yaml",
+                message["content"],
+                fence,
+                "",
+                "</details>",
+            ]
         elif message["role"] == "system" or message.get("source"):
             fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", message["content"])), default=0))
             lines += ["", fence + "text", message["content"], fence]
@@ -890,6 +907,22 @@ def _template():
     )
 
 
+@lru_cache(maxsize=1)
+def _conversion_script():
+    directory = Path(__file__).parent
+    vendor = REPOSITORY_ROOT / "thirdparty" / "opencc"
+    notices = "\n".join((vendor / name).read_text(encoding="utf-8") for name in ("LICENSE", "THIRD_PARTY_LICENSES.md"))
+    script = (
+        "/*\n"
+        + notices.replace("*/", "* /")
+        + "\n*/\n"
+        + (vendor / "cn2t.js").read_text(encoding="utf-8")
+        + ";\n"
+        + (directory / "chat_conversion.js").read_text(encoding="utf-8")
+    )
+    return script.replace("</", "<\\/")
+
+
 def build_html_chat(messages, metadata):
     rendered, urls = [], metadata.get("fileUrls", {})
     for message in _display_messages(messages):
@@ -898,7 +931,7 @@ def build_html_chat(messages, metadata):
         compaction = message.get("compaction") if presentation == "summary" else None
         notice = presentation == "notice" or (compaction and compaction.get("invalidated"))
         source = " " + message["source"] if message.get("source") else ""
-        if notice:
+        if notice or message.get("source") == "schedule":
             source += " app-notice"
         files = _message_files(message, urls)
         uploads = (
@@ -908,7 +941,17 @@ def build_html_chat(messages, metadata):
             if files
             else ""
         )
-        if compaction:
+        if message.get("source") == "schedule":
+            yaml = message["content"]
+            timeline = (
+                '<details class="system-prompt schedule-snapshot"><summary class="collapsed-summary">View Schedule Spec YAML</summary>'
+                '<div class="snapshot-actions"><a download="schedule-spec.yaml" href="data:application/yaml;charset=utf-8,'
+                + quote(yaml, safe="~()*!.'-")
+                + '">Download YAML</a></div><pre class="collapsed-output"><code>'
+                + escape_html(yaml)
+                + "</code></pre></details>"
+            )
+        elif compaction:
             timeline = (
                 '<details class="system-prompt"><summary class="collapsed-summary">Conversation summary</summary>'
                 + _compaction_summary_html(compaction)
@@ -1042,6 +1085,7 @@ def build_html_chat(messages, metadata):
         )
     return _template().render(
         styles=Path(__file__).with_name("chat_styles.css").read_text(encoding="utf-8"),
+        conversion_script=_conversion_script(),
         exported_at=escape_html(_iso(metadata["exportedAt"])),
         frontend=escape_html(metadata["frontendVersion"]),
         backend=escape_html(metadata.get("backendVersion", "unknown")),

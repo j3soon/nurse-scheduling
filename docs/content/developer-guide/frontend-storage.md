@@ -35,7 +35,7 @@ All records below use `localStorage` except the active conversation.
 | `nurse-scheduling-optimize-server-options` | Optimize backend endpoints, selected endpoint, remembered tokens, and saving `appVersion`. | No automatic expiry. |
 | `nurse-scheduling-ai-history` | Recent conversation snapshots and activity times, with saving `appVersion`. | Seven days after chat activity. |
 | `nurse-scheduling-ai-conversation` | Active conversation snapshot in `sessionStorage`. | Tab session, subject to the seven-day activity check. |
-| `nurse-scheduling-ai-data` | Visibility preferences for reasoning, tools, turn costs, and models. | No automatic expiry. |
+| `nurse-scheduling-ai-data` | Display preferences for reasoning, tools, turn costs, models, and Chinese conversion. | No automatic expiry. |
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
 | `nurse-scheduling-ai-auth` | Remembered AI tokens by backend endpoint. | No automatic expiry. |
 

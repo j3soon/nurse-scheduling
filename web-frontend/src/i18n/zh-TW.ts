@@ -22,6 +22,15 @@ import type { Catalog } from './messages';
 
 // Taiwan terminology: 排班設定 is input, 班表 is output.
 export const zhTW: Catalog = {
+  "Convert assistant prose for display. Saved and exported messages keep the original text.": "轉換助理回覆的顯示文字。儲存及匯出的訊息保留原文。",
+  "Convert to Taiwan Traditional Chinese": "自動轉換為臺灣繁體中文",
+  "Download YAML": "下載 YAML",
+  "Copy failed. Select the YAML to copy it.": "複製失敗。請選取 YAML 後複製。",
+  "Copy YAML": "複製 YAML",
+  "View Schedule Spec YAML": "檢視排班規格 YAML",
+  "Schedule Spec sent": "已傳送排班規格",
+  "Updated Schedule Spec sent": "已傳送更新的排班規格",
+  "Initial Schedule Spec sent": "已傳送初始排班規格",
   " (Preferred: ": "（偏好：",
   " (expected ": "（預期為 ",
   " (expected ready)": "（預期為 ready）",

@@ -116,6 +116,7 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
     messages, turns = [], {}
     runs = {run["id"]: run for run in snapshot["runs"]}
     optimization = None
+    current_schedule = None
     supported = {
         "run_start",
         "model_input",
@@ -327,6 +328,22 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
                     question["content"] = optimizer_text
             target = question if question is not None else assistant
             index = next(i for i, m in enumerate(messages) if m is target)
+            if "schedule_spec_yaml" in data:
+                schedule = data["schedule_spec_yaml"]
+                if question_text is not None and schedule != current_schedule and not turn.get("schedule_input"):
+                    before.append(
+                        {
+                            "role": "user",
+                            "source": "schedule",
+                            "title": "Initial Schedule Spec sent"
+                            if current_schedule is None
+                            else "Updated Schedule Spec sent",
+                            "content": schedule,
+                        }
+                    )
+                    turn["schedule_input"] = True
+                current_schedule = schedule
+                assistant["scheduleSpecYaml"] = schedule
             messages[index:index] = before
             if status is not None:
                 messages.insert(next(i for i, m in enumerate(messages) if m is assistant), status)
@@ -421,6 +438,9 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
             activity[:] = [item for item in activity if item["kind"] != "tool" or item.get("state") != "preparing"]
             activity.append({"kind": "notice", "text": data["message"]})
         elif kind == "schedule_spec_applied":
+            if "schedule_spec_yaml" in data:
+                current_schedule = data["schedule_spec_yaml"]
+                assistant["scheduleSpecYaml"] = current_schedule
             activity[:] = [a for a in activity if a["kind"] != "schedule-spec-applied" or a.get("runId") != run_id]
             entry = {"kind": "schedule-spec-applied", "text": data["diff"], "runId": run_id}
             if data.get("replaced_queued_schedule_spec"):

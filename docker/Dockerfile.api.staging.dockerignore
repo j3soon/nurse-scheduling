@@ -1,6 +1,9 @@
 **
 !core/
 !core/**
+!thirdparty/
+!thirdparty/opencc/
+!thirdparty/opencc/**
 !docker/
 !docker/e2b/
 !docker/e2b/**

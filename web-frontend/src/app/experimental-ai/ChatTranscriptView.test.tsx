@@ -307,3 +307,22 @@ it('translates schedule download and ZIP removal while they are busy', () => {
   expect(screen.getByRole('button', { name: '移除中…' })).toBeDisabled();
   localStorage.removeItem(LOCALE_STORAGE_KEY);
 });
+
+
+it('centers schedule snapshots and expands, copies, and downloads the exact saved YAML', async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, 'writeText');
+  const yaml = '\n# Original upload\npeople: []\n';
+  renderTranscript([{ id: 'snapshot', role: 'user', source: 'schedule', title: 'Initial Schedule Spec sent', content: yaml }]);
+  const label = screen.getByText('Initial Schedule Spec sent');
+  expect(label.closest('article')).toHaveClass('app-notice', 'mx-auto');
+  expect(screen.queryByText('Not sent to AI.')).not.toBeInTheDocument();
+  const disclosure = screen.getByText('View Schedule Spec YAML');
+  expect(disclosure.closest('details')).not.toHaveAttribute('open');
+  await user.click(disclosure);
+  expect(label.closest('article')?.querySelector('pre')?.textContent).toBe(yaml);
+  await user.click(screen.getByRole('button', { name: 'Copy YAML' }));
+  expect(navigator.clipboard.writeText).toHaveBeenCalledWith(yaml);
+  expect(screen.getByRole('link', { name: 'Download YAML' })).toHaveAttribute('href',
+    `data:application/yaml;charset=utf-8,${encodeURIComponent(yaml)}`);
+});

@@ -83,7 +83,10 @@ For exact elapsed-time assertions, install the Playwright clock before navigatio
 at an earlier time, then use `pauseAt` after setup. `clock.install` alone keeps
 time advancing during setup. Use `runFor` to check timer updates.
 
-Treat transcript visibility preferences as display settings. Saved exports retain
+Treat Chinese conversion and transcript visibility preferences as display settings.
+Keep original chat text in storage, model inputs, and exports. Offline HTML may
+convert assistant prose in the browser with a reversible toggle. Preserve code,
+links, and block quotes during conversion. Saved exports retain
 reasoning, tool activity, model selections, and costs.
 
 Keep assistant output and tool activity, including tool results, left-aligned.
@@ -95,7 +98,9 @@ Classify notices by their context provenance, because some report text supplied
 to the model. A discarded summary belongs with app notices and must say that it
 is omitted from future context. Derive these bubbles for display without changing
 saved message identity, execution ownership, or model inputs. Match chat exports
-to this convention.
+to this convention. Keep schedule input snapshots exact and separate from model
+messages. Compare later submissions with the last accepted schedule, including
+AI-applied edits. Do not count snapshot bubbles when marking compacted context.
 Invalidate summaries across every reply from a failed run, including replies
 before steering. Test foreground output, background replay, and reload.
 
@@ -271,6 +276,8 @@ When you add an `ActivityEntry` kind, also accept it in `isActivityEntry` in
 
 Store AI chat history with the saving frontend `appVersion`, without a separate
 numeric storage version.
+Keep repeated large payloads out of per-message metadata. Test browser storage
+quota and reload behavior when extending saved chat state.
 
 When switching saved AI chats, preserve browser Schedule Spec during event replay.
 Reset pending model and reasoning choices on explicit chat switches. Preserve
@@ -286,6 +293,8 @@ and `done`. Isolated server and UI mocks can both pass while their contracts dif
 Replay must replace existing messages in their original positions, including
 optimizer input and steering replies. Capture the message ID before queuing React
 state updates because one replay snapshot can contain several replies.
+Cursor recovery must retain saved message metadata when its defining event
+precedes the cursor. Test this separately from replacement snapshots.
 Use each event's `run_id` to identify replayed messages when `run_start` was trimmed.
 Validate the whole SSE frame and every recovery entry before updating the cursor
 or transcript. Acknowledge validated frames before consumer callbacks. Apply

@@ -26,6 +26,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { FiCheck, FiCopy } from 'react-icons/fi';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { traditionalChinese } from './chineseConversion';
 
 // react-markdown escapes unsafe output by default. Keep raw HTML disabled and
 // omit remote images so untrusted model output cannot load third-party content.
@@ -109,10 +110,10 @@ const components: Components = {
   ),
 };
 
-export default function AssistantMarkdown({ content }: { content: string }) {
+export default function AssistantMarkdown({ content, convertChinese = true }: { content: string; convertChinese?: boolean }) {
   return (
     <div className="content">
-      <Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
+      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={convertChinese ? [traditionalChinese] : []} skipHtml components={components}>
         {content}
       </Markdown>
     </div>

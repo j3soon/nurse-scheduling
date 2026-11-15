@@ -41,10 +41,16 @@ if ((${#affected_paths[@]} > 0)); then
     test_paths+=("${path#core/}")
   done
 elif [[ "$run_full_suite" == false ]]; then
-  mapfile -d '' changed_files < <(affected_changed_files "$ROOT_DIR" core)
+  mapfile -d '' changed_files < <(
+    affected_changed_files "$ROOT_DIR" core
+    affected_changed_files "$ROOT_DIR" thirdparty/opencc
+  )
   for file in "${changed_files[@]}"; do
     relative="${file#core/}"
     case "$relative" in
+      thirdparty/opencc/*)
+        test_paths+=(tests/test_ai_chat_export.py tests/test_ai_chat_archive.py)
+        ;;
       tests/ai/*)
         test_paths+=(tests/test_ai_testcases.py)
         ;;

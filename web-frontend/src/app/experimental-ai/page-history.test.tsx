@@ -253,7 +253,10 @@ describe('ExperimentalAiPage', () => {
     }
   });
 
-  it('reattaches a restored request to its run with the same message ID', async () => {
+  it('reattaches a restored request with the same message ID and accepted Schedule Spec', async () => {
+    const user = userEvent.setup();
+    const previousSpec = 'description: current Schedule Spec\n';
+    const acceptedSpec = 'description: original schedule\n';
     const modelSelection = { model: 'deep', reasoning: 'high' };
     const costSummary = { usd: '0.1', calls: 1, pending: 0, unavailable: 0 };
     const providerCalls = [{ callId: 'paid-call', model: 'deep', reasoning: 'high', status: 'reported',
@@ -265,11 +268,14 @@ describe('ExperimentalAiPage', () => {
     window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
       sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000, retentionSeconds: 2592000,
       messages: [
+        { id: 'earlier-question', role: 'user', content: 'Check the earlier Schedule Spec' },
+        { id: 'earlier-answer', role: 'assistant', content: 'Earlier answer', scheduleSpecYaml: previousSpec },
         { id: 'question', role: 'user', content: pendingRequest.question },
         { id: 'answer', role: 'assistant', content: 'Partial', status: 'pending',
+          scheduleSpecYaml: acceptedSpec,
           activity: [{ kind: 'response', text: 'Partial' }], modelSelection, costSummary, providerCalls },
       ],
-      syncedScheduleSpec: 'description: original schedule\n', sessionEventId: 4, pendingRequest,
+      syncedScheduleSpec: acceptedSpec, sessionEventId: 4, pendingRequest,
     }));
     mockRunEvents.mockImplementation(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'delta', text: ' and finished.' });
@@ -293,8 +299,17 @@ describe('ExperimentalAiPage', () => {
     });
     const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
     expect(stored.messages.find((message: { id: string }) => message.id === 'answer')).toMatchObject({
-      modelSelection, costSummary, providerCalls,
+      modelSelection, costSummary, providerCalls, scheduleSpecYaml: acceptedSpec,
     });
+    mockRunEvents.mockImplementationOnce(async (_id, question, callbacks: SessionStreamOptions) => {
+      callbacks.onEvent({ type: 'model_input', input: { system: 'Policy', scheduleSpecYaml: previousSpec,
+        messages: [{ kind: 'question', content: question }] } });
+      callbacks.onEvent({ type: 'delta', text: 'Returned to the earlier Schedule Spec.' });
+    });
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check it again');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Updated Schedule Spec sent')).toBeInTheDocument();
+    expect(screen.getByText(previousSpec.trim(), { selector: 'code' })).toBeInTheDocument();
   });
 
   it('uses a singular retention label for a one-hour session', async () => {

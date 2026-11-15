@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# This file is mostly AI generated.
+
+# Preserve upstream bytes even when core.autocrlf is enabled.
+cn2t.js -text
+LICENSE -text
+THIRD_PARTY_LICENSES.md -text
