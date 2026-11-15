@@ -213,8 +213,9 @@ and closes the sandbox. No production clock or prompt changes are required.
 
 The dedicated **Test Core AI** workflow validates definitions and runs the
 deterministic tester tests on Ubuntu for pushes and pull requests. Live
-conversations run on pushes to `j3soon/nurse-scheduling`, after validation passes.
-Pull requests and fork repositories do not run live conversations.
+conversations run after validation passes for pushes to
+`j3soon/nurse-scheduling` and pull requests whose head branch is in that
+repository. Pull requests from forks run validation only.
 
 Configure repository secrets `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. No repository variables are required. Optional repository

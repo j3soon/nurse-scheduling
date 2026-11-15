@@ -776,6 +776,9 @@ and current session recovery working.
   For script checks, include isolated wrong characters in long replies, valid
   shared characters and exact source quotations. Check verdict format and
   runtime as well as classification accuracy.
+  During script-judge audits, verify that cited wrong characters occur in the
+  reply and differ from their proposed corrections. Record classification
+  errors separately from invalid output and transport failures.
   When a rubric candidate must pass every check, reject it on the first wrong
   verdict before scheduling more judgments. Preserve its wording and evidence.
   Run local live comparisons after CI when they share a provider. Concurrency
