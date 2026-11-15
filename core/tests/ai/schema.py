@@ -150,7 +150,8 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
     elif kind == "assistant":
         if (
             not isinstance(value, dict)
-            or set(value) - {"contains_any", "contains_all", "case_sensitive", "judge", "count", "judge_context"}
+            or set(value)
+            - {"contains_any", "contains_all", "case_sensitive", "judge", "count", "judge_context", "opencc"}
             or not {"contains_any", "contains_all", "judge"}.intersection(value)
         ):
             raise DefinitionError("assistant requires contains_any, contains_all, judge, or a combination")
@@ -162,6 +163,8 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
             raise DefinitionError("case_sensitive requires contains_any or contains_all")
         if "case_sensitive" in value and type(value["case_sensitive"]) is not bool:
             raise DefinitionError("case_sensitive must be a boolean")
+        if "opencc" in value and type(value["opencc"]) is not bool:
+            raise DefinitionError("assistant.opencc must be a boolean")
         if "judge" in value and (not isinstance(value["judge"], str) or not value["judge"].strip()):
             raise DefinitionError("assistant.judge must be a nonempty rubric string")
         if "judge_context" in value:

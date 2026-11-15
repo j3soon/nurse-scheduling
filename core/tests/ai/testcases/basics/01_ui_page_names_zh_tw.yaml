@@ -5,6 +5,7 @@ steps:
       請依網頁介面的分頁順序，用繁體中文簡短說明首頁及其餘每個頁面的用途。
       請使用介面顯示的繁體中文頁名。
   - assistant:
+      opencc: true
       contains_all:
         - 首頁
         - 日期

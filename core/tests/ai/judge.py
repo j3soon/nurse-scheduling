@@ -28,6 +28,7 @@ from typing import Any, Literal
 from nurse_scheduling.ai.provider import ProviderRetry, ReasoningDelta, ResponseEnd, TextDelta, ToolCallRequest
 
 from .assertions import is_completed_assistant
+from .display_text import displayed_text
 
 SYSTEM = """You judge an AI assistant's replies against a human-written rubric.
 Assess only the latest completed assistant reply to the current user request.
@@ -103,6 +104,7 @@ async def evaluate(
     *,
     count: int | None = None,
     context: Literal["conversation", "replies", "characters"] = "replies",
+    opencc: bool = False,
 ) -> dict:
     """Keep the judge request and raw reply even when grading fails."""
     if count is not None:
@@ -125,7 +127,7 @@ async def evaluate(
         )
         events = [
             {
-                key: value
+                key: displayed_text(value) if opencc and event is reply and key == "text" else value
                 for key, value in event.items()
                 if key in {"kind", "text", "name", "arguments", "ok", "stop_reason"}
             }
@@ -135,7 +137,7 @@ async def evaluate(
         conversation.append({"user": turn["user"], "events": events})
     evidence = {"rubric": rubric, "conversation": conversation}
     if context == "characters":
-        text = reply["text"] if reply else ""
+        text = displayed_text(reply["text"]) if opencc and reply else reply["text"] if reply else ""
         evidence.update(_character_evidence(text, trace[-1]["user"] if trace else ""))
     messages = [
         {"role": "system", "content": SYSTEM},

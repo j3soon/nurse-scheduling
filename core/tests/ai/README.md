@@ -159,6 +159,11 @@ when the words themselves are required. A judge-only assertion requires a nonemp
 literal phrase in the same completed reply. When both are supplied, both must
 match. Phrase matching is case-insensitive by default. When phrase matching and
 the LLM judge are supplied, both must pass.
+Set `assistant.opencc: true` to check the text displayed with the frontend's
+Chinese conversion. It applies the bundled `cn` to `twp` OpenCC dictionary to
+rendered Markdown prose for literal matching and judging. Code, links, and
+blockquotes remain unchanged. The saved conversation retains the raw reply.
+This option requires Node.js. Raw-reply language cases should leave it off.
 The language cases use judge-only assertions for English and Chinese script.
 For a numbered rubric, optional `assistant.count: 12` asks the judge to include
 `N/12` in its explanation and identify omitted or incomplete points by number.

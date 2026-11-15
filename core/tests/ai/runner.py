@@ -282,6 +282,7 @@ async def run_case(
                         model,
                         count=step.value.get("count"),
                         context=step.value.get("judge_context", "replies"),
+                        opencc=step.value.get("opencc", False),
                     )
                 finally:
                     elapsed = perf_counter() - judge_started

@@ -25,6 +25,7 @@ from typing import Any
 
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL
 
+from .display_text import displayed_text
 from .schema import Step, load_yaml
 
 
@@ -72,6 +73,8 @@ def check_event(step: Step, events: list[dict], cursor: int) -> int:
             expected_any = step.value.get("contains_any")
             expected_all = step.value.get("contains_all")
             text = event.get("text", "")
+            if step.value.get("opencc"):
+                text = displayed_text(text)
             if not step.value.get("case_sensitive", False):
                 text = text.casefold()
                 if expected_any is not None:

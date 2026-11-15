@@ -43,6 +43,7 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.transcript import ToolCall
 from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE_SPEC
 from tests.ai.assertions import check_event, check_schedule
+from tests.ai.display_text import displayed_text
 from tests.ai.judge import evaluate
 from tests.ai.runner import DatedFactory, _timezone, main, run_case, run_cases
 from tests.ai.schema import FIXTURES, TESTCASES, DefinitionError, Step, load_case, load_yaml
@@ -284,10 +285,51 @@ def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
         check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 ai"}], 0)
 
 
+def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path):
+    reply = "**人员**管理。 [人员链接](https://example.com/人员)\n\n> 人员引用\n\n`人员代码`"
+    shown = displayed_text(reply)
+    assert "**" not in shown
+    assert "人員管理" in shown
+    assert "人员链接" in shown
+    assert "人员引用" in shown
+    assert "人员代码" in shown
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {contains_all: [人員管理], opencc: true}}]",
+    )
+    assert check_event(case.steps[1], [{"kind": "assistant", "text": reply}], 0) == 1
+    raw = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_all: [人員管理]}}]")
+    with pytest.raises(AssertionError):
+        check_event(raw.steps[1], [{"kind": "assistant", "text": reply}], 0)
+
+
+def test_opencc_judge_sees_displayed_text_and_transcript_retains_raw(tmp_path):
+    case = definition(
+        tmp_path,
+        "steps: [{user: 請介紹頁面}, {assistant: {contains_all: [人員管理], opencc: true, judge: Check the page.}}]",
+    )
+    provider = ScriptedProvider([[TextDelta("**人员**管理。"), ResponseEnd("stop")]])
+    judge = ScriptedProvider([[TextDelta('{"passed": true, "reason": "Page described."}'), ResponseEnd("stop")]])
+    transcript = tmp_path / "attempt.md"
+    assert asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    )
+    evidence = json.loads(judge.requests[0][1]["content"])
+    assert evidence["conversation"][0]["events"][0]["text"] == "人員管理。\n"
+    assert "**人员**管理。" in transcript.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("phrases", [[], [True], ["valid", ""]])
 def test_invalid_contains_all_definitions(tmp_path, phrases):
     text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_all": phrases}}]})
     with pytest.raises(DefinitionError, match="contains_all"):
+        definition(tmp_path, text)
+
+
+@pytest.mark.parametrize("value", [None, 1, "true"])
+def test_invalid_opencc_definition(tmp_path, value):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "Check reply.", "opencc": value}}]})
+    with pytest.raises(DefinitionError, match="opencc"):
         definition(tmp_path, text)
 
 
