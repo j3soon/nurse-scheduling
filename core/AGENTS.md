@@ -764,6 +764,8 @@ and current session recovery working.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
+  Declare repeated-run pass thresholds in testcase YAML. Run every configured
+  attempt and retain each outcome, including failures in a passing case.
   Keep this tester independent of `ai_eval` and `ai_fixtures`. Older `ai_eval`
   code can read reviewed YAML cases for prompt evidence. Do not import `ai_eval`
   from the reviewed tester. Inspect failed replies before changing production

@@ -156,9 +156,10 @@ def print_attempt(
         print(f"PASS {case.path} ({len(trace)} turns){location}; {_timing_text(record['timing'])}", flush=True)
 
 
-def print_summary(results: list[dict], *, elapsed_seconds: float) -> None:
+def print_summary(results: list[dict], *, outcomes: list[dict], elapsed_seconds: float) -> None:
     text = (
-        "# AI testcase attempts\n\nAny failed attempt keeps CI failed. Later attempts provide diagnostic evidence.\n\n"
+        "# AI testcase attempts\n\nCases must meet their required pass count. "
+        "Diagnostic attempts cannot clear a failure.\n\n"
     )
     text += f"Run wall time: {elapsed_seconds:.3f} s.\n\n"
     text += "| Case | Attempt | Outcome | Total (s) | Agent (s) | Judge (s) |\n| --- | --- | --- | --- | --- | --- |\n"
@@ -168,8 +169,10 @@ def print_summary(results: list[dict], *, elapsed_seconds: float) -> None:
             f"| {item['case']} | {item['attempt']} | {'PASS' if item['passed'] else 'FAIL'} | "
             f"{timing['total_seconds']:.3f} | {timing['agent_seconds']:.3f} | {timing['judge_seconds']:.3f} |\n"
         )
-    text += "\n| Case | Failed / executed attempts |\n| --- | --- |\n"
-    for case in dict.fromkeys(item["case"] for item in results):
-        attempts = [item for item in results if item["case"] == case]
-        text += f"| {case} | {sum(not item['passed'] for item in attempts)}/{len(attempts)} |\n"
+    text += "\n| Case | Outcome | Passed / executed attempts | Required passes |\n| --- | --- | --- | --- |\n"
+    for item in outcomes:
+        text += (
+            f"| {item['case']} | {'PASS' if item['passed'] else 'FAIL'} | "
+            f"{item['passed_attempts']}/{item['executed_attempts']} | {item['required_passes']} |\n"
+        )
     print(text, flush=True)

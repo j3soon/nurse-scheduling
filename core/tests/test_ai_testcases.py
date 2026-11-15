@@ -24,6 +24,7 @@ import json
 import re
 from dataclasses import replace
 from datetime import datetime
+from itertools import product
 
 import httpx
 import pytest
@@ -75,6 +76,61 @@ def test_parser_retains_order_dates_and_attachment_lists(tmp_path):
     assert [step.kind for step in case.steps] == ["date", "yaml", "user", "tool", "assistant", "schedule"]
     assert case.steps[0].value.isoformat() == "2026-10-25T09:00:00+08:00"
     assert case.steps[2].options["attachment"] == (FIXTURES / "people.txt", FIXTURES / "empty.yaml")
+
+
+@pytest.mark.parametrize(
+    ("policy", "attempts", "required_passes"),
+    [("", 1, 1), ("attempts: 3\n", 3, 3), ("attempts: 3\nrequired_passes: 2\n", 3, 2)],
+    ids=["default", "all-attempts-required", "two-of-three"],
+)
+def test_parser_retains_attempt_policy(tmp_path, policy, attempts, required_passes):
+    case = definition(tmp_path, policy + "steps: [{user: hi}]")
+    assert (case.attempts, case.required_passes) == (attempts, required_passes)
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "attempts: 0",
+        "attempts: -1",
+        "attempts: true",
+        "attempts: 1.5",
+        "attempts: '3'",
+        "attempts: null",
+        "required_passes: 0",
+        "required_passes: -1",
+        "required_passes: true",
+        "required_passes: 1.5",
+        "required_passes: '1'",
+        "required_passes: null",
+        "required_passes: 2",
+        "attempts: 3\nrequired_passes: 4",
+    ],
+    ids=[
+        "zero-attempts",
+        "negative-attempts",
+        "boolean-attempts",
+        "fractional-attempts",
+        "string-attempts",
+        "null-attempts",
+        "zero-required",
+        "negative-required",
+        "boolean-required",
+        "fractional-required",
+        "string-required",
+        "null-required",
+        "required-exceeds-default",
+        "required-exceeds-attempts",
+    ],
+)
+def test_invalid_attempt_policies_fail_without_credentials(tmp_path, policy):
+    with pytest.raises(DefinitionError, match="attempts"):
+        definition(tmp_path, policy + "\nsteps: [{user: hi}]")
+
+
+def test_traditional_chinese_case_requires_two_of_three_conversations():
+    case = load_case(TESTCASES / "basics" / "01_lang_traditional_chinese.yaml")
+    assert (case.attempts, case.required_passes) == (3, 2)
 
 
 @pytest.mark.parametrize(
@@ -828,11 +884,84 @@ def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_pa
     for attempt, reply in enumerate(replies, start=1):
         assert f"Attempt {attempt}:" in log
         assert f"| case | {attempt} | {'PASS' if reply == 'expected' else 'FAIL'} |" in log
-    assert f"| case | {sum(reply != 'expected' for reply in replies)}/{len(replies)} |" in log
+    assert (
+        f"| case | {'PASS' if passed else 'FAIL'} | {sum(reply == 'expected' for reply in replies)}/{len(replies)} | "
+        f"{len(replies)} |" in log
+    )
     transcripts = sorted((output_dir / "case").glob("attempt-*.md"))
     assert len(transcripts) == len(replies)
     for path, reply in zip(transcripts, replies, strict=True):
         assert reply in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("diagnostic_attempts", [1, 3], ids=["local", "ci-diagnostics"])
+@pytest.mark.parametrize(
+    "verdicts",
+    list(product([False, True], repeat=3)),
+    ids=lambda items: "-".join("pass" if v else "fail" for v in items),
+)
+def test_two_of_three_always_runs_every_conversation(tmp_path, capsys, verdicts, diagnostic_attempts):
+    case = definition(
+        tmp_path,
+        "attempts: 3\nrequired_passes: 2\nsteps: [{user: hi}, {assistant: {contains_any: [expected]}}]",
+    )
+    provider = ScriptedProvider(
+        [
+            response
+            for passed in verdicts
+            for response in (
+                [tool_call("read", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+                [TextDelta("expected" if passed else "wrong"), ResponseEnd("stop")],
+            )
+        ]
+    )
+    factory = FakeSandboxFactory()
+    output_dir = tmp_path / "results"
+    passed = asyncio.run(
+        run_cases([case], provider, settings(), factory, diagnostic_attempts=diagnostic_attempts, output_dir=output_dir)
+    )
+    assert passed is (sum(verdicts) >= 2)
+    assert len(factory.created) == 3 and all(sandbox.closed for sandbox in factory.created)
+    assert all(sum(message["role"] == "user" for message in request) == 1 for request in provider.requests)
+    assert len(list((output_dir / "case").glob("attempt-*.md"))) == 3
+    record = json.loads((output_dir / "timings.json").read_text(encoding="utf-8"))
+    assert [item["passed"] for item in record["attempts"]] == list(verdicts)
+    assert record["outcomes"] == [
+        {
+            "case": "case",
+            "testcase": "case.yaml",
+            "passed": passed,
+            "passed_attempts": sum(verdicts),
+            "executed_attempts": 3,
+            "required_passes": 2,
+        }
+    ]
+    assert f"| case | {'PASS' if passed else 'FAIL'} | {sum(verdicts)}/3 | 2 |" in capsys.readouterr().out
+
+
+def test_passes_are_not_pooled_between_repetitions_or_cases(tmp_path):
+    case = definition(
+        tmp_path,
+        "attempts: 3\nrequired_passes: 2\nsteps: [{user: hi}, {assistant: {contains_any: [expected]}}]",
+    )
+    strict_case = replace(case, path=tmp_path / "strict.yaml", attempts=1, required_passes=1)
+    # One repeated case passes. Another fails with one pass. A strict case still fails.
+    provider = ScriptedProvider(
+        [
+            [TextDelta(reply), ResponseEnd("stop")]
+            for reply in ["expected"] * 4 + ["wrong", "wrong", "expected", "wrong"]
+        ]
+    )
+    assert not asyncio.run(
+        run_cases(
+            [case, strict_case], provider, settings(), FakeSandboxFactory(), repeat=2, output_dir=tmp_path / "results"
+        )
+    )
+    record = json.loads((tmp_path / "results/timings.json").read_text(encoding="utf-8"))
+    assert [outcome["passed"] for outcome in record["outcomes"]] == [True, False, True, False]
+    assert [outcome["required_passes"] for outcome in record["outcomes"]] == [2, 2, 1, 1]
+    assert len(list((tmp_path / "results/case/run-1").glob("attempt-*.md"))) == 3
+    assert len(list((tmp_path / "results/case/run-2").glob("attempt-*.md"))) == 3
 
 
 def test_parallel_repetitions_bound_concurrency_and_retain_failed_attempts(tmp_path, monkeypatch):

@@ -1,5 +1,8 @@
 # This file is part of Nurse Scheduling Project.
 # SPDX-License-Identifier: AGPL-3.0-or-later
+# The frontend also converts assistant prose with OpenCC.
+attempts: 3
+required_passes: 2
 steps:
   # The shared-script greeting checks the system prompt's language policy.
   - user: 你好

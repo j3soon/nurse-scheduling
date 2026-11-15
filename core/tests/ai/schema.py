@@ -53,6 +53,8 @@ class Case:
 
     path: Path
     steps: tuple[Step, ...]
+    attempts: int = 1
+    required_passes: int = 1
 
 
 def load_yaml(text: str) -> Any:
@@ -180,8 +182,19 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
     number = 0
     try:
         raw = load_yaml(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or set(raw) != {"steps"} or not isinstance(raw["steps"], list) or not raw["steps"]:
-            raise DefinitionError("testcase requires a nonempty steps list and no other top-level fields")
+        if (
+            not isinstance(raw, dict)
+            or set(raw) - {"steps", "attempts", "required_passes"}
+            or not isinstance(raw.get("steps"), list)
+            or not raw["steps"]
+        ):
+            raise DefinitionError("testcase requires a nonempty steps list and optional attempts and required_passes")
+        attempts = raw.get("attempts", 1)
+        required_passes = raw.get("required_passes", attempts)
+        if type(attempts) is not int or attempts < 1:
+            raise DefinitionError("attempts must be a positive integer")
+        if type(required_passes) is not int or not 1 <= required_passes <= attempts:
+            raise DefinitionError("required_passes must be a positive integer no greater than attempts")
         steps = []
         has_user = False
         configured = False
@@ -205,6 +218,6 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
             steps.append(step)
         if not has_user or steps[-1].kind in {"date", "yaml"}:
             raise DefinitionError("testcase must contain a user turn and cannot end with configuration")
-        return Case(path.resolve(), tuple(steps))
+        return Case(path.resolve(), tuple(steps), attempts, required_passes)
     except (DefinitionError, YAMLError, OSError) as error:
         raise DefinitionError(f"{path}: step {number}: {error}") from error

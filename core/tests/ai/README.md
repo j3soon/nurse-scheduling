@@ -48,17 +48,25 @@ and `E2B_TEMPLATE` for your deployment. Independent cases run in parallel using
 LiteLLM deployment limits and cached health, capped at 20 sandboxes. Missing
 metadata or health uses the shared conservative fallback of at most four jobs.
 `--jobs` can lower concurrency. See `concurrency.json` in the run directory for
-the selected limit and reason. By default, each case runs once.
+the selected limit and reason. By default, each case runs once. A case can set
+`attempts` and `required_passes` to use a fixed conversation count and pass threshold.
+The Traditional Chinese case always runs three fresh conversations and requires
+at least two to pass. Its assertions judge raw backend replies. The frontend
+also converts assistant prose with OpenCC.
 
 Use `--repeat 12` to run each selected case twelve times with fresh history and
 sandboxes. Repeated runs share the same concurrency limit and save transcripts
-under separate `run-N/` directories. Any failed run fails the command.
+under separate `run-N/` directories. Each repetition must meet its case's pass
+threshold. Passes from different repetitions or cases are never pooled.
 `--diagnostic-attempts 3` runs three independent attempts when the first fails,
 even if the second passes. It also judges the same conversation twice more
 when an assertion's first judge verdict fails or errors. Judge retries do not
 rerun the agent or include earlier verdicts in the judge request. Every verdict
-is saved with its attempt number. Any failure keeps the command failed, even
-when later judges pass. CI uses this option.
+is saved with its attempt number. A failed judge keeps that conversation failed,
+even when later judges pass. CI uses this option. Cases without a fixed count
+stay failed after any failed conversation. A testcase `attempts` value greater
+than one overrides the diagnostic conversation count and always runs every
+attempt. Judge diagnostics still retain all failed verdicts within each conversation.
 
 Agent and judge requests use production provider retries, with at most five total
 HTTP attempts per request. Transient HTTP errors such as 429 and 5xx, network
@@ -76,7 +84,8 @@ Every attempt saves a readable Markdown transcript under repository-root
 `artifacts/ai-testcases/<run>/`, including successful conversations. Passing
 attempts print one status line with the file path. Each run has its own directory,
 with a separate file for each case and attempt. The final summary shows each
-outcome and failed/total attempt counts. Assertion failures do not stop later turns.
+attempt, the case outcome, passed/total attempt counts, and required passes.
+Assertion failures do not stop later turns.
 Execution errors stop that attempt.
 
 Completion lines and the CI summary report total, agent, and judge wall-clock
@@ -86,7 +95,8 @@ agent time per turn and elapsed time for every judge attempt. Judge time include
 every verdict attempt and its provider retries. Attempt totals also include test
 preparation and assertions, but exclude queue wait and transcript writing.
 
-Each run saves these measurements in `timings.json` beside `concurrency.json`.
+Each run saves these measurements and aggregate case outcomes in `timings.json`
+beside `concurrency.json`.
 Use them together when comparing runs. Run wall time covers the parallel case
 execution and attempt reporting, so adding individual attempt times can exceed
 it. Initial capacity discovery and CI template building are outside that interval.
@@ -95,7 +105,10 @@ it. Initial capacity discovery and CI template building are outside that interva
 
 Use the ordered `steps` list in
 [testcases/basics/01_already-in-ai-chat.yaml](testcases/basics/01_already-in-ai-chat.yaml)
-as an example. Each step has exactly one primary key:
+as an example. Optional top-level `attempts` must be a positive integer and
+defaults to one. `required_passes` defaults to `attempts` and must be between
+one and `attempts`. Each attempt runs the complete steps with fresh history
+and workspace state. Each step has exactly one primary key:
 
 | Key | Meaning |
 | --- | --- |
@@ -227,7 +240,8 @@ the conversations. Jobs with the same template alias serialize building and
 testing, without cancelling an active job. The default CI alias is separate
 from production and staging. Missing credentials or a failed template build
 fail the live job. Each turn has a five-minute limit.
-CI runs two additional attempts for each initially failed case and stays failed.
+CI runs two diagnostic attempts for each initially failed case and stays failed,
+unless the case defines a fixed attempt count and pass threshold as described above.
 Read failed attempts' full conversations and the final summary in the
 **Run human-reviewed AI conversations** step's job log. CI uploads all saved
 transcripts in the `ai-testcase-conversations` artifact, on success and failure.
