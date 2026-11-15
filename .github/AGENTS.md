@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- This file is mostly AI generated. -->
+
+# Workflow Guidelines
+
+- Keep `push` and `pull_request` triggers enabled without branch or tag
+  filters. Follow the root `AGENTS.md` requirement to run CI on every push.
+- Include the workflow, event, and Git ref in cancellation groups. New commits
+  can replace older checks without cancelling a scheduled or manual run.
+- Keep live AI sandbox jobs serialized by template with cancellation disabled.
+  They publish a shared template. Apply cancellation to their validation job
+  instead of the whole workflow.
+- Keep live AI behavior checks on trusted same-repository pull requests and
+  pushes in the primary repository. Fork pull requests run offline validation only.
+- Cache Python dependency downloads with `actions/setup-python`. Jobs that
+  install `requirements-optional.txt` must include both core requirements files
+  in `cache-dependency-path`. Keep installation steps so caches do not replace
+  dependency resolution.
+- Lint-only jobs install only the tools they run. Keep their download caches
+  separate from runtime and test dependency caches.
+- Keep the full solver profile and a bounded new real-scenario search in weekly
+  checks on Linux, macOS, and Windows. Routine checks use the primary profile
+  and the fixed-assignment replay. Scheduled checks run on the default branch.

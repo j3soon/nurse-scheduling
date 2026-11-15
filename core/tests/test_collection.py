@@ -25,8 +25,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
-def test_normal_collection_never_imports_legacy_ai_tests(tmp_path):
+
+def _collect(tmp_path, files, *options):
     core = Path(__file__).resolve().parents[1]
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -36,22 +38,12 @@ def test_normal_collection_never_imports_legacy_ai_tests(tmp_path):
     if selection.exists():
         shutil.copyfile(selection, tests / selection.name)
     shutil.copyfile(core / "pyproject.toml", tmp_path / "pyproject.toml")
-    for name in [
-        "test_ai_eval_obsolete.py",
-        "test_ai_ladder_audit.py",
-        "test_ai_prefix_cache_probe.py",
-        "test_ai_provider_preflight.py",
-        "test_ai_read_batch_benchmark.py",
-    ]:
-        (tests / name).write_text('raise RuntimeError("Legacy test module must never be imported")\n', encoding="utf-8")
-    legacy = tests / "ai_eval"
-    legacy.mkdir()
-    (legacy / "test_obsolete.py").write_text(
-        'raise RuntimeError("Legacy package must never be collected")\n', encoding="utf-8"
-    )
-    (tests / "test_current.py").write_text("def test_current():\n    pass\n", encoding="utf-8")
+    for name, content in files.items():
+        path = tests / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "tests"],
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *options, "tests"],
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(core) + os.pathsep + os.environ.get("PYTHONPATH", "")},
         capture_output=True,
@@ -59,6 +51,49 @@ def test_normal_collection_never_imports_legacy_ai_tests(tmp_path):
         timeout=20,
         check=False,
     )
+    return result
+
+
+def test_normal_collection_never_imports_legacy_ai_tests(tmp_path):
+    files = dict.fromkeys(
+        [
+            "test_ai_eval_obsolete.py",
+            "test_ai_ladder_audit.py",
+            "test_ai_prefix_cache_probe.py",
+            "test_ai_provider_preflight.py",
+            "test_ai_read_batch_benchmark.py",
+            "ai_eval/test_obsolete.py",
+        ],
+        'raise RuntimeError("Legacy test module must never be imported")\n',
+    )
+    files["test_current.py"] = "def test_current():\n    pass\n"
+    result = _collect(tmp_path, files)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "test_current" in result.stdout
     assert "1 test collected" in result.stdout
+
+
+@pytest.mark.parametrize("profile", ["primary", "all"])
+def test_solver_profile_keeps_primary_sweeps_and_selects_optional_runtimes(tmp_path, profile):
+    files = {
+        name: "def test_schedule():\n    pass\n"
+        for name in ["test_schedule_ortools_cp_sat.py", "test_schedule_pulp_cbc.py"]
+    }
+    files["test_schedule_pulp_glpk.py"] = (
+        'raise RuntimeError("Optional solver must not be imported")\n'
+        if profile == "primary"
+        else "def test_glpk():\n    pass\n"
+    )
+    files["test_adapter.py"] = (
+        "import pytest\n"
+        "def test_unavailable_runtime():\n    pass\n"
+        "@pytest.mark.requires_solver('pulp/highs')\n"
+        "def test_optional_runtime():\n    pass\n"
+    )
+    result = _collect(tmp_path, files, f"--solver-profile={profile}")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_schedule_ortools_cp_sat.py::test_schedule" in result.stdout
+    assert "test_schedule_pulp_cbc.py::test_schedule" in result.stdout
+    assert "test_adapter.py::test_unavailable_runtime" in result.stdout
+    assert ("test_adapter.py::test_optional_runtime" in result.stdout) == (profile == "all")
+    assert ("test_schedule_pulp_glpk.py::test_glpk" in result.stdout) == (profile == "all")

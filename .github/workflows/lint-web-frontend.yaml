@@ -1,8 +1,12 @@
 name: Lint Web Frontend
 
 on:
-  - push
-  - pull_request
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

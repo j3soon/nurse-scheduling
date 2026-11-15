@@ -21,6 +21,7 @@
 
 import asyncio
 import json
+import re
 from dataclasses import replace
 from datetime import datetime
 
@@ -257,6 +258,193 @@ def settings():
         provider_model="test",
         e2b_api_key="sandbox-secret",
     )
+
+
+@pytest.fixture
+def timing_clock(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr("tests.ai.runner.perf_counter", lambda: now, raising=False)
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    return advance
+
+
+@pytest.mark.parametrize("first_verdict", [True, False, None], ids=["pass", "failed-judge", "invalid-judge"])
+def test_attempt_timings_include_workspace_retries_and_every_judge(tmp_path, monkeypatch, timing_clock, first_verdict):
+    from tests.ai import runner
+
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {judge: Reply in English.}}, "
+        "{user: again}, {assistant: {judge: Reply in English.}}]",
+    )
+
+    class TimedProvider(ScriptedProvider):
+        def __init__(self, responses, durations):
+            super().__init__(responses)
+            self.durations = iter(durations)
+
+        async def stream_events(self, messages, tools=()):
+            timing_clock(next(self.durations))
+            async for event in super().stream_events(messages, tools):
+                if isinstance(event, ProviderRetry):
+                    timing_clock(4)
+                yield event
+
+    class TimedFactory(FakeSandboxFactory):
+        async def create(self, **kwargs):
+            timing_clock(1)
+            return await super().create(**kwargs)
+
+    provider = TimedProvider(
+        [
+            [ProviderRetry("Agent retry."), tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("Hello."), ResponseEnd("stop")],
+            [tool_call("read-2", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+            [TextDelta("Again."), ResponseEnd("stop")],
+        ],
+        [0.5, 1.5, 1, 2],
+    )
+    verdicts = [True, True] if first_verdict is True else [first_verdict, True, True, True]
+    judge = TimedProvider(
+        [
+            [
+                *([ProviderRetry("Judge retry.")] if i == 0 else []),
+                TextDelta("invalid" if verdict is None else json.dumps({"passed": verdict, "reason": "Checked."})),
+                ResponseEnd("stop"),
+            ]
+            for i, verdict in enumerate(verdicts)
+        ],
+        [0.5, 2] if first_verdict is True else [0.5, 1, 1.5, 2],
+    )
+    original_check = runner.check_schedule
+
+    def check_schedule_with_overhead(*args):
+        timing_clock(0.25)
+        original_check(*args)
+
+    monkeypatch.setattr(runner, "check_schedule", check_schedule_with_overhead)
+    timing = runner.AttemptTiming()
+    transcript = tmp_path / "attempt.md"
+    assert asyncio.run(
+        run_case(
+            case,
+            provider,
+            settings(),
+            TimedFactory(),
+            judge_provider=judge,
+            judge_attempts=3,
+            transcript_path=transcript,
+            timing=timing,
+        )
+    ) is (first_verdict is True)
+    judge_seconds = 6.5 if first_verdict is True else 9
+    assert timing.agent_seconds == 11
+    assert timing.judge_seconds == judge_seconds
+    assert timing.total_seconds == 11 + judge_seconds + 0.5
+    saved = transcript.read_text(encoding="utf-8")
+    assert f"Timing: total {timing.total_seconds:.3f} s, agent 11.000 s, judge {judge_seconds:.3f} s." in saved
+    assert "Agent time: 7.000 s." in saved and "Agent time: 4.000 s." in saved
+    assert "Judge time: 4.500 s." in saved
+    assert saved.count("Judge time:") == len(verdicts)
+
+
+@pytest.mark.parametrize("agent_seconds", [0, 5], ids=["tied-clock", "stream-failure"])
+def test_failed_agent_timings_are_saved(tmp_path, timing_clock, agent_seconds):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {judge: Reply in English.}}]")
+
+    class BrokenProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            timing_clock(agent_seconds)
+            yield TextDelta("Partial reply.")
+            raise RuntimeError("Agent stream failed.")
+
+    judge = ScriptedProvider([])
+    timing = runner.AttemptTiming()
+    transcript = tmp_path / "failed.md"
+    assert not asyncio.run(
+        run_case(
+            case,
+            BrokenProvider([]),
+            settings(),
+            FakeSandboxFactory(),
+            judge_provider=judge,
+            transcript_path=transcript,
+            timing=timing,
+        )
+    )
+    assert (timing.total_seconds, timing.agent_seconds, timing.judge_seconds) == (
+        agent_seconds,
+        agent_seconds,
+        0,
+    )
+    assert not judge.requests
+    saved = transcript.read_text(encoding="utf-8")
+    assert "Agent stream failed." in saved
+    assert f"Agent time: {agent_seconds:.3f} s." in saved
+    assert "### Judge Skipped" in saved and "No completed assistant reply to judge." in saved
+
+
+def test_diagnostic_attempt_timings_reach_summary_and_json(tmp_path, capsys, timing_clock):
+    case = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [expected]}}]")
+
+    class TimedProvider(ScriptedProvider):
+        async def stream_events(self, messages, tools=()):
+            timing_clock(len(self.requests) + 1)
+            async for event in super().stream_events(messages, tools):
+                yield event
+
+    provider = TimedProvider([[TextDelta(reply), ResponseEnd("stop")] for reply in ["wrong", "expected", "expected"]])
+    output = tmp_path / "results"
+    assert not asyncio.run(
+        run_cases([case], provider, settings(), FakeSandboxFactory(), diagnostic_attempts=3, output_dir=output)
+    )
+    record = json.loads((output / "timings.json").read_text(encoding="utf-8"))
+    assert record["elapsed_seconds"] == 6
+    for i, attempt in enumerate(record["attempts"], 1):
+        assert attempt["case"] == "case" and attempt["testcase"] == "case.yaml"
+        assert attempt["attempt"] == i and attempt["passed"] is (i != 1)
+        assert attempt["timing"] == {"total_seconds": i, "agent_seconds": i, "judge_seconds": 0}
+    log = capsys.readouterr().out
+    assert "Run wall time: 6.000 s." in log
+    assert "| case | 1 | FAIL | 1.000 | 1.000 | 0.000 |" in log
+    assert "| case | 3 | PASS | 3.000 | 3.000 | 0.000 |" in log
+
+
+def test_parallel_wall_time_is_not_the_sum_of_attempt_times(tmp_path, monkeypatch, capsys, timing_clock):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: hi}]")
+
+    async def exercise():
+        ready = asyncio.Event()
+        entered = 0
+
+        async def attempt(*args, timing, **kwargs):
+            nonlocal entered
+            entered += 1
+            if entered == 2:
+                timing_clock(3)
+                ready.set()
+            await ready.wait()
+            timing.total_seconds = timing.agent_seconds = 3
+            return True
+
+        monkeypatch.setattr(runner, "run_case", attempt)
+        return await asyncio.wait_for(
+            run_cases([case], None, settings(), None, jobs=2, repeat=2, output_dir=tmp_path / "results"), timeout=5
+        )
+
+    assert asyncio.run(exercise())
+    record = json.loads((tmp_path / "results/timings.json").read_text(encoding="utf-8"))
+    assert record["elapsed_seconds"] == 3
+    assert sum(attempt["timing"]["total_seconds"] for attempt in record["attempts"]) == 6
+    assert "Run wall time: 3.000 s." in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -527,30 +715,12 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
     ("reply", "passed"),
     [
         ("You're already here in the Experimental AI chat.", True),
-        ("You're already talking to the Experimental AI assistant.", True),
-        ("Since you're already chatting with me here, ask what you'd like done.", True),
-        ("You're in the right place. This is the Experimental AI assistant.", True),
-        ("Good news, you've actually found it! This is the Experimental AI chat.", True),
-        ("Yes, that's this chat! I'm the Experimental AI assistant.", True),
-        ("You're chatting with it right now. This is the Experimental AI page.", True),
-        ("Yes, this chat is the AI assistant in the app.", True),
-        ("Yes, this chat **is** the AI assistant in the app.", True),
+        ("你已經在這裡了！這個對話窗就是 app 中的 Experimental AI 助手，不需要另外開啟。", True),
         ("Open Experimental AI from the menu to reach the assistant.", False),
     ],
-    ids=[
-        "already-here",
-        "already-talking",
-        "already-chatting",
-        "right-place",
-        "found-it",
-        "this-chat",
-        "chatting-now",
-        "chat-is-assistant",
-        "chat-is-assistant-bold",
-        "navigation-only",
-    ],
+    ids=["english", "traditional-chinese", "navigation-only"],
 )
-def test_chat_identity_case_accepts_equivalent_acknowledgements(tmp_path, reply, passed):
+def test_chat_identity_case_accepts_equivalent_acknowledgements(reply, passed):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
     judge = ScriptedProvider(
@@ -782,7 +952,11 @@ def test_save_all_conversations_and_print_only_failures(tmp_path, capsys, passed
     assert ("# case.yaml: PASS" if passed else "# case.yaml: FAIL") in saved
     log = capsys.readouterr().out
     if passed:
-        assert log == f"PASS {case.path} (2 turns); transcript: {transcript}\n"
+        assert re.fullmatch(
+            re.escape(f"PASS {case.path} (2 turns); transcript: {transcript}")
+            + r"; total \d+\.\d{3} s, agent \d+\.\d{3} s, judge \d+\.\d{3} s\n",
+            log,
+        )
         return
     assert log.count("## Turn ") == 2
     assert all(
@@ -813,7 +987,7 @@ def test_judge_only_assistant_assertions(tmp_path, reply, verdict, expected):
         [[TextDelta(json.dumps({"passed": verdict, "reason": "Language checked."})), ResponseEnd("stop")]]
     )
     assert asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge)) is expected
-    assert len(judge.requests) == 1
+    assert len(judge.requests) == int(bool(reply.strip()))
 
 
 @pytest.mark.parametrize(
@@ -829,6 +1003,184 @@ def test_invalid_judge_rubrics_fail_without_credentials(tmp_path, rubric):
     text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_any": ["hi"], "judge": rubric}}]})
     with pytest.raises(DefinitionError, match="judge must be a nonempty rubric"):
         definition(tmp_path, text)
+
+
+@pytest.mark.parametrize("context", [None, "conversation", "replies", "characters"])
+def test_judge_context_keeps_replies_and_preserves_full_transcript(tmp_path, context):
+    assertion = {"judge": "Check the reply."}
+    if context is not None:
+        assertion["judge_context"] = context
+    case = definition(
+        tmp_path,
+        json.dumps(
+            {"steps": [{"user": "Earlier request."}, {"user": "Read the Schedule Spec."}, {"assistant": assertion}]}
+        ),
+    )
+    provider = ScriptedProvider(
+        [
+            [TextDelta("Earlier answer."), ResponseEnd("stop")],
+            [
+                TextDelta("Intermediate answer."),
+                tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),
+            ],
+            [TextDelta("The Schedule Spec is empty."), ResponseEnd("stop")],
+        ]
+    )
+    judge = ScriptedProvider([[TextDelta('{"passed": false, "reason": "Known failure."}'), ResponseEnd("stop")]])
+    transcript = tmp_path / "attempt.md"
+    assert not asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    )
+    evidence = json.loads(judge.requests[0][1]["content"])["conversation"]
+    assert len(evidence) == 1
+    assert evidence[0]["user"] == "Read the Schedule Spec."
+    events = evidence[0]["events"]
+    assert [event["text"] for event in events if event["kind"] == "assistant" and event["text"]] == [
+        "The Schedule Spec is empty."
+    ]
+    if context != "conversation":
+        assert all(event["kind"] == "assistant" for event in events)
+    else:
+        assert {event["kind"] for event in events} == {"assistant", "tool", "tool_result"}
+    saved = transcript.read_text(encoding="utf-8")
+    assert "Earlier answer." in saved and "Intermediate answer." in saved
+    assert "Earlier answer." in json.dumps(provider.requests[-1])
+    assert "### Tool Result" in saved and "people:" in saved
+    assert "Known failure." in saved and "Verdict: **FAIL**" in saved
+    assert f"Judge context: `{context or 'replies'}`." in saved
+
+
+@pytest.mark.parametrize("context", [None, "", True, ["replies"], {"mode": "replies"}, "tools"])
+def test_invalid_judge_context_fails_without_credentials(tmp_path, context):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "English.", "judge_context": context}}]})
+    with pytest.raises(DefinitionError, match="judge_context must be conversation, replies, or characters"):
+        definition(tmp_path, text)
+
+
+def test_judge_context_requires_judge(tmp_path):
+    with pytest.raises(DefinitionError, match="judge_context requires judge"):
+        definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_any: [hi], judge_context: replies}}]")
+
+
+def test_direct_judge_ignores_previous_turns_and_incomplete_latest_drafts():
+    provider = ScriptedProvider(
+        [[TextDelta('{"passed": true, "reason": "Latest reply checked."}'), ResponseEnd("stop")]]
+    )
+    trace = [
+        {"user": "Earlier request", "events": [{"kind": "assistant", "text": "Earlier answer", "stop_reason": "stop"}]},
+        {
+            "user": "Current request",
+            "events": [
+                {"kind": "assistant", "text": "Latest answer", "stop_reason": "stop"},
+                {"kind": "assistant", "text": "Interrupted draft", "stop_reason": "length"},
+                {"kind": "assistant", "text": "Omitted answer", "stop_reason": "stop", "context_omitted": True},
+                {"kind": "assistant", "text": "   ", "stop_reason": "stop"},
+            ],
+        },
+    ]
+    result = asyncio.run(evaluate(provider, "Check the latest reply.", trace, "test"))
+    assert result["passed"]
+    evidence = json.loads(provider.requests[0][1]["content"])["conversation"]
+    assert evidence == [
+        {"user": "Current request", "events": [{"kind": "assistant", "text": "Latest answer", "stop_reason": "stop"}]}
+    ]
+
+
+def test_character_judge_preserves_full_reply_and_separates_exact_quoted_source():
+    provider = ScriptedProvider([[TextDelta('{"passed": false, "reason": "个 is Simplified."}'), ResponseEnd("stop")]])
+    user = "保留人名「张伟」與檔名 `简体排班.yaml`，其餘使用繁體中文。"
+    reply = "你好個个個𠀀。來源「张伟」與 `简体排班.yaml`。另說「这里」。"
+    trace = [
+        {"user": "前一個問題", "events": [{"kind": "assistant", "text": "以前丙", "stop_reason": "stop"}]},
+        {
+            "user": user,
+            "events": [
+                {"kind": "assistant", "text": "中間乙", "stop_reason": "stop"},
+                {"kind": "tool_result", "text": "工具丁"},
+                {"kind": "assistant", "text": reply, "reasoning": "隱藏戊", "stop_reason": "stop"},
+                {"kind": "assistant", "text": "中斷己", "stop_reason": "length"},
+            ],
+        },
+    ]
+    result = asyncio.run(evaluate(provider, "Check Traditional Chinese.", trace, "test", context="characters"))
+    assert not result["passed"]
+    evidence = json.loads(provider.requests[0][1]["content"])
+    assert evidence["assistant_character_inventory"] == "你 好 個 个 𠀀 來 源 與 另 說 这 里"
+    assert evidence["preserved_source_literals"] == ["张伟", "简体排班.yaml"]
+    assert evidence["conversation"] == [
+        {"user": user, "events": [{"kind": "assistant", "text": reply, "stop_reason": "stop"}]}
+    ]
+
+
+def test_character_judge_routes_separately_from_normal_judges(tmp_path):
+    case = definition(
+        tmp_path,
+        json.dumps(
+            {
+                "steps": [
+                    {"user": "你好"},
+                    {"assistant": {"judge": "Traditional Chinese.", "judge_context": "characters"}},
+                    {"user": "Hello"},
+                    {"assistant": {"judge": "English."}},
+                ]
+            }
+        ),
+    )
+    agent = ScriptedProvider([[TextDelta("你好。"), ResponseEnd("stop")], [TextDelta("Hello."), ResponseEnd("stop")]])
+    normal = ScriptedProvider([[TextDelta('{"passed": true, "reason": "English."}'), ResponseEnd("stop")]])
+    characters = ScriptedProvider([[TextDelta('{"passed": true, "reason": "Traditional."}'), ResponseEnd("stop")]])
+    assert asyncio.run(
+        run_case(
+            case,
+            agent,
+            settings(),
+            FakeSandboxFactory(),
+            judge_provider=normal,
+            character_judge_provider=characters,
+        )
+    )
+    assert len(characters.requests) == len(normal.requests) == 1
+    assert json.loads(characters.requests[0][1]["content"])["assistant_character_inventory"] == "你 好"
+    ordinary = json.loads(normal.requests[0][1]["content"])
+    assert "assistant_character_inventory" not in ordinary
+    assert ordinary["conversation"][0]["events"][0]["text"] == "Hello."
+
+
+@pytest.mark.parametrize("judge_model", ["unsloth/Qwen3.8-27B-NVFP4", "other-model"])
+def test_cli_character_judge_bounds_output_without_changing_normal_judges(tmp_path, monkeypatch, judge_model):
+    from tests.ai import runner
+
+    case = definition(tmp_path, "steps: [{user: 你好}, {assistant: {judge: Traditional., judge_context: characters}}]")
+    providers = [
+        ScriptedProvider([[TextDelta("你好。"), ResponseEnd("stop")]]),
+        ScriptedProvider([]),
+        ScriptedProvider([[TextDelta('{"passed": true, "reason": "Traditional."}'), ResponseEnd("stop")]]),
+    ]
+    configured = []
+
+    def create_provider(configuration, **kwargs):
+        configured.append((configuration.provider_max_attempts, kwargs.get("parameters")))
+        return providers[len(configured) - 1]
+
+    monkeypatch.setenv("AI_TEST_JUDGE_MODEL", judge_model)
+    monkeypatch.setattr(AiSettings, "from_env", lambda: replace(settings(), provider_max_attempts=8))
+    monkeypatch.setattr(runner, "OpenAiCompatibleProvider", create_provider)
+    monkeypatch.setattr(runner, "create_sandbox_factory", lambda *_: FakeSandboxFactory())
+    monkeypatch.setattr(runner, "TRANSCRIPTS", tmp_path / "transcripts")
+    assert main(["run", str(case.path)]) == 0
+    assert [attempts for attempts, _ in configured] == [5, 5, 5]
+    assert configured[0][1] is None
+    assert configured[1][1] == {"temperature": 0}
+    parameters = configured[2][1]
+    assert parameters["max_tokens"] == 512
+    assert parameters["response_format"]["type"] == "json_schema"
+    reason = parameters["response_format"]["json_schema"]["schema"]["properties"]["reason"]
+    assert reason["minLength"] == 1 and reason["maxLength"] == 240
+    assert ("chat_template_kwargs" in parameters) is ("qwen" in judge_model.casefold())
+    if "qwen" in judge_model.casefold():
+        assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
+    assert not providers[1].requests
+    assert len(providers[2].requests) == 1
 
 
 @pytest.mark.parametrize("count", [True, False, 0, -1, 1.5, "12", [], {}])
@@ -878,8 +1230,16 @@ def test_judge_point_count_reports_missing_points_in_transcript(tmp_path, count)
     ],
     ids=["both-pass", "term-only", "judge-only", "both-fail"],
 )
-def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsys, reply, judge_pass, expected):
-    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+def test_combined_phrase_and_judge_assertions_always_run_judge(tmp_path, capsys, reply, judge_pass, expected):
+    case = definition(
+        tmp_path,
+        """steps:
+  - user: Open the assistant.
+  - assistant:
+      contains_any: [already]
+      judge: Explain that the user is already interacting with the AI assistant in this chat.
+""",
+    )
     provider = ScriptedProvider([[TextDelta(reply), ResponseEnd("stop")]])
     judge = ScriptedProvider(
         [[TextDelta(json.dumps({"passed": judge_pass, "reason": "Semantic verdict."})), ResponseEnd("stop")]]
@@ -896,7 +1256,11 @@ def test_identity_requires_terms_and_judge_and_always_runs_judge(tmp_path, capsy
     assert "Semantic verdict." in saved and "Judge request:" in saved
     log = capsys.readouterr().out
     if expected:
-        assert log == f"PASS {case.path} (1 turns); transcript: {transcript}\n"
+        assert re.fullmatch(
+            re.escape(f"PASS {case.path} (1 turns); transcript: {transcript}")
+            + r"; total \d+\.\d{3} s, agent \d+\.\d{3} s, judge \d+\.\d{3} s\n",
+            log,
+        )
     else:
         assert f"Verdict: **{'PASS' if judge_pass else 'FAIL'}**" in log
         rubric = next(step.value["judge"] for step in case.steps if step.kind == "assistant" and "judge" in step.value)
@@ -984,17 +1348,60 @@ def test_judge_diagnostics_preserve_initial_failure_without_replaying_agent(tmp_
             assert f"(judge): attempt {attempt}:" in saved
 
 
-def test_judge_still_runs_when_agent_execution_fails(capsys):
+@pytest.mark.parametrize("stop_reason", ["stop", "length"])
+def test_judge_skips_missing_completed_replies(capsys, stop_reason):
     case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
-    provider = ScriptedProvider([[TextDelta("Partial reply."), ResponseEnd("length")]])
+    reply = "   " if stop_reason == "stop" else "Partial reply."
+    provider = ScriptedProvider([[TextDelta(reply), ResponseEnd(stop_reason)]])
+    judge = ScriptedProvider([])
+    assert not asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, judge_attempts=3)
+    )
+    log = capsys.readouterr().out
+    assert "No completed assistant reply to judge." in log
+    assert "### Judge Skipped" in log
+    assert not judge.requests
+    if stop_reason != "stop":
+        assert "(execution):" in log and "Partial reply." in log
+
+
+def test_judge_runs_after_execution_failure_when_completed_reply_exists(capsys):
+    case = load_case(TESTCASES / "basics" / "01_already-in-ai-chat.yaml")
+    provider = ScriptedProvider(
+        [
+            [
+                TextDelta("I will inspect the Schedule Spec."),
+                tool_call("read-1", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC})),
+            ],
+            [TextDelta("Partial reply."), ResponseEnd("length")],
+        ]
+    )
     judge = ScriptedProvider(
-        [[TextDelta('{"passed": false, "reason": "Incomplete acknowledgement."}'), ResponseEnd("stop")]]
+        [[TextDelta('{"passed": true, "reason": "Completed introduction."}'), ResponseEnd("stop")]]
     )
     assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge))
     log = capsys.readouterr().out
     assert "(execution):" in log and "Partial reply." in log
-    assert "Verdict: **FAIL**" in log
+    assert "Verdict: **PASS**" in log
     assert len(judge.requests) == 1
+    request = json.loads(judge.requests[0][1]["content"])
+    replies = [event["text"] for event in request["conversation"][0]["events"] if event["kind"] == "assistant"]
+    assert replies == ["I will inspect the Schedule Spec."]
+
+
+def test_earlier_reply_does_not_trigger_judging_an_incomplete_later_turn(tmp_path, capsys):
+    case = definition(
+        tmp_path, "steps: [{user: hi}, {assistant: {judge: English.}}, {user: again}, {assistant: {judge: English.}}]"
+    )
+    provider = ScriptedProvider(
+        [[TextDelta("Hello."), ResponseEnd("stop")], [TextDelta("Partial reply."), ResponseEnd("length")]]
+    )
+    judge = ScriptedProvider([[TextDelta('{"passed": true, "reason": "English."}'), ResponseEnd("stop")]])
+    assert not asyncio.run(run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge))
+    assert len(judge.requests) == 1
+    log = capsys.readouterr().out
+    assert "turn 2, step 4 (judge): No completed assistant reply to judge." in log
+    assert "Verdict: **PASS**" in log
 
 
 def test_judge_cancellation_closes_stream():

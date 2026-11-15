@@ -79,6 +79,18 @@ with a separate file for each case and attempt. The final summary shows each
 outcome and failed/total attempt counts. Assertion failures do not stop later turns.
 Execution errors stop that attempt.
 
+Completion lines and the CI summary report total, agent, and judge wall-clock
+seconds for every attempt. Agent time covers workspace execution, including
+sandbox setup, tools, provider requests, retries, and cleanup. Transcripts show
+agent time per turn and elapsed time for every judge attempt. Judge time includes
+every verdict attempt and its provider retries. Attempt totals also include test
+preparation and assertions, but exclude queue wait and transcript writing.
+
+Each run saves these measurements in `timings.json` beside `concurrency.json`.
+Use them together when comparing runs. Run wall time covers the parallel case
+execution and attempt reporting, so adding individual attempt times can exceed
+it. Initial capacity discovery and CI template building are outside that interval.
+
 ## Authoring
 
 Use the ordered `steps` list in
@@ -128,21 +140,42 @@ before a tool call. They exclude reasoning and failed responses. Matching is
 case-insensitive unless `case_sensitive: true` is set.
 
 `assistant.judge` is a nonempty rubric string. Write it as a positive pass
-condition. It can be used alone for semantic
-checks such as reply language. A judge-only assertion requires a nonempty reply.
+condition. Prefer judge-only assertions for meaning. Add phrase matching only
+when the words themselves are required. A judge-only assertion requires a nonempty reply.
 When phrase matching is also supplied, both matching and the LLM judge must pass.
 The language cases use judge-only assertions for English and Chinese script.
 For a numbered rubric, optional `assistant.count: 12` asks the judge to include
 `N/12` in its explanation and identify omitted or incomplete points by number.
 The entire rubric must still pass. An omitted or null `count` adds no scoring
 instructions. `count` requires `judge` and must be a positive integer or null.
+
+The default `assistant.judge_context: replies` sends the current user request and
+the latest completed, nonempty assistant reply. Earlier turns and intermediate
+assistant messages are excluded. Write each rubric with the facts needed to
+assess that reply. Set `judge_context: conversation` when grading also needs the
+current turn's tool calls and results. This option never includes earlier turns.
+Assert Schedule Spec changes and required tools explicitly. Both modes retain
+the full conversation in the saved transcript. `judge_context` requires `judge`.
+
+Use `judge_context: characters` for Chinese script checks. It adds a deduplicated
+Han character inventory from the latest reply. Exact quoted strings also present
+in the current user request are listed separately. The full reply remains
+visible. This evidence does not convert text or classify characters by script.
+The CLI uses a separate judge with a strict JSON schema, a 512-token output
+limit, and a reason limited to 240 characters. Qwen judges use non-thinking mode
+for these checks. Other assertions keep the normal judge. The endpoint must
+support JSON schema output. Validate script rubrics against both mixed-script
+failures and valid shared characters, source quotations and identifiers.
+
 Chinese-language users always receive Traditional Chinese with Taiwan vocabulary
 and phrasing, including when they use or request Simplified Chinese. Support for
 other Chinese scripts is deferred. English-language users receive English.
-The judge always runs for an
-executed turn, even when phrase matching or agent execution fails. It reads the
-conversation in a separate request with no tools and returns a boolean verdict
-and explanation. Invalid verdicts and exhausted provider retries fail the attempt.
+The judge runs when the executed turn has a completed, nonempty assistant reply,
+even when phrase matching or a later agent operation fails. A turn without such
+a reply fails locally and records why judging was skipped. It makes no judge
+requests or diagnostic judge retries. Earlier completed turns are still judged.
+The judge reads the conversation in a separate request with no tools and returns
+a boolean verdict and explanation. Invalid verdicts and exhausted provider retries fail the attempt.
 The judge uses the provider's configured request timeout and retry budget.
 All saved transcripts include the rubric, model, full judge
 request, raw response, verdict, and explanation. The judge uses the configured
@@ -180,8 +213,9 @@ and closes the sandbox. No production clock or prompt changes are required.
 
 The dedicated **Test Core AI** workflow validates definitions and runs the
 deterministic tester tests on Ubuntu for pushes and pull requests. Live
-conversations run on pushes to `j3soon/nurse-scheduling`, after validation passes.
-Pull requests and fork repositories do not run live conversations.
+conversations run after validation passes for pushes to
+`j3soon/nurse-scheduling` and pull requests whose head branch is in that
+repository. Pull requests from forks run validation only.
 
 Configure repository secrets `AI_PROVIDER_BASE_URL`, `AI_PROVIDER_API_KEY`, and
 `E2B_API_KEY`. No repository variables are required. Optional repository

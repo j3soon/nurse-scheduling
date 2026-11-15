@@ -14,15 +14,11 @@ steps:
       invoked: false
   - assistant:
       count: 3
-      judge: >-
-        Pass when the response identifies and seeks clarification on all three
-        unresolved requirements:
-        (1) Whether the head nurse role implies scheduling rules or is information only.
-        (2) Whether senior status implies staffing or eligibility rules, such as
-        a minimum number of seniors per shift, or is information only.
-        (3) Whether any shift eligibility restrictions apply. A broad question
-        about role-based rules with eligibility examples satisfies this point.
-        Do not require a separate question for every person or shift.
-        Combined questions may satisfy multiple points. The response may include explanations,
-        options, other relevant questions, and suggested next steps.
-        Do not require a question-only response or exact wording.
+      judge: |-
+        Pass when the reply asks about (1) the head nurse's scheduling role,
+        (2) senior staffing rules, and (3) shift eligibility.
+        A combined question about the head nurse and seniors, with an example such as
+        senior-only slots, satisfies all three. No additional head-nurse-specific question
+        is required. Reject replies that omit either role, assume rules without asking,
+        or only ask whether the head nurse counts as a senior. Rest or workload questions
+        alone do not clarify staffing eligibility.

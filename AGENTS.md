@@ -30,6 +30,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   them, and remember that `127.0.0.1` differs between the two environments.
 
 ## Workflow
+- Keep CI enabled on every push, including feature branches before a pull
+  request exists. Preserve both push and pull-request checks when reducing
+  CI runtime. Do not restrict push triggers to selected branches or tags.
 - AI testing transition: use `core/tests/ai/` for minimal, human-reviewed,
   quick AI tests. `core/tests/ai_eval/` is legacy. Do not run, extend, repair,
   or remove legacy AI tests in this branch. This takes precedence over older

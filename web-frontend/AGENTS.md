@@ -36,8 +36,20 @@ them. The full suite takes about two minutes in the dev container. If you
 cannot run it, tell the user that it was not run and that they can run it before
 pushing.
 Frontend unit/component tests use Vitest; browser integration tests use
-Playwright. Keep test files and runner configuration outside the production
+Playwright. Routine CI collects Vitest source coverage and runs every browser
+case without V8 bundle coverage. Use `test:e2e:coverage` or workflow dispatch's
+`bundle_coverage` input only when the minified-bundle report is needed.
+Keep test files and runner configuration outside the production
 TypeScript project. Validate them with their respective test runners.
+Split a test file when it delays completion of the full suite. Compare full
+runs with the same worker limit before keeping a split. Additional files add
+module import and environment setup costs. A large test count or long file
+duration alone does not justify a split.
+Keep shared mocks and fixtures in `src/test/`, outside production
+TypeScript and source coverage. Import mock setup before the component under
+test, and reset mutable fixtures for each test.
+When changing chat persistence, test `pagehide` before passive effects run.
+Save the event cursor with the transcript that has processed those events.
 
 Prepare chat archives before starting a native download in a hidden frame. Keep
 preparation and download errors on the chat page. Test both failure paths in
@@ -59,8 +71,11 @@ The test runner cannot interrupt a blocked synchronous call.
 
 Scope form locators to their page or dialog so global navigation controls do not
 change the selected field. Use Playwright locator actions for form controls.
-Before interacting with statically rendered controls, wait for an observable result of client
-initialization, such as loaded backend options enabling Optimize.
+For native selects, choose values with `selectOption`. Test that picker keys
+keep native defaults and do not reach page shortcuts.
+Before interacting with statically rendered controls or capturing a preview, wait
+for an observable result of client initialization, such as seeded content or
+loaded backend options enabling Optimize.
 Keep independent page checks in separate Playwright tests so each page has its
 own timeout and failure report.
 
@@ -278,6 +293,8 @@ replacement snapshots even when their IDs are at or below the stored cursor.
 Browser timers have a maximum delay of about 24.8 days. Schedule longer session
 expiry in bounded intervals and recheck the timestamp after each wake. Cover
 both the intermediate wake and the final expiry with a clock-controlled test.
+When advancing many days in a component test, fake only the clock and timeout
+APIs under test. Leave unrelated periodic refresh intervals on real time.
 
 For AI chat issues involving the deployed service, test the real browser UI
 against `https://api-staging.nursescheduling.org/ai`. Run the local frontend,

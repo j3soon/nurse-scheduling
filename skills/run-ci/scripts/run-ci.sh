@@ -26,9 +26,7 @@ set -x
   pytest \
     -q --tb=short --disable-warnings --maxfail=1 \
     --cov=nurse_scheduling \
-    --ignore-glob='*pulp_cbc.py' \
-    --ignore-glob='*pulp_cuopt.py' \
-    --ignore=tests/test_solver_pulp_progress.py \
+    --solver-profile=primary --durations=20 \
     tests
 )
 
@@ -37,6 +35,5 @@ set -x
   bun run lint
   bun run build
   bun run test:coverage
-  bun run test:e2e:coverage
-  bun run coverage:e2e:report
+  bunx playwright test --reporter=dot --quiet --max-failures=1
 )

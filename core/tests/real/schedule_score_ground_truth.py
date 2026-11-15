@@ -26,7 +26,12 @@ import pytest
 import nurse_scheduling
 
 from .assignment_fixture import deserialize_assignment_fixture
-from .schedule_real_helper import REAL_TESTCASE
+from .schedule_real_helper import (
+    EXPECTED_SOLUTION_SIZE,
+    REAL_TESTCASE,
+    _add_critical_request_formatting_rules,
+    _critical_request_notes,
+)
 
 ASSIGNMENT_FIXTURES = sorted(REAL_TESTCASE.parent.glob(f"{REAL_TESTCASE.stem}.assignment-*.json"))
 REPLAY_TIMEOUT_SECONDS = 60
@@ -43,12 +48,16 @@ def test_real_schedule_assignment_has_expected_score(assignment_fixture):
     forced_solution, expected_score = deserialize_assignment_fixture(file_content, fixture)
 
     result = nurse_scheduling.schedule(
-        file_content,
+        _add_critical_request_formatting_rules(file_content),
         forced_solution=forced_solution,
         solver="ortools/cp-sat",
+        prettify=True,
         timeout=REPLAY_TIMEOUT_SECONDS,
     )
 
     assert result.solver_status == "OPTIMAL"
+    assert result.dataframe is not None
+    assert len(result.solution) == EXPECTED_SOLUTION_SIZE
     assert result.solution == forced_solution
     assert result.score == expected_score
+    assert _critical_request_notes(result.cell_export_info) == []

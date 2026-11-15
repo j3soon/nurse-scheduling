@@ -101,7 +101,7 @@ if [[ "$affected_list" == true ]]; then
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
   if [[ "$run_full_suite" == true ]]; then
-    echo "tests: full normal core suite (CBC and cuOpt excluded)"
+    echo "tests: primary core suite (CP-SAT and CBC)"
   elif ((${#test_paths[@]} > 0)); then
     printf 'test: %s\n' "${test_paths[@]}"
   else
@@ -116,9 +116,7 @@ ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests
 
 required_solvers=()
-if [[ "$run_full_suite" == true ]]; then
-  required_solvers=(pulp/highs pulp/scip)
-else
+if [[ "$run_full_suite" != true ]]; then
   for path in "${test_paths[@]}"; do
     case "$path" in
       tests/test_serve.py | tests/test_schedule_pulp_highs.py)
@@ -172,9 +170,7 @@ fi
 if [[ "$run_full_suite" == true ]]; then
   echo "Broad core changes detected; running the compact normal suite."
   exec pytest "${pytest_args[@]}" \
-    --ignore-glob='*pulp_cbc.py' \
-    --ignore-glob='*pulp_cuopt.py' \
-    --ignore=tests/test_solver_pulp_progress.py \
+    --solver-profile=primary \
     tests
 fi
 

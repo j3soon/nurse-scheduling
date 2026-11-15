@@ -18,10 +18,10 @@ project packages are installed system-wide, so run `python`, `pytest`, and
   pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
-  normal local suite, excluding optional PuLP CBC, cuOpt, and mixed progress
-  suites. Tests marked `requires_solver` skip automatically when their optional
-  runtime package is absent. An installed runtime that fails its availability
-  check still stops the script. Use `--skip-unavailable-solvers` to skip those
+  primary solver suite with CP-SAT and CBC regression sweeps. Other backend
+  sweeps remain available with `pytest --solver-profile=all`. Tests marked
+  `requires_solver` skip automatically when their optional runtime package is absent.
+  An installed runtime that fails its availability check still stops the script. Use `--skip-unavailable-solvers` to skip those
   tests too.
 - `pytest tests/real/schedule_ortools_cp_sat.py tests/real/schedule_pulp_cbc.py tests/real/schedule_pulp_cuopt.py`: run the slower bounded real-world checks.
 - `pytest tests/real/schedule_score_ground_truth.py`: replay the fixed real-world assignment and verify its exact objective score.
@@ -735,6 +735,11 @@ and current session recovery working.
 - Real-world checks under `tests/real/` intentionally omit pytest's `test_`
   filename prefix. Run them explicitly; do not include them in normal test
   commands.
+- Routine CI and broad affected checks use `--solver-profile=primary`. Keep
+  each schedule fixture in the CP-SAT and CBC sweeps. Test workbook formatting
+  through CP-SAT in both forms. Keep distinct OR-Tools adapter checks in the
+  primary profile. Use `--solver-profile=all` for optional runtime checks and
+  repeated backend sweeps. New runtime-dependent checks need `requires_solver`.
 - Primary suites are:
   `tests/test_solver_ortools_cp_sat.py`,
   `tests/test_solver_ortools_linear.py`,
@@ -752,6 +757,10 @@ and current session recovery working.
 - Add scheduling cases as fixture pairs under `tests/testcases/**`, typically a
   `.yaml` input with matching `.csv` or `.txt` expected output.
 - Add human-reviewed AI regression conversations under `tests/ai/testcases/`.
+  Use the target script in basic Chinese-language tests. Keep cross-script
+  override checks separate.
+  Keep a script-ambiguous greeting separate from a request with explicit script
+  cues. The first reply checks the system prompt's language policy.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
@@ -761,6 +770,24 @@ and current session recovery working.
   guidance. Accept equivalent phrasing in
   text assertions and require tool calls only when their use is part of the
   intended behavior. Do not weaken assertions to hide a live behavior failure.
+  When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
+  saved replies first. Include known failures and valid alternatives before
+  starting new live agent runs.
+  For script checks, include isolated wrong characters in long replies, valid
+  shared characters and exact source quotations. Check verdict format and
+  runtime as well as classification accuracy.
+  During script-judge audits, verify that cited wrong characters occur in the
+  reply and differ from their proposed corrections. Record classification
+  errors separately from invalid output and transport failures.
+  When a rubric candidate must pass every check, reject it on the first wrong
+  verdict before scheduling more judgments. Preserve its wording and evidence.
+  Run local live comparisons after CI when they share a provider. Concurrency
+  discovery limits each run separately, not their combined load.
+  Fail turns without a completed, nonempty assistant reply locally. Skip their
+  model judges and record the reason. Judge earlier completed turns as usual.
+  Each judge grades only its turn's latest completed reply, with the current user
+  request and rubric. Exclude previous turns and intermediate replies. Include
+  current-turn tool evidence only when the assertion explicitly requests it.
   Let production provider retries finish before reporting an execution failure.
   Keep interrupted drafts in transcripts, but exclude them from assertions and
   judge input.
