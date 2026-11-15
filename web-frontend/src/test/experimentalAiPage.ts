@@ -20,6 +20,7 @@
 // This code is mostly AI generated.
 
 import { saveChatHistory } from '@/app/experimental-ai/chatHistory';
+import { installMockWebLocks } from './mockWebLocks';
 import type { StoredChatConversation } from '@/app/experimental-ai/chatConversation';
 import type { SessionEvent, SessionStreamOptions } from '@/app/experimental-ai/sessionEvents';
 
@@ -157,6 +158,7 @@ export function setupExperimentalAiPageTests() {
   beforeEach(() => {
     pendingForegroundRunId = null;
     vi.restoreAllMocks();
+    installMockWebLocks();
     vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
     mockGetChatExportUrl.mockReset().mockResolvedValue('/ai/v1/sessions/session-id/export?token=temporary');
     mockCreateSession.mockReset().mockResolvedValue('session-id');
@@ -222,7 +224,7 @@ export function setupExperimentalAiPageTests() {
   });
 }
 
-export const seedRecentChat = (sessionId = 'older-session', endpoint = '/ai'): StoredChatConversation => {
+export const seedRecentChat = async (sessionId = 'older-session', endpoint = '/ai'): Promise<StoredChatConversation> => {
   const conversation: StoredChatConversation = {
     sessionId, endpoint, lastActivityAt: Date.now() - 1000,
     expiresAt: Date.now() + 86400_000, retentionSeconds: 30 * 86400,
@@ -230,7 +232,7 @@ export const seedRecentChat = (sessionId = 'older-session', endpoint = '/ai'): S
     messages: [{ id: 'old-question', role: 'user', content: `Review ${sessionId}` },
       { id: 'old-answer', role: 'assistant', content: 'An earlier answer.', activity: [{ kind: 'response', text: 'An earlier answer.' }] }],
   };
-  saveChatHistory(conversation, true);
+  await saveChatHistory(conversation, true);
   return conversation;
 };
 

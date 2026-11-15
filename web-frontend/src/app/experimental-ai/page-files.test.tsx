@@ -53,7 +53,7 @@ describe('ExperimentalAiPage', () => {
   setupExperimentalAiPageTests();
 
   it('selects a recent chat without uploading or replacing browser Schedule Spec, then syncs on send', async () => {
-    const chat = seedRecentChat();
+    const chat = await seedRecentChat();
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });

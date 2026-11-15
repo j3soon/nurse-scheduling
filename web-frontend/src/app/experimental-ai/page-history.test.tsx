@@ -39,14 +39,15 @@ import {
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ExperimentalAiPage from './page';
-import { AI_HISTORY_STORAGE_KEY, readChatHistory, saveChatHistory } from './chatHistory';
+import { AI_HISTORY_LOCK_NAME, AI_HISTORY_STORAGE_KEY, clearChatHistory, readChatHistory, saveChatHistory } from './chatHistory';
+import { holdWebLock } from '@/test/mockWebLocks';
 import type { SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
 describe('ExperimentalAiPage', () => {
   setupExperimentalAiPageTests();
 
   it.each(['model', 'reasoning'])('restores a recent chat without saving an unsent %s choice', async choice => {
-    seedRecentChat();
+    await seedRecentChat();
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, model_selection: true });
     mockGetModels.mockResolvedValue({ default_model: 'fast', models: [
       { id: 'fast', name: 'Fast', default_reasoning: 'default', reasoning_options: [
@@ -73,13 +74,13 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('does not resubmit an interrupted request just by selecting its history entry', async () => {
-    const chat = seedRecentChat();
+    const chat = await seedRecentChat();
     const request = { id: 'interrupted-request', question: 'Review older-session', questionId: 'old-question', assistantId: 'old-answer', active: true };
     chat.messages = [
       { ...chat.messages[0], request },
       { ...chat.messages[1], content: '', activity: [], status: 'pending', requestId: request.id, request },
     ];
-    saveChatHistory(chat);
+    await saveChatHistory(chat);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
@@ -114,8 +115,8 @@ describe('ExperimentalAiPage', () => {
   });
 
   it('clears only chat records and keeps the visible transcript and other preferences', async () => {
-    seedRecentChat();
-    seedRecentChat('another-session');
+    await seedRecentChat();
+    await seedRecentChat('another-session');
     localStorage.setItem('unrelated-preference', 'keep');
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
@@ -131,22 +132,30 @@ describe('ExperimentalAiPage', () => {
     expect(mockStopSession).not.toHaveBeenCalled();
   });
 
-  it('keeps saving the open chat when a history refresh overlaps its first save', async () => {
+  it('keeps tab recovery and the latest pending save while the history lock is held', async () => {
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'First conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
-    await within(history).findByRole('button', { name: /^First conversation/ });
-    vi.spyOn(Storage.prototype, 'getItem').mockReturnValueOnce(null);
-
     act(() => window.dispatchEvent(new StorageEvent('storage', { key: AI_HISTORY_STORAGE_KEY })));
-    expect(within(history).getByRole('button', { name: /^First conversation/ })).toBeInTheDocument();
+    expect(within(history).getByText('No recent chats.')).toBeInTheDocument();
 
     await user.type(input, 'Continue this conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     act(() => window.dispatchEvent(new Event('pagehide')));
+    const pending = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+    expect(pending.historyPending).toBe(true);
+    expect(pending.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'user', content: 'Continue this conversation' }),
+    ]));
+    expect(readChatHistory()).toEqual([]);
+    await act(release);
+    await within(history).findByRole('button', { name: /^First conversation/ });
+    await waitFor(() => expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(false));
+    await waitFor(() => expect(readChatHistory()[0].conversation.messages).toHaveLength(pending.messages.length));
     expect(readChatHistory()[0].conversation.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: 'user', content: 'Continue this conversation' }),
     ]));
@@ -168,6 +177,115 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
     expect(mockGetSessionStatus).toHaveBeenCalledWith('session-id', null, '/ai');
     expect(mockCreateSession).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the newest tab snapshot when a departing chat finishes saving later', async () => {
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    mockCreateSession.mockResolvedValueOnce('first-session').mockResolvedValueOnce('second-session');
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
+    await user.type(input, 'First conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(within(history).getByRole('button', { name: 'New chat' }));
+    await user.type(input, 'Second conversation');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    await act(release);
+    await waitFor(() => expect(readChatHistory()).toHaveLength(2));
+    await waitFor(() => expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(false));
+    const stored = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+    expect(stored.sessionId).toBe('second-session');
+    expect(stored.messages).toEqual(expect.arrayContaining([expect.objectContaining({ content: 'Second conversation' })]));
+    expect(stored.messages).not.toEqual(expect.arrayContaining([expect.objectContaining({ content: 'First conversation' })]));
+  });
+
+  it('clears pending first saves without allowing pagehide to recreate them', async () => {
+    await seedRecentChat();
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Pending first chat');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(within(history).getByRole('button', { name: 'Clear history' }));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull();
+    await act(release);
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(readChatHistory()).toEqual([]);
+    expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
+  });
+
+  it('does not recreate a chat cleared while the page remounts with its first save pending', async () => {
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    const user = userEvent.setup();
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep creation permission unique');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    view.unmount();
+    const cleared = clearChatHistory();
+    render(<ExperimentalAiPage />);
+    await act(release);
+    await act(async () => { await cleared; });
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(readChatHistory()).toEqual([]);
+  });
+
+  it('acknowledges a first save completed while away before restoring a cleared chat', async () => {
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    const user = userEvent.setup();
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Finish saving while away');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    view.unmount();
+    await act(release);
+    await waitFor(() => expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(false));
+    await clearChatHistory();
+    render(<ExperimentalAiPage />);
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    expect(readChatHistory()).toEqual([]);
+  });
+
+  it('keeps tab recovery and existing history when browser locks are unavailable', async () => {
+    await seedRecentChat();
+    const previous = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
+    await user.click(within(history).getByRole('button', { name: 'Remove chat: Review older-session' }));
+    expect(await screen.findByText(/Recent chats cannot be saved or removed/)).toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Continue without shared writes');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!);
+    expect(stored.messages).toEqual(expect.arrayContaining([expect.objectContaining({ content: 'Continue without shared writes' })]));
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBe(previous);
+  });
+
+  it('preserves tab recovery and reports a failed removal after a resumed save', async () => {
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep this chat');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await within(history).findByRole('button', { name: /^Keep this chat/ });
+    const remove = Storage.prototype.removeItem;
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
+      if (this === localStorage && key === AI_HISTORY_STORAGE_KEY) throw new Error('Storage unavailable');
+      remove.call(this, key);
+    });
+    await user.click(within(history).getByRole('button', { name: 'Remove chat: Keep this chat' }));
+    expect(await screen.findByText('This chat could not be removed from browser storage.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull();
+    expect(readChatHistory()).toHaveLength(1);
   });
 
   it('flushes a pending transcript write when the page unmounts', async () => {
@@ -366,11 +484,12 @@ describe('ExperimentalAiPage', () => {
     render(<ExperimentalAiPage />);
 
     expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
-    expect(screen.getByText('Preserve this transcript')).toBeInTheDocument();
+    const transcript = screen.getByRole('region', { name: 'Chat messages' });
+    expect(within(transcript).getByText('Preserve this transcript')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: 'Start new chat' }));
-    expect(screen.queryByText('Preserve this transcript')).not.toBeInTheDocument();
+    expect(within(transcript).queryByText('Preserve this transcript')).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
     expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
   });
@@ -404,7 +523,7 @@ describe('ExperimentalAiPage', () => {
     expect(mockGetSessionStatus).toHaveBeenLastCalledWith('restored-session', 'replacement-token', '/ai');
   });
 
-  it('debounces streamed transcript writes and flushes the latest text on page hide', async () => {
+  it.each(['pagehide', 'visibilitychange'])('debounces streamed transcript writes and flushes the latest text on %s', async event => {
     const user = userEvent.setup();
     let emit: SessionEventHandler | undefined;
     let finishStream: (() => void) | undefined;
@@ -428,7 +547,8 @@ describe('ExperimentalAiPage', () => {
     act(() => emit?.({ type: 'delta', text: ' second' }));
     expect(writeConversation).not.toHaveBeenCalled();
 
-    act(() => window.dispatchEvent(new Event('pagehide')));
+    if (event === 'visibilitychange') vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    act(() => (event === 'pagehide' ? window : document).dispatchEvent(new Event(event)));
     const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
     expect(stored.messages.at(-1).content).toBe('First second');
     expect(writeConversation.mock.calls.filter(([key]) => key === 'nurse-scheduling-ai-conversation')).toHaveLength(1);

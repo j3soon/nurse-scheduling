@@ -72,12 +72,18 @@ import {
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
-import { AI_HISTORY_CHANGED, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, chatKey, clearChatHistory, forgetChat, pruneChatHistory, saveChatHistory, type RecentChat } from './chatHistory';
+import { AI_HISTORY_CHANGED, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, ChatHistoryLockUnavailableError, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, type RecentChat } from './chatHistory';
+import { getChatHistoryWriter, type ChatHistoryWriter } from './chatHistoryWriter';
 import { AI_CONVERSATION_STORAGE_KEY, clearStoredConversation, type StoredChatConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
 import { latestCostSummary, replaceCall, type CostSummary, type ProviderCallCost } from './costs';
 
 const KEPT_BROWSER_SCHEDULE_NOTICE = 'These changes belong to the selected chat. Browser Schedule Spec was kept unchanged.';
+const HISTORY_SAVE_ERROR = 'Recent chats could not be saved on this device. Browser storage may be unavailable or full.';
+
+function historyErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ChatHistoryLockUnavailableError ? error.message : fallback;
+}
 
 interface StreamCallbacks {
   onProviderCall?: (call: ProviderCallCost) => void;
@@ -211,6 +217,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
 }: AiChatOptions) {
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyActionErrorRef = useRef<string | null>(null);
   const lastActivityRef = useRef(Date.now());
   const observedEventIdRef = useRef(0);
   const [sessionEventId, setSessionEventId] = useState(0);
@@ -297,10 +304,50 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const conversationStorageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistConversationRef = useRef<(() => void) | null>(null);
+  const historyWriterRef = useRef<ChatHistoryWriter | null>(null);
+  const historyWriterUnsubscribeRef = useRef<(() => void) | null>(null);
+  const storedConversationRef = useRef<StoredChatConversation | null>(null);
+  const saveTabConversation = useCallback(() => {
+    const stored = storedConversationRef.current;
+    if (!stored || historyForgottenRef.current) {
+      clearStoredConversation();
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...stored, historyPending: historyCreateRef.current }));
+    } catch {
+      // Shared history can still work when tab storage is unavailable.
+    }
+  }, []);
+  const getHistoryWriter = useCallback(() => {
+    if (!historyWriterRef.current) {
+      const writer = getChatHistoryWriter(chatKey({
+        sessionId: sessionIdRef.current!, endpoint: sessionEndpointRef.current!,
+      }), historyCreateRef.current);
+      const onSettled = (error?: unknown) => {
+        if (historyWriterRef.current !== writer) return;
+        const recoveryChanged = historyCreateRef.current !== writer.needsCreation
+          || historyForgottenRef.current !== writer.forgotten;
+        historyCreateRef.current = writer.needsCreation;
+        historyForgottenRef.current = writer.forgotten;
+        setHistoryError(historyActionErrorRef.current ?? (error ? historyErrorMessage(error, HISTORY_SAVE_ERROR) : null));
+        // A completion only updates recovery metadata on the latest tab snapshot.
+        if (recoveryChanged) saveTabConversation();
+      };
+      historyWriterRef.current = writer;
+      historyWriterUnsubscribeRef.current = writer.subscribe(onSettled);
+      if (historyCreateRef.current !== writer.needsCreation || historyForgottenRef.current !== writer.forgotten) onSettled();
+    }
+    return historyWriterRef.current;
+  }, [saveTabConversation]);
   const checkedSessionRef = useRef<string | null>(null);
   const resetRuntime = useCallback(() => {
     if (conversationStorageTimerRef.current !== null) clearTimeout(conversationStorageTimerRef.current);
     persistConversationRef.current = null;
+    historyWriterUnsubscribeRef.current?.();
+    historyWriterUnsubscribeRef.current = null;
+    historyWriterRef.current = null;
+    storedConversationRef.current = null;
     historyCreateRef.current = false;
     historyForgottenRef.current = false;
     preserveBrowserScheduleSpecRef.current = false;
@@ -337,18 +384,20 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     if (!isClientReady) return;
     const refresh = () => {
       try {
-        const entries = pruneChatHistory();
+        const entries = readChatHistory();
         setRecentChats(entries);
         if (!historyCreateRef.current && sessionIdRef.current && sessionEndpointRef.current
           && !entries.some(entry => chatKey(entry.conversation) === chatKey({
             sessionId: sessionIdRef.current!, endpoint: sessionEndpointRef.current!,
           }))) {
-          historyForgottenRef.current = true;
-          clearStoredConversation();
+          getHistoryWriter().forget();
         }
       } catch {
-        setHistoryError('Recent chats could not be saved on this device. Browser storage may be unavailable or full.');
+        setHistoryError(HISTORY_SAVE_ERROR);
       }
+    };
+    const cleanup = () => {
+      void pruneChatHistory().catch(error => setHistoryError(historyErrorMessage(error, HISTORY_SAVE_ERROR)));
     };
     const onStorage = (event: StorageEvent) => {
       if (event.key === AI_HISTORY_STORAGE_KEY || event.key === null) refresh();
@@ -356,31 +405,45 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     refresh();
     window.addEventListener(AI_HISTORY_CHANGED, refresh);
     window.addEventListener('storage', onStorage);
-    const timer = setInterval(refresh, 60_000);
+    cleanup();
+    const timer = setInterval(() => { refresh(); cleanup(); }, 60_000);
     return () => {
       clearInterval(timer);
       window.removeEventListener(AI_HISTORY_CHANGED, refresh);
       window.removeEventListener('storage', onStorage);
     };
-  }, [isClientReady]);
+  }, [getHistoryWriter, isClientReady]);
 
-  const removeRecentChat = (key: string) => {
+  const removeRecentChat = async (key: string) => {
+    historyActionErrorRef.current = null;
+    setHistoryError(null);
+    const writer = sessionIdRef.current && sessionEndpointRef.current
+      && key === chatKey({ sessionId: sessionIdRef.current, endpoint: sessionEndpointRef.current })
+      ? getHistoryWriter() : null;
+    writer?.pause();
     try {
-      forgetChat(key);
-    } catch {
-      setHistoryError('This chat could not be removed from browser storage.');
+      await forgetChat(key);
+      writer?.forget();
+    } catch (error) {
+      const message = historyErrorMessage(error, 'This chat could not be removed from browser storage.');
+      historyActionErrorRef.current = message;
+      writer?.resume();
+      setHistoryError(message);
     }
   };
-  const clearRecentChats = () => {
+  const clearRecentChats = async () => {
+    historyActionErrorRef.current = null;
+    setHistoryError(null);
+    const writer = sessionIdRef.current ? getHistoryWriter() : null;
+    writer?.pause();
     try {
-      clearChatHistory();
-      if (sessionIdRef.current) {
-        historyForgottenRef.current = true;
-        historyCreateRef.current = false;
-      }
-      clearStoredConversation();
-    } catch {
-      setHistoryError('Chat history could not be cleared from browser storage.');
+      await clearChatHistory();
+      writer?.forget();
+    } catch (error) {
+      const message = historyErrorMessage(error, 'Chat history could not be cleared from browser storage.');
+      historyActionErrorRef.current = message;
+      writer?.resume();
+      setHistoryError(message);
     }
   };
 
@@ -418,7 +481,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           messages,
           syncedScheduleSpec: syncedScheduleSpecRef.current ?? scheduleSpecYaml,
           syncedBrowserScheduleSpec: syncedBrowserScheduleSpecRef.current ?? scheduleSpecYaml,
-          appliedScheduleSpecRuns: appliedScheduleSpecRunsRef.current,
+          appliedScheduleSpecRuns: { ...appliedScheduleSpecRunsRef.current },
           sessionEventId,
           activeOptimization,
           backendVersion,
@@ -434,31 +497,20 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
               uploading: request.uploading, pendingFiles: request.pendingFiles, selection: request.selection } : null;
           })(),
         };
-        try {
-          saveChatHistory(stored, historyCreateRef.current);
-          historyCreateRef.current = false;
-          setHistoryError(null);
-        } catch {
-          setHistoryError('Recent chats could not be saved on this device. Browser storage may be unavailable or full.');
-        }
-        // A failed first history write must remain retryable after a reload.
-        stored.historyPending = historyCreateRef.current;
-        if (!historyForgottenRef.current) {
-          try {
-            window.sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(stored));
-          } catch {
-            // Device history can still work when tab storage is unavailable.
-          }
-        }
+        storedConversationRef.current = stored;
+        // Tab recovery must not wait for a lock that may outlive this page.
+        saveTabConversation();
+        getHistoryWriter().save(stored);
       } catch {
         // The live conversation remains usable when tab storage is unavailable or full.
       }
     };
     persistConversationRef.current = persistConversation;
-    const timer = setTimeout(persistConversation, 200);
+    const timer = isStreaming ? setTimeout(persistConversation, 200) : null;
+    if (!isStreaming) persistConversation();
     conversationStorageTimerRef.current = timer;
     return () => {
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       if (conversationStorageTimerRef.current === timer) {
         conversationStorageTimerRef.current = null;
       }
@@ -470,11 +522,14 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     contextUsage,
     costSummary,
     aiEndpoint,
+    getHistoryWriter,
     isClientReady,
+    isStreaming,
     lifecycle,
     sessionEventId,
     messages,
     scheduleSpecYaml,
+    saveTabConversation,
     sessionExpiresAt,
     sessionRetentionSeconds,
     trimmedHistoryCount,
@@ -489,9 +544,16 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       persistConversationRef.current?.();
     };
     window.addEventListener('pagehide', flushConversation);
+    const onVisibilityChange = () => { if (document.visibilityState === 'hidden') flushConversation(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('pagehide', flushConversation);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       flushConversation();
+      historyWriterUnsubscribeRef.current?.();
+      historyWriterUnsubscribeRef.current = null;
+      historyWriterRef.current = null;
+      storedConversationRef.current = null;
     };
   }, []);
 

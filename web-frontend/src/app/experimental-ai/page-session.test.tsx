@@ -32,7 +32,7 @@ import {
   runEvents,
   setupExperimentalAiPageTests,
 } from '@/test/experimentalAiPage';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLayoutEffect } from 'react';
 import ExperimentalAiPage from './page';
@@ -76,7 +76,7 @@ describe('ExperimentalAiPage', () => {
     expect(responseTime.tagName).toBe('TIME');
     expect(responseTime).toHaveAttribute('dateTime');
     expect(responseTime).toHaveAttribute('title', new Date(responseTime.getAttribute('dateTime')!).toLocaleString());
-    const userTime = screen.getByText('Who works Monday?').closest('article')?.querySelector('time');
+    const userTime = within(screen.getByRole('region', { name: 'Chat messages' })).getByText('Who works Monday?').closest('article')?.querySelector('time');
     expect(userTime).toHaveAttribute('title', new Date(userTime!.dateTime).toLocaleString());
     expect(mockCreateSession).toHaveBeenCalledWith('description: current Schedule Spec\n', null, '/ai', undefined);
     expect(mockRunEvents).toHaveBeenCalledWith(
@@ -359,7 +359,7 @@ describe('ExperimentalAiPage', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(providerError);
-    expect(screen.getByText('Can you help?')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Chat messages' })).getByText('Can you help?')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.')).toBeInTheDocument();
     expect(screen.getByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
     expect(screen.getByText('Provisional response.').closest('article')).toHaveTextContent(providerError);

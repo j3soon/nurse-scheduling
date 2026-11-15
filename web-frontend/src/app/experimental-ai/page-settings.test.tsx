@@ -43,7 +43,7 @@ describe('ExperimentalAiPage', () => {
   setupExperimentalAiPageTests();
 
   it('protects drafts on selection and scopes credentials to the selected backend', async () => {
-    seedRecentChat('external-session', 'https://example.com/ai');
+    await seedRecentChat('external-session', 'https://example.com/ai');
     localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { 'https://example.com/ai': 'external-token' } }));
     const user = userEvent.setup();
     render(<ExperimentalAiPage />);

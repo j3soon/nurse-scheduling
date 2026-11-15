@@ -602,6 +602,7 @@ export const zhTW: Catalog = {
   "Reasoning": "推理",
   "Reasoning · {value0} characters": "推理 · {value0} 字元",
   "Recent chats": "最近的對話",
+  "Recent chats cannot be saved or removed in this browser. The open chat remains available in this tab.": "此瀏覽器無法儲存或移除最近的對話。開啟中的對話仍可在此分頁使用。",
   "Recent chats ({value0})": "最近的對話（{value0}）",
   "Reconnecting. Your AI response continues on the server.": "重新連線中。AI 回覆會在伺服器上繼續產生。",
   "Redo": "重做",

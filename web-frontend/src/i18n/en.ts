@@ -669,6 +669,7 @@ export const en = {
   "Reasoning": "Reasoning",
   "Reasoning · {value0} characters": "Reasoning · {value0} characters",
   "Recent chats": "Recent chats",
+  "Recent chats cannot be saved or removed in this browser. The open chat remains available in this tab.": "Recent chats cannot be saved or removed in this browser. The open chat remains available in this tab.",
   "Recent chats ({value0})": "Recent chats ({value0})",
   "Reconnecting. Your AI response continues on the server.": "Reconnecting. Your AI response continues on the server.",
   "Redo": "Redo",

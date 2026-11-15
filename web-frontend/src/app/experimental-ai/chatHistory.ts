@@ -23,8 +23,18 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 import { HISTORY_RETENTION_MS, parseStoredConversation, type StoredChatConversation } from './chatConversation';
 
 export const AI_HISTORY_STORAGE_KEY = 'nurse-scheduling-ai-history';
+export const AI_HISTORY_LOCK_NAME = AI_HISTORY_STORAGE_KEY;
 export const AI_HISTORY_CHANGED = 'ai-chat-history-changed';
 export { HISTORY_RETENTION_MS } from './chatConversation';
+
+export class ChatHistoryLockUnavailableError extends Error {
+  constructor() {
+    super('Recent chats cannot be saved or removed in this browser. The open chat remains available in this tab.');
+    this.name = 'ChatHistoryLockUnavailableError';
+  }
+}
+
+export type HistorySaveResult = 'saved' | 'missing' | 'expired' | 'newer';
 
 export interface RecentChat {
   conversation: StoredChatConversation;
@@ -39,15 +49,25 @@ export function chatTitle(chat: StoredChatConversation): string {
   return chat.messages.find(message => message.role === 'user' && !message.source)?.content.trim().slice(0, 80) || 'New chat';
 }
 
-function writeHistory(entries: RecentChat[]): void {
-  if (entries.length) localStorage.setItem(AI_HISTORY_STORAGE_KEY, JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries }));
+function writeHistory(entries: RecentChat[]): boolean {
+  const next = entries.length ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries }) : null;
+  if (localStorage.getItem(AI_HISTORY_STORAGE_KEY) === next) return false;
+  if (next) localStorage.setItem(AI_HISTORY_STORAGE_KEY, next);
   else localStorage.removeItem(AI_HISTORY_STORAGE_KEY);
-  window.dispatchEvent(new Event(AI_HISTORY_CHANGED));
+  return true;
+}
+
+async function mutateHistory<T>(change: () => { result: T; changed: boolean }, signal?: AbortSignal): Promise<T> {
+  if (!navigator.locks) throw new ChatHistoryLockUnavailableError();
+  const { result, changed } = await navigator.locks.request(AI_HISTORY_LOCK_NAME, { mode: 'exclusive', signal }, change);
+  if (changed) window.dispatchEvent(new Event(AI_HISTORY_CHANGED));
+  return result;
 }
 
 /** Expiration is based on chat activity, never on viewing or saving a snapshot. */
-export function readChatHistory(now = Date.now()): RecentChat[] {
-  return parseChatHistory(localStorage.getItem(AI_HISTORY_STORAGE_KEY), now);
+export function readChatHistory(now?: number): RecentChat[] {
+  const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+  return parseChatHistory(raw, now ?? Date.now());
 }
 
 function parseChatHistory(raw: string | null, now: number): RecentChat[] {
@@ -70,39 +90,33 @@ function parseChatHistory(raw: string | null, now: number): RecentChat[] {
   return entries.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 }
 
-export function saveChatHistory(conversation: StoredChatConversation, create = false): void {
-  const entries = readChatHistory();
-  const index = entries.findIndex(entry => chatKey(entry.conversation) === chatKey(conversation));
-  // A forgotten or expired chat must not reappear from an open tab's next save.
-  if (index < 0 && !create) return;
-  const lastActivityAt = conversation.lastActivityAt ?? Date.now();
-  if (lastActivityAt + HISTORY_RETENTION_MS <= Date.now()) return;
-  if (index >= 0 && entries[index].lastActivityAt > lastActivityAt) return;
-  const entry = { conversation, lastActivityAt };
-  if (index < 0) entries.push(entry);
-  else entries[index] = entry;
-  writeHistory(entries);
+export function saveChatHistory(conversation: StoredChatConversation, create = false, signal?: AbortSignal): Promise<HistorySaveResult> {
+  return mutateHistory<HistorySaveResult>(() => {
+    const entries = readChatHistory();
+    const index = entries.findIndex(entry => chatKey(entry.conversation) === chatKey(conversation));
+    // Only the first save may create a record. Later saves must respect removal.
+    if (index < 0 && !create) return { result: 'missing', changed: false };
+    const lastActivityAt = conversation.lastActivityAt ?? Date.now();
+    if (lastActivityAt + HISTORY_RETENTION_MS <= Date.now()) return { result: 'expired', changed: false };
+    if (index >= 0 && entries[index].lastActivityAt > lastActivityAt) return { result: 'newer', changed: false };
+    const entry = { conversation, lastActivityAt };
+    if (index < 0) entries.push(entry);
+    else entries[index] = entry;
+    return { result: 'saved', changed: writeHistory(entries) };
+  }, signal);
 }
 
-export function forgetChat(key: string): void {
-  writeHistory(readChatHistory().filter(entry => chatKey(entry.conversation) !== key));
+export function forgetChat(key: string): Promise<void> {
+  return mutateHistory(() => ({ result: undefined, changed: writeHistory(readChatHistory().filter(entry => chatKey(entry.conversation) !== key)) }));
 }
 
-export function clearChatHistory(): void {
-  writeHistory([]);
+export function clearChatHistory(): Promise<void> {
+  return mutateHistory(() => ({ result: undefined, changed: writeHistory([]) }));
 }
 
-export function pruneChatHistory(): RecentChat[] {
-  const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
-  const entries = parseChatHistory(raw, Date.now());
-  const next = entries.length ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries }) : null;
-  const current = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
-  // Another tab can save or forget a chat while cleanup prepares its replacement.
-  if (current !== raw) return parseChatHistory(current, Date.now());
-  // Do not dispatch a change while reading in a storage event handler.
-  if (next !== raw) {
-    if (next) localStorage.setItem(AI_HISTORY_STORAGE_KEY, next);
-    else localStorage.removeItem(AI_HISTORY_STORAGE_KEY);
-  }
-  return entries;
+export function pruneChatHistory(): Promise<RecentChat[]> {
+  return mutateHistory(() => {
+    const entries = readChatHistory();
+    return { result: entries, changed: writeHistory(entries) };
+  });
 }

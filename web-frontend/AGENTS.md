@@ -286,6 +286,9 @@ Keep local history expiry separate from backend session expiry. Test that forget
 an open chat also prevents later saves and pagehide from recreating its record.
 Scope transcript assertions to the Chat messages region when history titles repeat
 the same question.
+Keep every shared AI history mutation under the same Web Lock. Keep tab recovery
+synchronous and scope asynchronous save completions to their conversation. Test
+contention with real browser locks, including reload, navigation, and closing the lock holder.
 
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,
