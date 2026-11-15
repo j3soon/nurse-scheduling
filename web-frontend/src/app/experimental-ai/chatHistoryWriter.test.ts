@@ -22,9 +22,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 import { holdWebLock, installMockWebLocks } from '@/test/mockWebLocks';
-import { AI_HISTORY_LOCK_NAME, AI_HISTORY_STORAGE_KEY, clearChatHistory, readChatHistory } from './chatHistory';
+import { AI_HISTORY_LOCK_NAME, AI_HISTORY_STORAGE_KEY, clearChatHistory, readChatHistory, readChatHistoryGeneration } from './chatHistory';
 import { ChatHistoryWriter } from './chatHistoryWriter';
-import type { StoredChatConversation } from './chatConversation';
+import { AI_CONVERSATION_STORAGE_KEY, type StoredChatConversation } from './chatConversation';
 
 const snapshot = (content: string): StoredChatConversation => ({
   sessionId: 'session', endpoint: '/ai', lastActivityAt: Date.now(),
@@ -105,5 +105,27 @@ describe('queued chat history saves', () => {
     await release();
     await waitFor(() => expect(readChatHistory()[0]?.conversation.messages[0].content).toBe('Latest'));
     expect(writer.forgotten).toBe(false);
+  });
+
+  it.each([true, false])('clears only its matching tab backup without subscribers (matching: %s)', matching => {
+    const chat = snapshot('First');
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...chat, sessionId: matching ? chat.sessionId : 'other', historyPending: true }));
+    const previous = sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY);
+    const writer = new ChatHistoryWriter(true);
+    writer.pause();
+    writer.save(chat);
+    writer.forget();
+    expect(sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY)).toBe(matching ? null : previous);
+  });
+
+  it('clears a recovered tab backup when its generation is rejected without subscribers', async () => {
+    const chat = { ...snapshot('Before clear'), historyGeneration: readChatHistoryGeneration() };
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...chat, historyPending: true }));
+    await clearChatHistory();
+    const writer = new ChatHistoryWriter(true);
+    writer.save(chat);
+    await waitFor(() => expect(writer.forgotten).toBe(true));
+    expect(sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY)).toBeNull();
+    expect(readChatHistory()).toEqual([]);
   });
 });

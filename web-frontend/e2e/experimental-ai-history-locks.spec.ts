@@ -229,6 +229,67 @@ test('clearing history cancels a waiting first save and keeps it forgotten', asy
   expect(await tabSnapshot(page)).toBeNull();
 });
 
+test('keeps earlier pending chats excluded after another tab clears and the pending tab reloads', async ({ page, context }) => {
+  const clearer = await context.newPage();
+  await openChat(clearer, 'older');
+  await ask(clearer, 'Older chat');
+  await expect.poll(async () => (await tabSnapshot(clearer))?.historyPending).toBe(false);
+  const holder = await context.newPage();
+  await holder.goto('/');
+  await holdLock(holder);
+  const countTurns = await openChat(page, 'pending');
+  await ask(page, 'Must stay excluded after Clear');
+  await expect.poll(async () => (await tabSnapshot(page))?.historyPending).toBe(true);
+  clearer.on('dialog', dialog => dialog.accept());
+  await clearer.getByRole('button', { name: 'Clear history', exact: true }).click();
+  await expect.poll(() => clearer.evaluate(async key => (
+    (await navigator.locks.query()).pending?.some(lock => lock.name === key)
+  ), historyKey)).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Answer 1.', { exact: true })).toBeVisible();
+  await expect.poll(async () => (await tabSnapshot(page))?.historyPending).toBe(true);
+  await releaseLock(holder);
+  await expect.poll(() => tabSnapshot(page)).toBeNull();
+  expect(await storedIds(page)).toEqual([]);
+  expect(countTurns()).toBe(1);
+  // The open chat remains usable but cannot enter Recent chats again.
+  await ask(page, 'Continue the excluded chat', 'Answer 2.');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  expect(await storedIds(page)).toEqual([]);
+  expect(await tabSnapshot(page)).toBeNull();
+  await page.getByRole('complementary', { name: 'Recent chats' }).getByRole('button', { name: 'New chat' }).click();
+  await ask(page, 'New chat after Clear');
+  await expect.poll(() => storedIds(page)).toEqual(['pending-2']);
+  // Removing the final record and cleanup must preserve the boundary marker.
+  const marker = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).clearGeneration, historyKey);
+  await page.getByRole('button', { name: 'Remove chat: New chat after Clear', exact: true }).click();
+  await expect.poll(() => storedIds(page)).toEqual([]);
+  await page.reload();
+  expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).clearGeneration, historyKey)).toBe(marker);
+});
+
+test('clears matching tab recovery when Clear commits after navigating away', async ({ page, context }) => {
+  await openChat(page, 'clear-away');
+  await ask(page, 'Older saved chat');
+  await expect.poll(async () => (await tabSnapshot(page))?.historyPending).toBe(false);
+  const holder = await context.newPage();
+  await holder.goto('/');
+  await holdLock(holder);
+  await page.getByRole('complementary', { name: 'Recent chats' }).getByRole('button', { name: 'New chat' }).click();
+  await ask(page, 'Pending chat to forget');
+  await expect.poll(async () => (await tabSnapshot(page))?.historyPending).toBe(true);
+  page.on('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Clear history', exact: true }).click();
+  await page.getByRole('button', { name: '1. Dates' }).click();
+  await expect(page).toHaveURL(/\/dates$/);
+  await releaseLock(holder);
+  await expect.poll(() => tabSnapshot(page)).toBeNull();
+  expect(await storedIds(page)).toEqual([]);
+  await page.getByRole('button', { name: '12. Experimental AI' }).click();
+  await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Pending chat to forget', { exact: true })).toHaveCount(0);
+  expect(await storedIds(page)).toEqual([]);
+});
+
 test('keeps the chat and tab recovery available when browser locking is unavailable', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined }));
   await openChat(page, 'unsupported');

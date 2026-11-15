@@ -34,7 +34,7 @@ export class ChatHistoryLockUnavailableError extends Error {
   }
 }
 
-export type HistorySaveResult = 'saved' | 'missing' | 'expired' | 'newer';
+export type HistorySaveResult = 'saved' | 'missing' | 'expired' | 'newer' | 'cleared';
 
 export interface RecentChat {
   conversation: StoredChatConversation;
@@ -49,8 +49,19 @@ export function chatTitle(chat: StoredChatConversation): string {
   return chat.messages.find(message => message.role === 'user' && !message.source)?.content.trim().slice(0, 80) || 'New chat';
 }
 
-function writeHistory(entries: RecentChat[]): boolean {
-  const next = entries.length ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries }) : null;
+/** Keep the clear marker in the same record so clearing is one atomic storage write. */
+export function readChatHistoryGeneration(): string {
+  const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+  if (!raw) return '';
+  const stored = JSON.parse(raw) as { clearGeneration?: unknown } | null;
+  const generation = stored?.clearGeneration ?? '';
+  if (typeof generation !== 'string') throw new Error('The saved chat history has an invalid clear marker.');
+  return generation;
+}
+
+function writeHistory(entries: RecentChat[], clearGeneration = readChatHistoryGeneration()): boolean {
+  const next = entries.length || clearGeneration
+    ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries, ...(clearGeneration ? { clearGeneration } : {}) }) : null;
   if (localStorage.getItem(AI_HISTORY_STORAGE_KEY) === next) return false;
   if (next) localStorage.setItem(AI_HISTORY_STORAGE_KEY, next);
   else localStorage.removeItem(AI_HISTORY_STORAGE_KEY);
@@ -72,9 +83,10 @@ export function readChatHistory(now?: number): RecentChat[] {
 
 function parseChatHistory(raw: string | null, now: number): RecentChat[] {
   if (!raw) return [];
-  let stored: { appVersion?: string; entries?: unknown[] };
+  let stored: { appVersion?: string; entries?: unknown[]; clearGeneration?: unknown };
   try { stored = JSON.parse(raw); } catch { return []; }
   if (typeof stored?.appVersion !== 'string' || !stored.appVersion.trim() || !Array.isArray(stored.entries)) return [];
+  if (stored.clearGeneration !== undefined && typeof stored.clearGeneration !== 'string') return [];
   const seen = new Set<string>();
   const entries: RecentChat[] = [];
   for (const entry of stored.entries) {
@@ -83,6 +95,7 @@ function parseChatHistory(raw: string | null, now: number): RecentChat[] {
     const conversation = parseStoredConversation(candidate.conversation);
     const activity = candidate.lastActivityAt;
     if (!conversation || typeof activity !== 'number' || !Number.isFinite(activity)
+      || (conversation.historyGeneration ?? '') !== (stored.clearGeneration ?? '')
       || activity > now || activity + HISTORY_RETENTION_MS <= now || seen.has(chatKey(conversation))) continue;
     seen.add(chatKey(conversation));
     entries.push({ conversation, lastActivityAt: activity });
@@ -92,6 +105,7 @@ function parseChatHistory(raw: string | null, now: number): RecentChat[] {
 
 export function saveChatHistory(conversation: StoredChatConversation, create = false, signal?: AbortSignal): Promise<HistorySaveResult> {
   return mutateHistory<HistorySaveResult>(() => {
+    if ((conversation.historyGeneration ?? '') !== readChatHistoryGeneration()) return { result: 'cleared', changed: false };
     const entries = readChatHistory();
     const index = entries.findIndex(entry => chatKey(entry.conversation) === chatKey(conversation));
     // Only the first save may create a record. Later saves must respect removal.
@@ -111,7 +125,10 @@ export function forgetChat(key: string): Promise<void> {
 }
 
 export function clearChatHistory(): Promise<void> {
-  return mutateHistory(() => ({ result: undefined, changed: writeHistory([]) }));
+  return mutateHistory(() => {
+    const clearGeneration = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    return { result: undefined, changed: writeHistory([], clearGeneration) };
+  });
 }
 
 export function pruneChatHistory(): Promise<RecentChat[]> {

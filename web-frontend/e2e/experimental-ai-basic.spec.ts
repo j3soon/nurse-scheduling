@@ -369,7 +369,8 @@ for (const clearPending of [false, true]) {
       const setItem = Storage.prototype.setItem;
       Storage.prototype.setItem = function (key, value) {
         if (this === localStorage && key === 'nurse-scheduling-ai-history'
-          && sessionStorage.getItem('test-history-full') !== 'false') {
+          && sessionStorage.getItem('test-history-full') !== 'false'
+          && JSON.parse(value).entries.length > 0) {
           throw new DOMException('Full', 'QuotaExceededError');
         }
         setItem.call(this, key, value);
@@ -400,12 +401,13 @@ for (const clearPending of [false, true]) {
       });
       page.on('dialog', dialog => dialog.accept());
       await page.getByRole('button', { name: 'Clear history', exact: true }).click();
+      await expect.poll(snapshot).toBeNull();
       await page.evaluate(() => {
         sessionStorage.setItem('test-history-full', 'false');
         window.dispatchEvent(new Event('pagehide'));
       });
       expect(await snapshot()).toBeNull();
-      expect(await page.evaluate(() => localStorage.getItem('nurse-scheduling-ai-history'))).toBeNull();
+      expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!).entries)).toEqual([]);
       await page.reload();
       await expect(transcript.getByText('Recovered answer.')).toHaveCount(0);
       return;

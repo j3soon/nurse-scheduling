@@ -31,6 +31,12 @@ const conversation = () => ({
 });
 
 describe('stored conversation compatibility', () => {
+  it('retains the original history generation when restoring a pending first save', () => {
+    sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
+      ...conversation(), historyPending: true, historyGeneration: 'before-clear',
+    }));
+    expect(readStoredConversation()).toMatchObject({ historyPending: true, historyGeneration: 'before-clear' });
+  });
   it('forgets expired device history even when the backend session is still retained', () => {
     sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({
       ...conversation(), expiresAt: Date.now() + 30 * 86400_000, lastActivityAt: Date.now() - HISTORY_RETENTION_MS,
@@ -94,6 +100,7 @@ describe('stored conversation compatibility', () => {
 
   it('rejects corrupt activity and pending request data', () => {
     for (const change of [
+      { historyGeneration: 123 },
       { messages: [{ id: 'answer', role: 'assistant', content: '', activity: [{ kind: 'tool' }] }] },
       { messages: [{ id: 'answer', role: 'assistant', content: '', failureReason: 525 }] },
       { messages: [{ id: 'answer', role: 'assistant', content: '',

@@ -33,7 +33,7 @@ All records below use `localStorage` except the active conversation.
 | --- | --- | --- |
 | `nurse-scheduling-spec` | Schedule Spec and Undo/Redo history. | No automatic expiry. |
 | `nurse-scheduling-optimize-server-options` | Optimize backend endpoints, selected endpoint, remembered tokens, and saving `appVersion`. | No automatic expiry. |
-| `nurse-scheduling-ai-history` | Recent conversation snapshots and activity times, with saving `appVersion`. | Seven days after chat activity. |
+| `nurse-scheduling-ai-history` | Recent conversation snapshots, activity times, saving `appVersion`, and a Clear history marker. | Entries expire seven days after activity. The clear marker has no automatic expiry. |
 | `nurse-scheduling-ai-conversation` | Active conversation snapshot in `sessionStorage`. | Tab session, subject to the seven-day activity check. |
 | `nurse-scheduling-ai-data` | Display preferences for reasoning, tools, turn costs, models, and Chinese conversion. | No automatic expiry. |
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
@@ -77,8 +77,8 @@ credentials. Conversation snapshots do not contain tokens.
 
 ## AI Chat Recovery
 
-[Chat history][chat-history] stores `{ appVersion, entries }`. Each entry contains
-a conversation snapshot and `lastActivityAt`. The backend endpoint and session
+[Chat history][chat-history] stores `{ appVersion, entries, clearGeneration? }`.
+Each entry contains a conversation snapshot and `lastActivityAt`. The backend endpoint and session
 ID identify a conversation. The saving frontend version uses `appVersion`,
 without a separate numeric storage version.
 
@@ -96,8 +96,9 @@ a hidden page, navigation, or a conversation switch flushes the latest snapshot.
 Failure in tab storage does not prevent a shared-history save.
 
 The tab snapshot keeps `historyPending` until the first shared save succeeds.
-Reload can retry that save. A delayed save completion updates recovery metadata
-only for its original conversation and preserves the latest transcript and cursor.
+Reload can retry that save unless Clear history has invalidated it. A delayed
+save completion updates recovery metadata only for its original conversation
+and preserves the latest transcript and cursor.
 Closing the tab can interrupt queued shared saves, so page-close handlers do not
 wait for them. Selecting a saved chat preserves the browser's current Schedule Spec.
 
@@ -114,6 +115,18 @@ sessions. Forgetting the active chat leaves it visible but prevents later saves.
 New chat, local forgetting, and session-unavailability handling clear the active
 tab record.
 
+Clear history also excludes chats already in progress in other tabs, including
+first saves that have not completed. Retrying or reloading one of these chats
+cannot add it back to Recent chats. Its open conversation remains usable. Only
+chats started after Clear history completes can enter history again.
+
+Each chat captures `historyGeneration` before its first session-creation request
+and saves it in tab recovery. Clear history writes a new `clearGeneration` with
+an empty entry list in one locked storage write. Every save checks that these
+markers match. An absent marker means no Clear has occurred. Cleanup and removal
+preserve the latest marker even when no entries remain. A failed Clear write
+changes neither the marker nor the entries.
+
 Backend retention is separate. A chat can become unavailable after expiry or a
 server restart even while a local record remains. Recent chats are a recovery
 cache. Use **Export chat** to preserve a copy independently.
@@ -129,6 +142,7 @@ All open tabs must run the updated frontend to participate in this coordination.
 Each conversation keeps one save in flight and only its latest waiting snapshot.
 Navigation back to the AI page reuses its pending writer. Creation acknowledgements
 also update the matching tab backup while the AI page is unmounted.
+Forgetting clears the matching backup even when there are no mounted listeners.
 Remove and Clear history cancel waiting saves for the open chat. Only its first
 save can create a record. Later saves cannot recreate a missing entry.
 Storage notifications refresh the list without replacing an open tab's transcript

@@ -72,7 +72,7 @@ import {
   startsVisibleOutput,
   type AssistantEvent,
 } from './assistantEvents';
-import { AI_HISTORY_CHANGED, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, ChatHistoryLockUnavailableError, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, type RecentChat } from './chatHistory';
+import { AI_HISTORY_CHANGED, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, ChatHistoryLockUnavailableError, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, readChatHistoryGeneration, type RecentChat } from './chatHistory';
 import { getChatHistoryWriter, type ChatHistoryWriter } from './chatHistoryWriter';
 import { AI_CONVERSATION_STORAGE_KEY, clearStoredConversation, type StoredChatConversation } from './chatConversation';
 import { isAuthenticationError } from './aiClient';
@@ -222,6 +222,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const observedEventIdRef = useRef(0);
   const [sessionEventId, setSessionEventId] = useState(0);
   const historyCreateRef = useRef(false);
+  const historyGenerationRef = useRef('');
   const historyForgottenRef = useRef(false);
   const preserveBrowserScheduleSpecRef = useRef(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -349,6 +350,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     historyWriterRef.current = null;
     storedConversationRef.current = null;
     historyCreateRef.current = false;
+    historyGenerationRef.current = '';
     historyForgottenRef.current = false;
     preserveBrowserScheduleSpecRef.current = false;
     resumedRequestRef.current = null;
@@ -386,11 +388,11 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       try {
         const entries = readChatHistory();
         setRecentChats(entries);
-        if (!historyCreateRef.current && sessionIdRef.current && sessionEndpointRef.current
-          && !entries.some(entry => chatKey(entry.conversation) === chatKey({
-            sessionId: sessionIdRef.current!, endpoint: sessionEndpointRef.current!,
-          }))) {
-          getHistoryWriter().forget();
+        if (sessionIdRef.current && sessionEndpointRef.current) {
+          const key = chatKey({ sessionId: sessionIdRef.current, endpoint: sessionEndpointRef.current });
+          const cleared = historyGenerationRef.current !== readChatHistoryGeneration();
+          const missing = !historyCreateRef.current && !entries.some(entry => chatKey(entry.conversation) === key);
+          if (cleared || missing) getHistoryWriter().forget();
         }
       } catch {
         setHistoryError(HISTORY_SAVE_ERROR);
@@ -473,6 +475,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         }
         const stored: StoredChatConversation = {
           lastActivityAt: lastActivityRef.current,
+          historyGeneration: historyGenerationRef.current,
           preserveBrowserScheduleSpec: preserveBrowserScheduleSpecRef.current,
           sessionId: activeSessionId,
           endpoint: sessionEndpointRef.current ?? aiEndpoint,
@@ -903,6 +906,8 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       let sessionId = sessionIdRef.current;
       const sessionEndpoint = sessionEndpointRef.current ?? aiEndpoint;
       if (sessionId === null) {
+        // Capture before the creation request so a concurrent Clear also excludes this chat.
+        try { historyGenerationRef.current = readChatHistoryGeneration(); } catch { /* Shared storage can be unavailable. */ }
         sessionId = await createSession(scheduleSpecYaml, authToken, sessionEndpoint, requestSelection);
         if (!lifecycle.owns(operation)) return;
         controller.signal.throwIfAborted();
@@ -1320,6 +1325,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       lastActivityRef.current = storedConversation.lastActivityAt ?? Date.now();
       historyCreateRef.current = !fromHistory
         && (storedConversation.historyPending === true || storedConversation.lastActivityAt === undefined);
+      historyGenerationRef.current = storedConversation.historyGeneration ?? '';
       preserveBrowserScheduleSpecRef.current = fromHistory || storedConversation.preserveBrowserScheduleSpec === true;
       setConversationUnavailable(false);
       setSessionNotice(null);

@@ -22,7 +22,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { holdWebLock, installMockWebLocks } from '@/test/mockWebLocks';
 import { CURRENT_APP_VERSION } from '@/utils/version';
-import { AI_HISTORY_LOCK_NAME, ChatHistoryLockUnavailableError, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, saveChatHistory } from './chatHistory';
+import { AI_HISTORY_LOCK_NAME, ChatHistoryLockUnavailableError, AI_HISTORY_STORAGE_KEY, HISTORY_RETENTION_MS, chatKey, clearChatHistory, forgetChat, pruneChatHistory, readChatHistory, readChatHistoryGeneration, saveChatHistory } from './chatHistory';
 import { type StoredChatConversation } from './chatConversation';
 import { applyModelInput, type ChatMessage } from './chatTranscript';
 
@@ -118,7 +118,7 @@ describe('recent chat storage', () => {
     const laterSave = saveChatHistory(chat);
     await release();
     await Promise.all([earlierSave, removal]);
-    expect(await laterSave).toBe('missing');
+    expect(await laterSave).toBe(action === 'clear' ? 'cleared' : 'missing');
     expect(readChatHistory()).toEqual([]);
   });
 
@@ -158,7 +158,7 @@ describe('recent chat storage', () => {
     expect(readChatHistory().map(entry => entry.conversation.sessionId)).toEqual(['two']);
     await clearChatHistory();
     await saveChatHistory(conversation('two'));
-    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(AI_HISTORY_STORAGE_KEY)!).entries).toEqual([]);
   });
 
   it('ignores corrupt entries while preserving valid sessions', async () => {
@@ -201,5 +201,60 @@ describe('recent chat storage', () => {
   it('reports storage write failures to the caller', async () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Full', 'QuotaExceededError'); });
     await expect(saveChatHistory(conversation(), true)).rejects.toThrow('Full');
+  });
+
+  it('rejects a recovered first save queued after Clear history', async () => {
+    const pending = conversation();
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    const cleared = clearChatHistory();
+    const recovered = saveChatHistory(pending, true);
+    await release();
+    await cleared;
+    expect(await recovered).toBe('cleared');
+    expect(readChatHistory()).toEqual([]);
+  });
+
+  it('preserves the clear marker through new saves, removal, and expiry cleanup', async () => {
+    vi.useFakeTimers();
+    const old = conversation('old');
+    await clearChatHistory();
+    const historyGeneration = readChatHistoryGeneration();
+    expect(historyGeneration).not.toBe('');
+    const fresh = { ...conversation('fresh'), historyGeneration };
+    expect(await saveChatHistory(fresh, true)).toBe('saved');
+    await forgetChat(chatKey(fresh));
+    expect(readChatHistoryGeneration()).toBe(historyGeneration);
+    expect(await saveChatHistory(old, true)).toBe('cleared');
+    await saveChatHistory(fresh, true);
+    vi.advanceTimersByTime(HISTORY_RETENTION_MS);
+    await pruneChatHistory();
+    expect(readChatHistoryGeneration()).toBe(historyGeneration);
+    expect(readChatHistory()).toEqual([]);
+    expect(await saveChatHistory({ ...old, lastActivityAt: Date.now() }, true)).toBe('cleared');
+  });
+
+  it('does not advance the boundary or discard entries when Clear cannot be saved', async () => {
+    const chat = conversation();
+    await saveChatHistory(chat, true);
+    const previous = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Full', 'QuotaExceededError');
+    });
+    await expect(clearChatHistory()).rejects.toThrow('Full');
+    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBe(previous);
+    write.mockRestore();
+    expect(await saveChatHistory(chat)).toBe('saved');
+  });
+
+  it('starts a distinct boundary for every Clear, including an empty list', async () => {
+    await clearChatHistory();
+    const first = readChatHistoryGeneration();
+    const pending = { ...conversation(), historyGeneration: first };
+    await clearChatHistory();
+    expect(readChatHistoryGeneration()).not.toBe(first);
+    expect(await saveChatHistory(pending, true)).toBe('cleared');
+    const fresh = { ...conversation('fresh'), historyGeneration: readChatHistoryGeneration() };
+    expect(await saveChatHistory(fresh, true)).toBe('saved');
+    expect(readChatHistory().map(entry => entry.conversation.sessionId)).toEqual(['fresh']);
   });
 });

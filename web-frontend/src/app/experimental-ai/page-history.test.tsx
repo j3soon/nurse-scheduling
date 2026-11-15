@@ -251,6 +251,38 @@ describe('ExperimentalAiPage', () => {
     expect(readChatHistory()).toEqual([]);
   });
 
+  it('does not restore a pending first chat when Clear finishes after navigation away', async () => {
+    await seedRecentChat();
+    const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    const view = render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Pending chat to clear');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.click(within(screen.getByRole('complementary', { name: 'Recent chats' })).getByRole('button', { name: 'Clear history' }));
+    view.unmount();
+    expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(true);
+    await act(release);
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    render(<ExperimentalAiPage />);
+    expect(readChatHistory()).toEqual([]);
+    expect(within(screen.getByRole('region', { name: 'Chat messages' })).queryByText('Pending chat to clear')).not.toBeInTheDocument();
+  });
+
+  it('excludes a chat whose session creation was in flight when another tab cleared history', async () => {
+    let created!: (id: string) => void;
+    mockCreateSession.mockImplementationOnce(() => new Promise<string>(resolve => { created = resolve; }));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Create before Clear');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await act(async () => { await clearChatHistory(); });
+    await act(async () => { created('created-after-clear'); });
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    expect(readChatHistory()).toEqual([]);
+  });
+
   it('keeps tab recovery and existing history when browser locks are unavailable', async () => {
     await seedRecentChat();
     const previous = localStorage.getItem(AI_HISTORY_STORAGE_KEY);

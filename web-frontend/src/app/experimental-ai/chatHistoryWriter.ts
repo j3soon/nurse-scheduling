@@ -83,6 +83,18 @@ export class ChatHistoryWriter {
     }
   }
 
+  private clearTabRecovery(): void {
+    const key = this.cache?.key ?? (this.latest ? chatKey(this.latest) : null);
+    if (!key) return;
+    try {
+      const raw = sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY);
+      const stored = raw ? JSON.parse(raw) as StoredChatConversation : null;
+      if (stored && chatKey(stored) === key) sessionStorage.removeItem(AI_CONVERSATION_STORAGE_KEY);
+    } catch {
+      // Shared removal remains successful when tab storage is unavailable.
+    }
+  }
+
   save(snapshot: StoredChatConversation): void {
     if (this.removed) return;
     this.latest = snapshot;
@@ -111,6 +123,7 @@ export class ChatHistoryWriter {
     this.create = false;
     this.pending = null;
     this.running?.abort();
+    this.clearTabRecovery();
     this.notify();
     this.releaseIfIdle();
   }
@@ -125,11 +138,8 @@ export class ChatHistoryWriter {
     void saveChatHistory(snapshot, this.create, controller.signal).then(result => {
       if (this.create && (result === 'saved' || result === 'newer')) this.acknowledgeCreation(snapshot);
       this.create = false;
-      if (result === 'missing' || result === 'expired') {
-        this.removed = true;
-        this.pending = null;
-      }
-      this.notify();
+      if (result === 'missing' || result === 'expired' || result === 'cleared') this.forget();
+      else this.notify();
     }, error => {
       if (controller.signal.aborted) return;
       // Retry on the next explicit save, rather than looping on unavailable storage.
