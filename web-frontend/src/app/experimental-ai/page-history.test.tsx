@@ -283,6 +283,27 @@ describe('ExperimentalAiPage', () => {
     expect(readChatHistory()).toEqual([]);
   });
 
+  it('keeps the original boundary when session creation fails and is retried after Clear', async () => {
+    mockCreateSession.mockRejectedValueOnce(new Error('Temporary session creation failure'));
+    const user = userEvent.setup();
+    render(<ExperimentalAiPage />);
+    const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
+    await user.type(input, 'Chat begun before Clear');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary session creation failure');
+    await act(async () => { await clearChatHistory(); });
+    await user.type(input, 'Retry in the same chat');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
+    await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
+    expect(readChatHistory()).toEqual([]);
+    const history = screen.getByRole('complementary', { name: 'Recent chats' });
+    await user.click(within(history).getByRole('button', { name: 'New chat' }));
+    await user.type(input, 'New chat after Clear');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await within(history).findByRole('button', { name: /^New chat after Clear/ });
+  });
+
   it('keeps tab recovery and existing history when browser locks are unavailable', async () => {
     await seedRecentChat();
     const previous = localStorage.getItem(AI_HISTORY_STORAGE_KEY);

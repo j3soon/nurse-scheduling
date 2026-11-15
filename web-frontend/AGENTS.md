@@ -293,6 +293,7 @@ Clear history must invalidate earlier chats' first-save retries across tabs and
 reloads. Keep its persistent marker in the locked history record, including when
 the list is empty. Forgetting must clear only the matching tab backup even when
 the AI page has unmounted.
+Failed session creation and retries remain in the original chat's clear boundary.
 
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,

@@ -31,7 +31,7 @@ declare global {
   }
 }
 
-async function mockHistoryBackend(page: Page, sessionId: string) {
+async function mockHistoryBackend(page: Page, sessionId: string, failFirstCreation = false) {
   const journal: string[] = [];
   let wake: (() => void) | undefined;
   let turns = 0;
@@ -46,6 +46,10 @@ async function mockHistoryBackend(page: Page, sessionId: string) {
       file_attachments: { enabled: true, retained: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
     });
     if (path.endsWith('/v1/sessions')) {
+      if (failFirstCreation) {
+        failFirstCreation = false;
+        return json({ detail: 'Temporary session creation failure' }, 503);
+      }
       scheduleSpecYaml = request.postDataJSON().schedule_spec_yaml;
       turns = 0;
       journal.length = 0;
@@ -80,8 +84,8 @@ async function mockHistoryBackend(page: Page, sessionId: string) {
   return () => turns;
 }
 
-async function openChat(page: Page, sessionId: string) {
-  const countTurns = await mockHistoryBackend(page, sessionId);
+async function openChat(page: Page, sessionId: string, failFirstCreation = false) {
+  const countTurns = await mockHistoryBackend(page, sessionId, failFirstCreation);
   await page.goto('/experimental-ai');
   await expect(page.getByRole('group', { name: 'AI versions' })).toContainText('Backend v0.0.0');
   return countTurns;
@@ -288,6 +292,28 @@ test('clears matching tab recovery when Clear commits after navigating away', as
   await page.getByRole('button', { name: '12. Experimental AI' }).click();
   await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Pending chat to forget', { exact: true })).toHaveCount(0);
   expect(await storedIds(page)).toEqual([]);
+});
+
+test('keeps a failed creation in its original chat boundary when retrying after Clear', async ({ page, context }) => {
+  const clearer = await context.newPage();
+  await openChat(clearer, 'older');
+  await ask(clearer, 'Older chat');
+  await expect.poll(async () => (await tabSnapshot(clearer))?.historyPending).toBe(false);
+  await openChat(page, 'creation-retry', true);
+  await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Chat begun before Clear');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Temporary session creation failure' })).toBeVisible();
+  clearer.on('dialog', dialog => dialog.accept());
+  await clearer.getByRole('button', { name: 'Clear history', exact: true }).click();
+  await expect.poll(() => tabSnapshot(clearer)).toBeNull();
+  await ask(page, 'Retry in the same chat');
+  await expect.poll(() => tabSnapshot(page)).toBeNull();
+  expect(await storedIds(page)).toEqual([]);
+  const history = page.getByRole('complementary', { name: 'Recent chats' });
+  await expect(history.getByText('No recent chats.')).toBeVisible();
+  await history.getByRole('button', { name: 'New chat' }).click();
+  await ask(page, 'New chat after Clear');
+  await expect.poll(() => storedIds(page)).toEqual(['creation-retry-2']);
 });
 
 test('keeps the chat and tab recovery available when browser locking is unavailable', async ({ page }) => {

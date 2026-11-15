@@ -121,11 +121,16 @@ cannot add it back to Recent chats. Its open conversation remains usable. Only
 chats started after Clear history completes can enter history again.
 
 Each chat captures `historyGeneration` before its first session-creation request
-and saves it in tab recovery. Clear history writes a new `clearGeneration` with
+and keeps it across failed creation attempts. It saves the marker in tab recovery
+once a session exists. Clear history writes a new `clearGeneration` with
 an empty entry list in one locked storage write. Every save checks that these
 markers match. An absent marker means no Clear has occurred. Cleanup and removal
 preserve the latest marker even when no entries remain. A failed Clear write
 changes neither the marker nor the entries.
+
+Individual Remove has no persistent deletion marker. A duplicated tab that copied
+an unacknowledged first-save backup can recreate that chat after Remove. Use Clear
+history when pending recovery from other tabs must also stay excluded.
 
 Backend retention is separate. A chat can become unavailable after expiry or a
 server restart even while a local record remains. Recent chats are a recovery
