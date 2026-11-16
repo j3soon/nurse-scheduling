@@ -350,7 +350,7 @@ test.describe('page guides', () => {
     ['/export-layout', '18-real-export-layout.png'],
     ['/save-and-load', '19-real-save-load.png'],
     ['/optimize-and-export', '20-real-optimize.png'],
-    ['/experimental-ai', '21-real-experimental-ai.png'],
+    ['/ai-assistant', '21-real-ai-assistant.png'],
   ];
 
   test('example Schedule Spec pages', async ({ page }) => {
@@ -362,7 +362,7 @@ test.describe('page guides', () => {
         await expect(page.getByRole('button', { name: 'Optimize and Download', exact: true })).toBeEnabled();
         await pinServerLatency(page);
       }
-      if (route === '/experimental-ai') await expect(page.getByText(/^online$/i)).toBeVisible();
+      if (route === '/ai-assistant') await expect(page.getByText(/^online$/i)).toBeVisible();
       // The AI page follows the end of the conversation. Show every page from its top.
       await page.evaluate(() => window.scrollTo(0, 0));
       await capture(page, path.join(IMAGES, file));

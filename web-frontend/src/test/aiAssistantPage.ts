@@ -19,10 +19,10 @@
 
 // This code is mostly AI generated.
 
-import { saveChatHistory } from '@/app/experimental-ai/chatHistory';
+import { saveChatHistory } from '@/app/ai-assistant/chatHistory';
 import { installMockWebLocks } from './mockWebLocks';
-import type { StoredChatConversation } from '@/app/experimental-ai/chatConversation';
-import type { SessionEvent, SessionStreamOptions } from '@/app/experimental-ai/sessionEvents';
+import type { StoredChatConversation } from '@/app/ai-assistant/chatConversation';
+import type { SessionEvent, SessionStreamOptions } from '@/app/ai-assistant/sessionEvents';
 
 
 const mockCompactSession = vi.hoisted(() => vi.fn());
@@ -63,8 +63,8 @@ const mockNormalizeAiEndpoint = vi.hoisted(() => (endpoint: string) => {
   return /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 });
 
-vi.mock('@/app/experimental-ai/aiClient', async importOriginal => {
-  const awaitClient = await importOriginal<typeof import('@/app/experimental-ai/aiClient')>();
+vi.mock('@/app/ai-assistant/aiClient', async importOriginal => {
+  const awaitClient = await importOriginal<typeof import('@/app/ai-assistant/aiClient')>();
   return ({
   AiHttpError: MockAiHttpError,
   AiStaleRunError: MockAiStaleRunError,
@@ -153,7 +153,7 @@ function runEvents(stream: SessionStreamOptions | undefined, runId: string): Ses
   };
 }
 
-export function setupExperimentalAiPageTests() {
+export function setupAiAssistantPageTests() {
   let pendingForegroundRunId: string | null = null;
   beforeEach(() => {
     pendingForegroundRunId = null;

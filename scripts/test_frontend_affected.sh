@@ -24,7 +24,7 @@ elif [[ "$run_full_suite" == false ]]; then
     relative="${file#web-frontend/}"
     case "$relative" in
       thirdparty/opencc/*)
-        related_files+=(src/app/experimental-ai/chineseConversion.ts)
+        related_files+=(src/app/ai-assistant/chineseConversion.ts)
         ;;
       src/test/setup.ts | src/app/globals.css)
         run_full_suite=true

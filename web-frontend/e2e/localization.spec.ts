@@ -37,7 +37,7 @@ test.describe('Traditional Chinese interface', () => {
     ['/export-layout', '匯出版面'],
     ['/save-and-load', '儲存與載入'],
     ['/optimize-and-export', '最佳化與匯出'],
-    ['/experimental-ai', '排班 AI 對話'],
+    ['/ai-assistant', 'AI 助理'],
   ]) {
     test(`detects the browser language on ${path}`, async ({ page }) => {
       await disableModalDialogs(page);
@@ -49,7 +49,7 @@ test.describe('Traditional Chinese interface', () => {
       await expect(page.locator('html')).toHaveAttribute('lang', 'zh-TW');
       await expect(page).toHaveTitle('護理人員排班系統');
       await expect(page.locator('head title')).toHaveCount(1);
-      if (path === '/experimental-ai') {
+      if (path === '/ai-assistant') {
         await expect(page.getByRole('textbox', { name: '詢問目前的排班設定' })).toBeVisible();
       }
       expect(errors).toEqual([]);

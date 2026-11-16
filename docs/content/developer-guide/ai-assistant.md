@@ -1,4 +1,6 @@
-# Experimental AI Assistant Backend
+<span id="experimental-ai-assistant-backend"></span>
+
+# AI Assistant Backend
 
 The AI assistant is a separate FastAPI application that answers text questions
 about one Schedule Spec snapshot. Its ASGI entry point is

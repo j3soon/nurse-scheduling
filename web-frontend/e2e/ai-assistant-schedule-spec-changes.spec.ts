@@ -159,7 +159,7 @@ async function mockChangingBackend(page: Page, holdAnswer = false, retryNotice =
 
 test('keeps an automatic provider retry notice in the same run across reload', async ({ page }) => {
   const state = await mockChangingBackend(page, false, true);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const notice = page.getByText('The AI provider timed out. Retrying in 2 s (attempt 2 of 5).');
@@ -179,7 +179,7 @@ test('keeps an automatic provider retry notice in the same run across reload', a
 test('applies the schedule a response finishes with as one undoable step', async ({ page }) => {
   await mockChangingBackend(page);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -206,7 +206,7 @@ test('applies the schedule a response finishes with as one undoable step', async
 
 test('applies the schedule only when the response finishes', async ({ page }) => {
   const state = await mockChangingBackend(page, true);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Schedule Spec edit')).toBeVisible();
@@ -222,7 +222,7 @@ test('applies the schedule only when the response finishes', async ({ page }) =>
 test('sends the applied schedule to the session before the next question', async ({ page }) => {
   const state = await mockChangingBackend(page);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Applied to your Schedule Spec')).toBeVisible();
@@ -243,7 +243,7 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText('1. Before response')).toBeVisible();
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Schedule Spec edit')).toBeVisible();
@@ -280,7 +280,7 @@ test('overwrites browser Undo with a notice and preserves a later Undo across re
 test('keeps reasoning and tool detail out of the way until asked for', async ({ page }) => {
   await mockChangingBackend(page);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Add a nurse.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 

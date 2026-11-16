@@ -263,7 +263,7 @@ def test_one_turn_hydrates_runs_reads_validates_proposes_and_closes():
     assert context["people"] == ["P1", "P2"]
     assert inspect_requests(context, backend.files[WORKSPACE_SCHEDULE_SPEC])["request_entries"] == 1
     assert set(REFERENCE_SCHEMAS.values()) <= backend.files.keys()
-    assert b"# Experimental AI Chat" in backend.files[f"{REFERENCE_USER_GUIDE}/experimental-ai.md"]
+    assert "# AI Assistant (AI 助理)".encode() in backend.files[f"{REFERENCE_USER_GUIDE}/ai-assistant.md"]
     assert b"# People" in backend.files[f"{REFERENCE_USER_GUIDE}/people.md"]
     assert b"Path: preferences.shift count" in backend.files[REFERENCE_SCHEMAS["preferences"]]
     assert b"Path: export.formatting.cell" in backend.files[REFERENCE_SCHEMAS["export"]]

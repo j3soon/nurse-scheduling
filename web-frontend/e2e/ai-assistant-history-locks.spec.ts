@@ -86,7 +86,7 @@ async function mockHistoryBackend(page: Page, sessionId: string, failFirstCreati
 
 async function openChat(page: Page, sessionId: string, failFirstCreation = false) {
   const countTurns = await mockHistoryBackend(page, sessionId, failFirstCreation);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await expect(page.getByRole('group', { name: 'AI versions' })).toContainText('Backend v0.0.0');
   return countTurns;
 }
@@ -184,7 +184,7 @@ test('keeps a chat forgotten when navigation overlaps its first save and another
   await clearer.evaluate(key => {
     window.heldHistoryTestLock = navigator.locks.request(key, () => localStorage.removeItem(key));
   }, historyKey);
-  await page.getByRole('button', { name: '12. Experimental AI' }).click();
+  await page.getByRole('button', { name: '12. AI Assistant' }).click();
   await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Answer 1.', { exact: true })).toBeVisible();
   await releaseLock(holder);
   await clearer.evaluate(async () => { await window.heldHistoryTestLock; });
@@ -289,7 +289,7 @@ test('clears matching tab recovery when Clear commits after navigating away', as
   await releaseLock(holder);
   await expect.poll(() => tabSnapshot(page)).toBeNull();
   expect(await storedIds(page)).toEqual([]);
-  await page.getByRole('button', { name: '12. Experimental AI' }).click();
+  await page.getByRole('button', { name: '12. AI Assistant' }).click();
   await expect(page.getByRole('region', { name: 'Chat messages' }).getByText('Pending chat to forget', { exact: true })).toHaveCount(0);
   expect(await storedIds(page)).toEqual([]);
 });

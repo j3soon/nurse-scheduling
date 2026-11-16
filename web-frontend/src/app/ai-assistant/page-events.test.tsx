@@ -33,15 +33,15 @@ import {
   MockAiHttpError,
   defaultCapabilities,
   runEvents,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('renews a reconnected background run with the current retention period', async () => {
     let resolveCapabilities!: (value: typeof defaultCapabilities) => void;
@@ -54,7 +54,7 @@ describe('ExperimentalAiPage', () => {
       sessionId: 'session-id', endpoint: '/ai', expiresAt: Date.now() + 300000,
       retentionSeconds: 10, messages: [], syncedScheduleSpec: 'description: current Schedule Spec\n',
     }));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(readers).toHaveLength(1));
     await act(async () => resolveCapabilities({ ...defaultCapabilities, session_retention_seconds: 100 }));
     readers[0].end();
@@ -80,7 +80,7 @@ describe('ExperimentalAiPage', () => {
       backgroundAssistantId: 'optimizer-turn',
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
@@ -100,7 +100,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     const user = userEvent.setup();
-    const view = render(<ExperimentalAiPage />);
+    const view = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain coverage.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Original answer.');
@@ -142,7 +142,7 @@ describe('ExperimentalAiPage', () => {
       }
       target.onEvent({ type: 'delta', text: ' and finished.' });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await screen.findByText(`Day ${steeringCount} partial and finished.`);
     expect(screen.getAllByText('Original answer.')).toHaveLength(1);
@@ -189,7 +189,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: `Answer to ${message}` });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First');
@@ -224,7 +224,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    const firstRender = render(<ExperimentalAiPage />);
+    const firstRender = render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -340,7 +340,7 @@ describe('ExperimentalAiPage', () => {
     });
     firstRender.unmount();
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:optimizer-result');
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     expect(await screen.findByRole('button', { name: 'Download schedule' })).toBeInTheDocument();
     expect(screen.getAllByText('The optimizer returned score 23.')).toHaveLength(1);
     expect(mockStreamSessionEvents.mock.calls.at(-1)?.[1].lastEventId).toBe(4);
@@ -352,7 +352,7 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementationOnce(async () => {
       await new Promise<void>(resolve => { finishStream = resolve; });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(finishStream).toBeDefined());
@@ -385,7 +385,7 @@ describe('ExperimentalAiPage', () => {
         throw new Error('network down');
       })
       .mockImplementation(() => new Promise(() => undefined));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -407,7 +407,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -433,7 +433,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -469,7 +469,7 @@ describe('ExperimentalAiPage', () => {
       sessionEventId: 4,
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(backgroundCallbacks).toBeDefined());
     act(() => {
       if (event === 'done') backgroundCallbacks?.onEvent({ type: 'done', runId: 'optimizer-turn' });
@@ -506,7 +506,7 @@ describe('ExperimentalAiPage', () => {
       backgroundAssistantId: 'optimizer-turn',
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(backgroundCallbacks).toBeDefined());
     act(() => backgroundCallbacks?.onEvent({ type: 'delta', text: 'answer.' }));
     act(() => backgroundCallbacks?.onEvent({ type: 'done', runId: 'optimizer-turn' }));
@@ -527,7 +527,7 @@ describe('ExperimentalAiPage', () => {
     let accept: ((id: string) => void) | undefined;
     mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(resolve => { disconnect = resolve; }));
     mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(accept).toBeDefined());
@@ -572,7 +572,7 @@ describe('ExperimentalAiPage', () => {
       foreground.onEvent({ type: 'done', runId: 'accepted' });
       return 'accepted';
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Fast answer.')).toBeInTheDocument();
@@ -589,7 +589,7 @@ describe('ExperimentalAiPage', () => {
       target.onEvent({ type: 'delta', text: 'Partial' });
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Partial');
@@ -617,7 +617,7 @@ describe('ExperimentalAiPage', () => {
       });
     }
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Explain');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -651,7 +651,7 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementation(async () => {
       await new Promise<void>(resolve => { finishForeground = resolve; });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(finishForeground).toBeDefined());
@@ -669,7 +669,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     mockQueueMessage.mockRejectedValue(new MockAiHttpError('Not accepting steering', 409));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -694,7 +694,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -722,7 +722,7 @@ describe('ExperimentalAiPage', () => {
         backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
       });
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
 
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -764,7 +764,7 @@ describe('ExperimentalAiPage', () => {
         finishStream = resolve;
       });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(draft, 'Inspect P1.');
@@ -824,7 +824,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Final response.' });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Work in stages.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -859,7 +859,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'tool', activity: { ...second, result: 'contents of b', ok: true } });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read both.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -878,7 +878,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: `Answer to ${question}` });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     for (const question of ['Q1', 'Q2']) {
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), question);
       await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -904,7 +904,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: `Answer to ${question}` });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     for (const question of ['Q1', 'Q2']) {
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), question);
       await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -941,7 +941,7 @@ describe('ExperimentalAiPage', () => {
         run: { usd: '0.1', calls: 1, pending: 0, unavailable: 0 } });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Cost question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Turn details · ~$0.1000 · Speed unavailable · 1 call');

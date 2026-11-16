@@ -19,7 +19,7 @@ steps:
         - 匯出版面
         - 儲存與載入
         - 最佳化與匯出
-        - 實驗性 AI
+        - AI 助理
       case_sensitive: true
       count: 13
       judge: >-
@@ -30,7 +30,7 @@ steps:
         6 班別接續 (Shift Type Successions), 7 班次計數 (Shift Counts),
         8 同班偏好 (Shift Affinities), 9 匯出版面 (Export Layout),
         10 儲存與載入 (Save and Load), 11 最佳化與匯出 (Optimize and Export),
-        12 實驗性 AI (Experimental AI). Each Chinese label must name the
+        12 AI 助理 (AI Assistant). Each Chinese label must name the
         corresponding page, not merely appear in unrelated prose. Reject any
         omitted page, mismatched or paraphrased Chinese page label, incorrect
         page purpose, or reply whose descriptions are not in Traditional Chinese.

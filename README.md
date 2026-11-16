@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/github/j3soon/nurse-scheduling/branch/dev/graph/badge.svg)](https://codecov.io/github/j3soon/nurse-scheduling)
 [![docs](https://img.shields.io/badge/docs-online-blue?logo=googledocs)](https://nursescheduling.org/docs/)
 
-An open-source web app for automated nurse schedule optimization, with a flexible backend for complex real-world constraints, proven in hospital wards, and featuring an experimental AI scheduling assistant.
+An open-source web app for automated nurse schedule optimization, with a flexible backend for complex real-world constraints, proven in hospital wards, and featuring an AI scheduling assistant.
 
 - Stable version hosted at [nursescheduling.org](https://nursescheduling.org/).
 - Latest development features hosted at [dev.nursescheduling.org](https://dev.nursescheduling.org/).
@@ -47,7 +47,7 @@ The hosted application anonymizes individual people IDs and removes descriptions
 
 ## AI Beta Access
 
-The experimental AI assistant follows the agent/session boundaries and selected
+The AI assistant follows the agent/session boundaries and selected
 default tools of [Pi v1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0)
 (`a13d35a`). See the [architectural comparison](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/#mapping-to-pi)
 for the sandbox, optimizer, and browser-specific differences.
@@ -283,9 +283,11 @@ for development, tests, coverage, and static builds.
 Follow the [Netlify hosting instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md#hosting-on-netlify)
 for build settings and Sentry credentials.
 
-### Experimental AI Chat
+<a id="experimental-ai-chat"></a>
 
-Follow the [AI startup instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md#experimental-ai-chat).
+### AI Assistant
+
+Follow the [AI startup instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md#ai-assistant).
 The chat runs as a separate backend and answers questions about the browser Schedule Spec.
 
 ### Core

@@ -19,6 +19,7 @@
 // This code is mostly AI generated.
 
 export const en = {
+  "AI Assistant": "AI Assistant",
   "Convert assistant prose for display. Saved and exported messages keep the original text.": "Convert assistant prose for display. Saved and exported messages keep the original text.",
   "Convert to Taiwan Traditional Chinese": "Convert to Taiwan Traditional Chinese",
   "Download YAML": "Download YAML",
@@ -106,7 +107,7 @@ export const en = {
   "1. Dates": "1. Dates",
   "10. Save and Load": "10. Save and Load",
   "11. Optimize and Export": "11. Optimize and Export",
-  "12. Experimental AI": "12. Experimental AI",
+  "12. AI Assistant": "12. AI Assistant",
   "2. People": "2. People",
   "3. Shift Types": "3. Shift Types",
   "4. Shift Type Requirements": "4. Shift Type Requirements",
@@ -421,7 +422,6 @@ export const en = {
   "Est. cost: ": "Est. cost: ",
   "Estimated LLM cost across this conversation, including retries and tool follow-up calls.": "Estimated LLM cost across this conversation, including retries and tool follow-up calls.",
   "Experimental": "Experimental",
-  "Experimental AI": "Experimental AI",
   "Export Chat": "Export Chat",
   "Export Layout": "Export Layout",
   "Expression *": "Expression *",
@@ -728,7 +728,6 @@ export const en = {
   "Saving model choice…": "Saving model choice…",
   "Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.": "Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.",
   "Scatter shift requests (developer only)": "Scatter shift requests (developer only)",
-  "Schedule AI Chat": "Schedule AI Chat",
   "Schedule optimized and downloaded successfully!": "Schedule optimized and downloaded successfully!",
   "Schedule Spec check failed": "Schedule Spec check failed",
   "Schedule Spec check passed": "Schedule Spec check passed",

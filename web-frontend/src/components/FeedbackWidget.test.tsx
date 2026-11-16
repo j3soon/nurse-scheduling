@@ -49,7 +49,7 @@ describe('FeedbackWidget', () => {
     mocks.pathname = '/people';
     const { rerender } = render(<FeedbackWidget />);
     expect(mocks.createWidget).toHaveBeenCalledTimes(1);
-    mocks.pathname = '/experimental-ai';
+    mocks.pathname = '/ai-assistant';
     rerender(<FeedbackWidget />);
     expect(mocks.actor.removeFromDom).toHaveBeenCalledTimes(1);
     mocks.pathname = '/people';
@@ -60,7 +60,7 @@ describe('FeedbackWidget', () => {
 
   it('keeps the floating button on the AI chat page on desktop', () => {
     mockPhone(false);
-    mocks.pathname = '/experimental-ai';
+    mocks.pathname = '/ai-assistant';
     render(<FeedbackWidget />);
     expect(mocks.createWidget).toHaveBeenCalledTimes(1);
   });

@@ -279,7 +279,9 @@ limits the usual abrupt-failure exposure to approximately the latest second,
 while an RDB-only recovery can be up to six hours behind. Redis installed
 outside the bundled Compose deployment keeps its system persistence policy.
 
-## Experimental AI Chat
+<a id="experimental-ai-chat"></a>
+
+## AI Assistant
 
 The experimental chat answers questions about the Schedule Spec currently open in
 the frontend. Arbitrary file attachments are copied into a disposable sandbox
@@ -302,7 +304,7 @@ Start the AI backend and frontend in separate terminals:
 ./scripts/start_frontend.sh --hostname 0.0.0.0
 ```
 
-Open `http://localhost:3000/experimental-ai`, select **Change**, then select
+Open `http://localhost:3000/ai-assistant`, select **Change**, then select
 **Use localhost**. The local AI backend listens on `http://localhost:8001`.
 The page otherwise uses `https://api.nursescheduling.org/ai` by default. See the
 [AI assistant backend guide](https://dev.nursescheduling.org/docs/developer-guide/ai-assistant/)
@@ -808,8 +810,8 @@ Run deterministic affected checks before live evaluations:
 ./scripts/test_ai_postgres.sh --base origin/dev
 ./scripts/test_frontend_affected.sh --base origin/dev
 ./scripts/test_frontend_e2e_affected.sh \
-  web-frontend/e2e/experimental-ai-basic.spec.ts \
-  web-frontend/e2e/experimental-ai-schedule-spec-changes.spec.ts
+  web-frontend/e2e/ai-assistant-basic.spec.ts \
+  web-frontend/e2e/ai-assistant-schedule-spec-changes.spec.ts
 ```
 
 Use the PostgreSQL wrapper when persistence changes. Check that database cases

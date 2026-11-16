@@ -182,8 +182,8 @@ through browser downloads are outside these storage keys.
 
 [schedule-storage]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/hooks/schedulingStorage.ts
 [optimize-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/optimize-and-export/page.tsx
-[ai-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/page.tsx
-[chat-history]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/chatHistory.ts
-[conversation-parser]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/chatConversation.ts
-[chat-hook]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/useAiChat.ts
+[ai-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/page.tsx
+[chat-history]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/chatHistory.ts
+[conversation-parser]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/chatConversation.ts
+[chat-hook]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/useAiChat.ts
 [web-locks]: https://www.w3.org/TR/web-locks/

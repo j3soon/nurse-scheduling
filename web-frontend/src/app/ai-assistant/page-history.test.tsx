@@ -34,17 +34,17 @@ import {
   MockAiHttpError,
   defaultCapabilities,
   seedRecentChat,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import { AI_HISTORY_LOCK_NAME, AI_HISTORY_STORAGE_KEY, clearChatHistory, readChatHistory, saveChatHistory } from './chatHistory';
 import { holdWebLock } from '@/test/mockWebLocks';
 import type { SessionEventHandler, SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it.each(['model', 'reasoning'])('restores a recent chat without saving an unsent %s choice', async choice => {
     await seedRecentChat();
@@ -58,7 +58,7 @@ describe('ExperimentalAiPage', () => {
     mockGetSessionModelSelection.mockResolvedValue({ selection: { model: 'fast', reasoning: 'default' }, locked: true });
     mockUpdateSessionModelSelection.mockRejectedValue(new MockAiHttpError('Model is fixed', 409));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(screen.getByLabelText('AI model')).toBeEnabled());
     await user.selectOptions(screen.getByLabelText(choice === 'model' ? 'AI model' : 'Reasoning'), choice === 'model' ? 'deep' : 'high');
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
@@ -82,7 +82,7 @@ describe('ExperimentalAiPage', () => {
     ];
     await saveChatHistory(chat);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
     expect(await screen.findByText('This response failed before completion. Send a new message to continue.')).toBeInTheDocument();
@@ -92,7 +92,7 @@ describe('ExperimentalAiPage', () => {
 
   it('preserves chats across New chat and forgets an open chat without saving it again', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'First conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -119,7 +119,7 @@ describe('ExperimentalAiPage', () => {
     await seedRecentChat('another-session');
     localStorage.setItem('unrelated-preference', 'keep');
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -135,7 +135,7 @@ describe('ExperimentalAiPage', () => {
   it('keeps tab recovery and the latest pending save while the history lock is held', async () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'First conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -164,14 +164,14 @@ describe('ExperimentalAiPage', () => {
 
   it('restores the transcript and live session after navigating away', async () => {
     const user = userEvent.setup();
-    const firstRender = render(<ExperimentalAiPage />);
+    const firstRender = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Alice works Monday.')).toBeInTheDocument();
     await waitFor(() => expect(window.sessionStorage.getItem('nurse-scheduling-ai-conversation')).not.toBeNull());
 
     firstRender.unmount();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText('Who works Monday?', { selector: '.plain-content' })).toBeInTheDocument();
     expect(screen.getByText('Alice works Monday.')).toBeInTheDocument();
@@ -183,7 +183,7 @@ describe('ExperimentalAiPage', () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     mockCreateSession.mockResolvedValueOnce('first-session').mockResolvedValueOnce('second-session');
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'First conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -206,7 +206,7 @@ describe('ExperimentalAiPage', () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Pending first chat');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
@@ -223,12 +223,12 @@ describe('ExperimentalAiPage', () => {
   it('does not recreate a chat cleared while the page remounts with its first save pending', async () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     const user = userEvent.setup();
-    const view = render(<ExperimentalAiPage />);
+    const view = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep creation permission unique');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     view.unmount();
     const cleared = clearChatHistory();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await act(release);
     await act(async () => { await cleared; });
     await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
@@ -239,14 +239,14 @@ describe('ExperimentalAiPage', () => {
   it('acknowledges a first save completed while away before restoring a cleared chat', async () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     const user = userEvent.setup();
-    const view = render(<ExperimentalAiPage />);
+    const view = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Finish saving while away');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     view.unmount();
     await act(release);
     await waitFor(() => expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(false));
     await clearChatHistory();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
     expect(readChatHistory()).toEqual([]);
   });
@@ -256,7 +256,7 @@ describe('ExperimentalAiPage', () => {
     const release = await holdWebLock(AI_HISTORY_LOCK_NAME);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const user = userEvent.setup();
-    const view = render(<ExperimentalAiPage />);
+    const view = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Pending chat to clear');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(within(screen.getByRole('complementary', { name: 'Recent chats' })).getByRole('button', { name: 'Clear history' }));
@@ -264,7 +264,7 @@ describe('ExperimentalAiPage', () => {
     expect(JSON.parse(sessionStorage.getItem('nurse-scheduling-ai-conversation')!).historyPending).toBe(true);
     await act(release);
     await waitFor(() => expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull());
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     expect(readChatHistory()).toEqual([]);
     expect(within(screen.getByRole('region', { name: 'Chat messages' })).queryByText('Pending chat to clear')).not.toBeInTheDocument();
   });
@@ -273,7 +273,7 @@ describe('ExperimentalAiPage', () => {
     let created!: (id: string) => void;
     mockCreateSession.mockImplementationOnce(() => new Promise<string>(resolve => { created = resolve; }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Create before Clear');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await act(async () => { await clearChatHistory(); });
@@ -286,7 +286,7 @@ describe('ExperimentalAiPage', () => {
   it('keeps the original boundary when session creation fails and is retried after Clear', async () => {
     mockCreateSession.mockRejectedValueOnce(new Error('Temporary session creation failure'));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(input, 'Chat begun before Clear');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -309,7 +309,7 @@ describe('ExperimentalAiPage', () => {
     const previous = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
     await user.click(within(history).getByRole('button', { name: 'Remove chat: Review older-session' }));
@@ -324,7 +324,7 @@ describe('ExperimentalAiPage', () => {
 
   it('preserves tab recovery and reports a failed removal after a resumed save', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep this chat');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
@@ -344,7 +344,7 @@ describe('ExperimentalAiPage', () => {
   it('flushes a pending transcript write when the page unmounts', async () => {
     vi.useFakeTimers();
     try {
-      const view = render(<ExperimentalAiPage />);
+      const view = render(<AiAssistantPage />);
       const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
       fireEvent.change(composer, { target: { value: 'Who works Monday?' } });
       await act(async () => {
@@ -370,7 +370,7 @@ describe('ExperimentalAiPage', () => {
     const now = Date.parse('2026-09-19T08:30:00Z');
     const dateNow = vi.spyOn(Date, 'now').mockReturnValue(now);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'First question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -402,7 +402,7 @@ describe('ExperimentalAiPage', () => {
       syncedScheduleSpec: 'description: old schedule\n',
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText('Old question')).toBeInTheDocument();
     expect(screen.getByText(/expired after 2 days of inactivity/)).toBeInTheDocument();
@@ -430,7 +430,7 @@ describe('ExperimentalAiPage', () => {
         retentionSeconds: 2592000, messages: [{ id: 'user-1', role: 'user', content: 'Keep this chat' }],
         syncedScheduleSpec: 'description: old schedule\n',
       }));
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await act(async () => { await vi.advanceTimersByTimeAsync(0); });
       expect(screen.getByLabelText('Chat expiration')).toBeInTheDocument();
       // Browser timers cannot wait the whole period at once, so the page checks again after each wake.
@@ -473,7 +473,7 @@ describe('ExperimentalAiPage', () => {
     mockRunEvents.mockImplementation(async (_sessionId: string, _message: string, callbacks: SessionStreamOptions) => {
       callbacks.onEvent({ type: 'delta', text: ' and finished.' });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Partial and finished.')).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe('ExperimentalAiPage', () => {
       syncedScheduleSpec: 'description: old schedule\n',
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText(/expired after 1 hour of inactivity/)).toBeInTheDocument();
     expect(screen.queryByText(/1 hours/)).not.toBeInTheDocument();
@@ -534,7 +534,7 @@ describe('ExperimentalAiPage', () => {
       syncedScheduleSpec: 'description: old schedule\n',
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText(/no longer available on the AI server/)).toBeInTheDocument();
     const transcript = screen.getByRole('region', { name: 'Chat messages' });
@@ -565,7 +565,7 @@ describe('ExperimentalAiPage', () => {
     }));
     const user = userEvent.setup();
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText('Temporary session-status failure.')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
@@ -590,7 +590,7 @@ describe('ExperimentalAiPage', () => {
         finishStream = resolve;
       });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(emit).toBeDefined());
@@ -618,7 +618,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -655,7 +655,7 @@ describe('ExperimentalAiPage', () => {
         rejectStream = reject;
       });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First question.');
@@ -682,7 +682,7 @@ describe('ExperimentalAiPage', () => {
       auth: { required: true, scheme: 'bearer' },
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText('Token saved on this device')).toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');

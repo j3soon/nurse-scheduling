@@ -29,26 +29,26 @@ import {
   mockUpdateSessionSchedule,
   mockLoadFromYaml,
   MockAiStaleRunError,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('reports browser edits without sending them during an active response', async () => {
     let finish!: () => void;
     mockRunEvents.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     const user = userEvent.setup();
-    const view = render(<ExperimentalAiPage />);
+    const view = render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Review this schedule');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Stop' });
     mockGenerateYaml.mockReturnValue('description: manually edited schedule\n');
-    view.rerender(<ExperimentalAiPage />);
+    view.rerender(<AiAssistantPage />);
     expect(screen.getByLabelText('Schedule Spec status')).toHaveTextContent('This response keeps its Schedule Spec');
     expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
     await act(async () => finish());
@@ -63,7 +63,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -93,7 +93,7 @@ describe('ExperimentalAiPage', () => {
       throw new MockAiStaleRunError('The Schedule Spec changed.');
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Change it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -132,7 +132,7 @@ describe('ExperimentalAiPage', () => {
     it('applies the schedule a run finished with as one history entry and shows its check', async () => {
       mockRunEvents.mockImplementationOnce(changingStream());
       const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await ask(user);
 
       await waitFor(() => expect(mockLoadFromYaml).toHaveBeenCalledTimes(1));
@@ -146,7 +146,7 @@ describe('ExperimentalAiPage', () => {
     it('shows a notice when the run replaced a queued browser update without controlling the agent', async () => {
       mockRunEvents.mockImplementationOnce(changingStream(true));
       const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await ask(user);
 
       expect(await screen.findByText('Applied to your Schedule Spec')).toBeInTheDocument();
@@ -165,11 +165,11 @@ describe('ExperimentalAiPage', () => {
         return new Promise<void>(resolve => { finish = resolve; });
       });
       const user = userEvent.setup();
-      const view = render(<ExperimentalAiPage />);
+      const view = render(<AiAssistantPage />);
       await ask(user);
       await waitFor(() => expect(callbacks).toBeDefined());
       mockGenerateYaml.mockReturnValue('description: edited during response\n');
-      view.rerender(<ExperimentalAiPage />);
+      view.rerender(<AiAssistantPage />);
       await act(async () => {
         await changingStream()('', '', callbacks);
         finish();
@@ -178,7 +178,7 @@ describe('ExperimentalAiPage', () => {
       expect(screen.getByText(/replaced changes made during this response/)).toBeVisible();
       // Undo is a browser action. A replacement replay must not overwrite it again.
       mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
-      view.rerender(<ExperimentalAiPage />);
+      view.rerender(<AiAssistantPage />);
       await act(async () => changingStream()('', '', callbacks));
       expect(mockLoadFromYaml).toHaveBeenCalledTimes(1);
       expect(mockUpdateSessionSchedule).not.toHaveBeenCalled();
@@ -193,7 +193,7 @@ describe('ExperimentalAiPage', () => {
         } });
       });
       const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await ask(user);
 
       await screen.findByText('Schedule Spec check failed');
@@ -208,7 +208,7 @@ describe('ExperimentalAiPage', () => {
         appliedScheduleSpecRuns: { 'change-run': null },
       }));
       mockGenerateYaml.mockReturnValue('description: restored with Undo\n');
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalled());
       const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
       await act(async () => changingStream()('', '', stream));
@@ -220,7 +220,7 @@ describe('ExperimentalAiPage', () => {
 
     it('sends a changed schedule to an existing session before the next question', async () => {
       const user = userEvent.setup();
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await ask(user);
       mockGenerateYaml.mockReturnValue('description: edited elsewhere\n');
 

@@ -78,7 +78,7 @@ for (const phone of [false, true]) {
         },
       })) }));
     });
-    await page.goto(`${baseURL}/experimental-ai`);
+    await page.goto(`${baseURL}/ai-assistant`);
     await expect(page.getByLabel('AI model')).toBeEnabled();
     await page.getByLabel('AI model').selectOption('deep');
     const history = page.getByRole('complementary', { name: 'Recent chats' });

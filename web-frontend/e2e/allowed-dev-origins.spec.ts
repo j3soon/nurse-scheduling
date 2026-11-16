@@ -152,7 +152,7 @@ const test = base.extend<DevServerFixtures>({
     const processExited = new Promise<number | null>(resolve => server.once('exit', resolve));
 
     try {
-      await waitForServer(`http://127.0.0.1:${port}/experimental-ai`, processExited, () => output.join(''));
+      await waitForServer(`http://127.0.0.1:${port}/ai-assistant`, processExited, () => output.join(''));
       await runTest({ host, port });
     } finally {
       await stopServer(server, processExited);
@@ -179,7 +179,7 @@ test('hydrates through a non-loopback development origin', async ({ page, devSer
     }),
   }));
 
-  await page.goto(`http://${host}:${port}/experimental-ai`);
+  await page.goto(`http://${host}:${port}/ai-assistant`);
 
   await expect(page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toBeEnabled();
   await expect(page.getByLabel('Attach files')).toBeAttached();

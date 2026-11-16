@@ -16,7 +16,7 @@
 | [Export Layout (匯出版面)](export-layout.md) | Format XLSX and add summary rows or columns | Optional |
 | [Save and Load (儲存與載入)](save-and-load.md) | Back up, restore, copy, or inspect YAML | Recommended |
 | [Optimize and Export (最佳化與匯出)](optimize-and-export.md) | Select a server and download the solved XLSX | Yes |
-| [Experimental AI (實驗性 AI)](experimental-ai.md) | Ask about or edit the current Schedule Spec in chat | Optional |
+| [AI Assistant (AI 助理)](ai-assistant.md) | Ask about or edit the current Schedule Spec in chat | Optional |
 
 ## Shared controls
 

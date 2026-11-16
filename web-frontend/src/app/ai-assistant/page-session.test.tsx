@@ -30,21 +30,21 @@ import {
   mockQueueMessage,
   mockUseTabSwitchWarning,
   runEvents,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLayoutEffect } from 'react';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import * as chatHooks from './useAiChat';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('sends a question with the current Schedule Spec and renders streamed text', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     // Generated export defaults are added only when the optimizer submits the schedule.
     expect(mockGenerateYaml.mock.calls[0][0]).not.toHaveProperty('export');
@@ -52,9 +52,9 @@ describe('ExperimentalAiPage', () => {
     expect(screen.getByText('Browser Schedule Spec: 0 people, 0 dates. Sent when you send a message.')).toBeInTheDocument();
     expect(screen.getByText(/^Frontend /)).toHaveTextContent('Frontend unknown');
     await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.4.3'));
-    expect(screen.getByRole('link', { name: 'Experimental AI documentation' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'AI Assistant documentation' })).toHaveAttribute(
       'href',
-      '/docs/user-guide/experimental-ai/',
+      '/docs/user-guide/ai-assistant/',
     );
     expect(screen.getByRole('link', { name: 'Request beta access' })).toHaveAttribute(
       'href',
@@ -94,7 +94,7 @@ describe('ExperimentalAiPage', () => {
   it('allows switching app pages during a response', async () => {
     mockRunEvents.mockImplementation(() => new Promise<void>(() => {}));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
@@ -112,7 +112,7 @@ describe('ExperimentalAiPage', () => {
       return new Promise(() => {});
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(connectionChange).toBeDefined());
@@ -126,7 +126,7 @@ describe('ExperimentalAiPage', () => {
   it('keeps the optimizer visible after a cancel failure and allows a retry', async () => {
     const user = userEvent.setup();
     mockCancelOptimization.mockRejectedValueOnce(new Error('Optimizer unavailable.'));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -147,7 +147,7 @@ describe('ExperimentalAiPage', () => {
     let accept: ((id: string) => void) | undefined;
     mockSendMessage.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
     mockStopSession.mockResolvedValue(undefined);
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(accept).toBeDefined());
@@ -172,7 +172,7 @@ describe('ExperimentalAiPage', () => {
       stream.onEvent({ type: 'provider_retry', message: 'The provider timed out. Retrying in 2 s (attempt 2 of 5).' });
       await new Promise<void>(resolve => { finish = resolve; });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Build a schedule.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('The provider timed out. Retrying in 2 s (attempt 2 of 5).')).toBeInTheDocument();
@@ -201,7 +201,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(() => {});
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Build a schedule.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByText(notice)).toBeInTheDocument();
@@ -228,7 +228,7 @@ describe('ExperimentalAiPage', () => {
       background = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await user.type(composer, 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -262,7 +262,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -290,7 +290,7 @@ describe('ExperimentalAiPage', () => {
         signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Keep working.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -314,7 +314,7 @@ describe('ExperimentalAiPage', () => {
         finishStream = resolve;
       });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     await user.type(composer, 'First question.');
@@ -352,7 +352,7 @@ describe('ExperimentalAiPage', () => {
       throw new Error(providerError);
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Can you help?');
     await user.click(screen.getByRole('button', { name: 'Send' }));

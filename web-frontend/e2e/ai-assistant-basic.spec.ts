@@ -362,6 +362,23 @@ async function mockAiBackend(
   });
 }
 
+for (const oldPath of ['/experimental-ai', '/experimental-ai/']) {
+  test(`redirects ${oldPath} and preserves query parameters, fragments, and Back navigation`, async ({ page }) => {
+    await mockAiBackend(page, []);
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Nurse Scheduling System', exact: true })).toBeVisible();
+    await page.goto(`${oldPath}?source=bookmark&note=a%20b#conversation`);
+    await expect(page).toHaveURL(/\/ai-assistant\?source=bookmark&note=a%20b#conversation$/);
+    await expect(page.getByRole('heading', { name: 'AI Assistant', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '12. AI Assistant', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'AI Assistant documentation' })).toHaveAttribute(
+      'href', '/docs/user-guide/ai-assistant/',
+    );
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Nurse Scheduling System', exact: true })).toBeVisible();
+  });
+}
+
 for (const clearPending of [false, true]) {
   test(`recovers a tab after a failed first history write and respects ${clearPending ? 'clearing pending history' : 'later removal'}`, async ({ page }) => {
     await mockAiBackend(page, ['Recovered answer.']);
@@ -376,7 +393,7 @@ for (const clearPending of [false, true]) {
         setItem.call(this, key, value);
       };
     });
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Keep this chat.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const transcript = page.getByRole('region', { name: 'Chat messages' });
@@ -435,7 +452,7 @@ test('submits a long question without a character limit', async ({ page }) => {
     session_retention_seconds: 2592000,
     file_attachments: { enabled: true, max_files: 8, max_bytes_per_file: 5000000, max_bytes_per_session: 200000000 },
   } }));
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await expect(input).not.toHaveAttribute('maxlength');
@@ -452,7 +469,7 @@ test('submits a long question without a character limit', async ({ page }) => {
 test('converts rich clipboard text to Markdown before sending', async ({ page, context }) => {
   const captured = await mockAiBackend(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.fill('Please replace this.');
@@ -498,7 +515,7 @@ for (const { label, html, text } of [
   test(`preserves pasted source text with ${label}`, async ({ page, context }) => {
     const captured = await mockAiBackend(page);
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await expect(input).toBeEnabled();
     await page.evaluate(async ({ html, text }) => {
@@ -522,7 +539,7 @@ for (const { label, html, text } of [
 test('keeps formatted paste in native text undo history', async ({ page, context }) => {
   await mockAiBackend(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.fill('Keep this sentence.');
@@ -544,7 +561,7 @@ test('keeps formatted paste in native text undo history', async ({ page, context
 test('asks about the current Schedule Spec and renders a streamed answer', async ({ page }) => {
   const captured = await mockAiBackend(page);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Who works first?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -569,7 +586,7 @@ test('asks about the current Schedule Spec and renders a streamed answer', async
   await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
   await page.getByRole('button', { name: '1. Dates' }).click();
   await expect(page).toHaveURL(/\/dates$/);
-  await page.getByRole('button', { name: '12. Experimental AI' }).click();
+  await page.getByRole('button', { name: '12. AI Assistant' }).click();
   await expect(page.getByText('The image and schedule were received.')).toBeVisible();
 
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Check next week.');
@@ -578,7 +595,7 @@ test('asks about the current Schedule Spec and renders a streamed answer', async
     await dialog.dismiss();
   });
   await page.getByRole('button', { name: '1. Dates' }).click();
-  await expect(page).toHaveURL(/\/experimental-ai$/);
+  await expect(page).toHaveURL(/\/ai-assistant$/);
 
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '1. Dates' }).click();
@@ -602,7 +619,7 @@ for (const submission of ['Enter', 'button'] as const) {
       await selectionReady;
       await route.fallback();
     });
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await expect(page.getByLabel('AI model')).toBeEnabled();
     const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await input.fill('First question');
@@ -646,7 +663,7 @@ for (const submission of ['Enter', 'button'] as const) {
 test('updates Context, Tokens, and estimated cost while the answer is still streaming', async ({ page }) => {
   const captured = await mockAiBackend(page, []);
   captured.holdNextTurn();
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Explain the current Schedule Spec.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
@@ -674,7 +691,7 @@ test('updates Context, Tokens, and estimated cost while the answer is still stre
 
 test('compacts context on demand and restores the summary after reload', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Earlier answer.']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Keep the night constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -732,7 +749,7 @@ test('shows character progress while preparing tools and preserves completed cou
     { type: 'generation_progress', data: { kind: 'tool_calls', characters: 3, step: 1 } },
   ]);
   captured.holdNextTurn();
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Inspect the ward.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Preparing tool calls · 3 characters', { exact: true })).toBeVisible();
@@ -781,7 +798,7 @@ test('can stop manual compaction while admission waits before run_start', async 
     accept();
     await route.fulfill({ status: 202, body: '{}' });
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Keep the night constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -801,7 +818,7 @@ test('can stop manual compaction while admission waits before run_start', async 
 
 test('keeps short context with a manual request notice instead of a compaction failure', async ({ page }) => {
   const captured = await mockAiBackend(page, ['Hello.']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await input.fill('Hi');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -837,7 +854,7 @@ for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['e
     const captured = await mockAiBackend(page, trigger === 'user' ? [] : ['Previous run answer.'],
       false, undefined, [], true, trigger === 'user' ? events : []);
     if (trigger === 'user') captured.holdNextTurn();
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue with the constraints.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     const runId = trigger === 'user' ? 'answer-1' : 'optimizer-review';
@@ -880,7 +897,7 @@ test('shows compaction status and the reduced context before an answer', async (
     { type: 'compaction_start', data: { reason: 'threshold', tokens_before: 25000 } },
   ]);
   captured.holdNextTurn();
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Continue with the current constraints.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Summarizing conversation', { exact: true })).toBeVisible();
@@ -914,7 +931,7 @@ test('shows compaction status and the reduced context before an answer', async (
 
 test('explains unavailable context usage when the backend omits it', async ({ page }) => {
   await mockAiBackend(page, ['Done.'], false, undefined, [], false);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const usage = page.getByText('Context unavailable');
@@ -924,7 +941,7 @@ test('explains unavailable context usage when the backend omits it', async ({ pa
 
 test('returns to the top of a long chat on desktop and mobile', async ({ page }) => {
   await mockAiBackend(page, [Array.from({ length: 80 }, (_, i) => `Chat line ${i + 1}.`).join('\n\n')]);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Show details.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Chat line 80.', { exact: true })).toBeVisible();
@@ -937,7 +954,7 @@ test('returns to the top of a long chat on desktop and mobile', async ({ page })
     await shortcut.click();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
     await expect(shortcut).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'Schedule AI Chat' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'AI Assistant' })).toBeVisible();
     await page.getByRole('button', { name: 'Scroll to bottom' }).click();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(128);
   }
@@ -952,7 +969,7 @@ test('authenticates AI session requests with an explicitly remembered token', as
     authToken,
   );
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const composer = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(page.getByRole('button', { name: 'Enter token for AI assistant' })).toBeVisible();
   await expect(composer).toBeEnabled();
@@ -995,7 +1012,7 @@ test('continues a failed text run with a new message and keeps its provisional a
     true,
   );
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Who works first?');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -1038,7 +1055,7 @@ test('Stop cancels the run while keeping the session stream open', async ({ page
   });
 
   try {
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Wait for this command.');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -1073,7 +1090,7 @@ test('downloads a completed background optimization from chat', async ({ page })
     body: workbookBytes,
   }));
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const summary = page.locator('article').filter({ hasText: 'Optimization finished.' });
@@ -1122,7 +1139,7 @@ for (const touch of [false, true]) test.describe(touch ? 'phone optimizer contro
       backend.publishEvent('optimization', { ...running, finish_now_requested_by: 'user', controls: { early_completion_available: false } });
       await route.fulfill({ status: 202 });
     });
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
     await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('finish-token');
     await page.getByRole('checkbox', { name: /remember on this device/i }).check();
@@ -1188,7 +1205,7 @@ test('cancels the background optimizer from its status box without asking the ag
     });
     await route.fulfill({ status: 202 });
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize this.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
@@ -1204,7 +1221,7 @@ test('cancels the background optimizer from its status box without asking the ag
 
 test('keeps an empty background reply failure visible after another message and reload', async ({ page }) => {
   const backend = await mockAiBackend(page, ['Optimization started.']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize this.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Optimization started.', { exact: true })).toBeVisible();
@@ -1238,7 +1255,7 @@ test('keeps multiline optimizer errors in one field in chat', async ({ page }) =
       error: { code: 'backend-error', message: error },
     },
   }]);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Optimize it.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const summary = page.locator('article').filter({ hasText: 'Optimization ended with status: failed.' });
@@ -1257,7 +1274,7 @@ test('renders assistant Markdown with safe images and copyable code', async ({ p
     ],
   );
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Summarize coverage.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -1284,7 +1301,7 @@ test('offers a shortcut when the reader scrolls away from the latest message', a
   const longAnswer = Array.from({ length: 80 }, (_, index) => `Coverage detail ${index + 1}`).join('\n');
   await mockAiBackend(page, [longAnswer]);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Give detailed coverage.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -1322,7 +1339,7 @@ test('previews and sends an image attachment', async ({ page }) => {
     'base64',
   );
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByLabel('Attach files').setInputFiles({ name: 'ward.png', mimeType: 'image/png', buffer: png });
   await expect(page.getByAltText('Preview of ward.png')).toBeVisible();
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('What is shown?');
@@ -1353,7 +1370,7 @@ test('uploads one file per request before sending the question', async ({ page }
       max_bytes_per_session: 200,
     } }),
   }));
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByLabel('Attach files').setInputFiles(
     ['one.txt', 'two.txt', 'three.txt'].map(name => ({ name, mimeType: 'text/plain', buffer: Buffer.from('abc') })),
   );
@@ -1368,7 +1385,7 @@ test('uploads one file per request before sending the question', async ({ page }
 test('previews and sends arbitrary file attachments', async ({ page }) => {
   const captured = await mockAiBackend(page);
 
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByLabel('Attach files').setInputFiles([
     {
       name: 'staff.csv',
@@ -1421,7 +1438,7 @@ test('downloads and removes generated files through the ZIP controls', async ({ 
     }
     return route.fulfill({ contentType: 'application/zip', body: Buffer.from('captured ZIP bytes') });
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Create a downloadable CSV');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const pendingDownload = page.waitForEvent('download');
@@ -1446,7 +1463,7 @@ test('shows retained uploads while the assistant response is still running', asy
     return route.continue({ url: `${backend.origin}${requestUrl.pathname}${requestUrl.search}` });
   });
   try {
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByLabel('Attach files').setInputFiles({
       name: 'ward.csv', mimeType: 'text/csv', buffer: Buffer.from('name,date\nAlex,2026-10-01\n'),
     });
@@ -1488,7 +1505,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
     return route.fulfill({ status: 204 });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
   await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill('browser-ai-auth-token');
   await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
@@ -1518,7 +1535,7 @@ test('places uploads beside desktop chat and below mobile controls and allows re
   await page.screenshot({ path: '../artifacts/uploads-layout/desktop.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   const mobilePanelBox = (await panel.boundingBox())!;
-  const titleBox = (await page.getByRole('heading', { name: 'Schedule AI Chat' }).boundingBox())!;
+  const titleBox = (await page.getByRole('heading', { name: 'AI Assistant' }).boundingBox())!;
   const exportBox = (await page.getByRole('button', { name: 'Export Chat', exact: true }).boundingBox())!;
   const tokenBox = (await page.getByRole('button', { name: 'Change token for AI assistant' }).boundingBox())!;
   const mobileChatBox = (await page.getByRole('region', { name: 'Chat messages' }).boundingBox())!;
@@ -1615,7 +1632,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
     const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/ai`;
     try {
       await page.addInitScript(value => localStorage.setItem('nurse-scheduling-ai-server', value), endpoint);
-      await page.goto('/experimental-ai');
+      await page.goto('/ai-assistant');
       await page.getByRole('button', { name: 'Enter token for AI assistant' }).click();
       await page.getByRole('textbox', { name: 'Token for AI assistant' }).fill(authToken);
       await page.getByRole('checkbox', { name: /remember on this device/i }).check();
@@ -1645,7 +1662,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
         await expect(page).toHaveURL(/\/dates$/);
         expect(dialogs).toEqual([]);
         complete();
-        await page.getByRole('button', { name: '12. Experimental AI', exact: true }).click();
+        await page.getByRole('button', { name: '12. AI Assistant', exact: true }).click();
       } else {
         await page.reload();
         complete();
@@ -1680,7 +1697,7 @@ for (const { interruption, steered } of (['network pause', 'reload', 'tab switch
 test('keeps phone chat readable and the growing composer clear of the last reply', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 });
   await mockAiBackend(page, ['Final reply for phone layout.']);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   const composer = page.getByRole('form', { name: 'Message composer' });
@@ -1723,7 +1740,7 @@ test.describe('phone chat keyboard', () => {
 
   test('inserts a newline with Enter and sends with the button', async ({ page }) => {
     const requests = await mockAiBackend(page, ['Phone reply.']);
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await expect(input).toBeEnabled();
     // Phone keyboards provide dictation, so the page omits its own microphone.
@@ -1754,7 +1771,7 @@ test('keeps the composer above a reduced visual viewport and ignores pinch zoom'
     Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true });
   });
   await mockAiBackend(page);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await expect(input).toBeEnabled();
   await input.focus();
@@ -1785,7 +1802,7 @@ test('locks the model and changes reasoning during streaming for future runs and
     ],
   });
   captured.holdNextTurn();
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByLabel('AI model').selectOption('deep');
   await expect(page.getByLabel('Reasoning', { exact: true })).toHaveValue('off');
   await expect(page.getByLabel('Reasoning', { exact: true }).locator('option')).toHaveText(['Off', 'High']);
@@ -1835,7 +1852,7 @@ test('keeps the model editable until the server accepts a message', async ({ pag
       body: JSON.stringify({ detail: 'The AI service is busy. Try again later.' }),
     });
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   const composer = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
   await composer.fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -1873,7 +1890,7 @@ test('follows the saved model lock after a question stops before its run starts'
       body: JSON.stringify({ run_id: 'never-started' }),
     });
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByText('Stopped before completion.')).toBeVisible();
@@ -1897,7 +1914,7 @@ for (const [cost, display] of [['0.0123', '$0.0123'], ['4.45E-322', '<$0.000001'
       { type: 'cost_summary', data: { conversation: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } },
         run: { usd: cost, calls: 1, pending: 0, unavailable: 0, streaming: { calls: 1, output_tokens: 20, seconds: 0.2 } } } },
     ]);
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('Cost question');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(page.getByText(`Est. cost: ${display}`)).toBeVisible();
@@ -1937,7 +1954,7 @@ test('keeps pending reasoning when language changes in another tab', async ({ pa
     default_model: 'fast', models: [{ id: 'fast', name: 'Fast', context_tokens: 32000,
       default_reasoning: 'default', reasoning_options: [{ id: 'default', label: 'Default' }, { id: 'high', label: 'High' }] }],
   });
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await expect(page.getByLabel('AI model')).toBeEnabled();
   await page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }).fill('First question');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
@@ -1974,7 +1991,7 @@ test('localizes AI cost and retention details while preserving reply text', asyn
     { type: 'cost_summary', data: { conversation: { ...summary, calls: 2, unavailable: 1 }, run: summary } },
   ]);
   await page.addInitScript(() => localStorage.setItem('nurse-scheduling-language', 'zh-TW'));
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await expect(page.getByText(/對話工作階段將在.*天.*未使用後到期/)).toBeVisible();
   await page.getByRole('textbox', { name: '詢問目前的排班設定' }).fill('Cost this reply.');
   await page.getByRole('button', { name: '傳送', exact: true }).click();
