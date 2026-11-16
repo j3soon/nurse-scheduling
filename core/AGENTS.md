@@ -775,6 +775,13 @@ and current session recovery working.
   When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
   saved replies first. Include known failures and valid alternatives before
   starting new live agent runs.
+  Before claiming that an edit to an existing testcase improves its pass rate,
+  compare old and new results under the same model and settings. Regrade the
+  same saved replies for rubric edits, then repeat live runs for prompt edits.
+  Use roughly 100 runs per version when failures are rare. Keep the edit as an
+  improvement only when comparable evidence shows a higher pass rate without
+  accepting known wrong replies. Separate model, judge, and infrastructure
+  failures. Report small or uncertain differences as unproven.
   For script checks, include isolated wrong characters in long replies, valid
   shared characters and exact source quotations. Check verdict format and
   runtime as well as classification accuracy.
