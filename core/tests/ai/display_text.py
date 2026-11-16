@@ -60,7 +60,7 @@ def displayed_text(markdown: str) -> str:
     result = subprocess.run(
         ["node", "-e", OPENCC_SCRIPT, str(OPENCC_BUNDLE)],
         input=json.dumps(prose, ensure_ascii=False),
-        text=True,
+        encoding="utf-8",
         capture_output=True,
         check=True,
         timeout=10,

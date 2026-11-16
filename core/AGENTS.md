@@ -807,6 +807,7 @@ and current session recovery working.
   neutral, including paths, line endings, and environment limits.
   Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
   Reconfigure stdin and stdout to UTF-8 in helpers that exchange text through pipes.
+  Set `encoding="utf-8"` on subprocess text pipes as well.
   Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.

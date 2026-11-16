@@ -22,6 +22,7 @@
 import asyncio
 import json
 import re
+import subprocess
 from dataclasses import replace
 from datetime import datetime
 from itertools import product
@@ -285,7 +286,9 @@ def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
         check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 ai"}], 0)
 
 
-def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path):
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
+def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path, monkeypatch, default_encoding):
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: default_encoding)
     reply = "**人员**管理。 [人员链接](https://example.com/人员)\n\n> 人员引用\n\n`人员代码`"
     shown = displayed_text(reply)
     assert "**" not in shown
@@ -303,7 +306,9 @@ def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path)
         check_event(raw.steps[1], [{"kind": "assistant", "text": reply}], 0)
 
 
-def test_opencc_judge_sees_displayed_text_and_transcript_retains_raw(tmp_path):
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
+def test_opencc_judge_sees_displayed_text_and_transcript_retains_raw(tmp_path, monkeypatch, default_encoding):
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: default_encoding)
     case = definition(
         tmp_path,
         "steps: [{user: 請介紹頁面}, {assistant: {contains_all: [人員管理], opencc: true, judge: Check the page.}}]",
