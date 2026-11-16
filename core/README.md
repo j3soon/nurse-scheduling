@@ -279,8 +279,6 @@ limits the usual abrupt-failure exposure to approximately the latest second,
 while an RDB-only recovery can be up to six hours behind. Redis installed
 outside the bundled Compose deployment keeps its system persistence policy.
 
-<a id="experimental-ai-chat"></a>
-
 ## AI Assistant
 
 The experimental chat answers questions about the Schedule Spec currently open in

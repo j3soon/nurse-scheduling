@@ -1,5 +1,3 @@
-<span id="experimental-ai-ai"></span>
-
 # AI Assistant (AI 助理)
 
 [Open AI Assistant](https://nursescheduling.org/ai-assistant){ .md-button .md-button--primary }

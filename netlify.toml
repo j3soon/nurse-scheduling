@@ -28,7 +28,7 @@
   NODE_VERSION = "25"
   PYTHON_VERSION = "3.12"
 
-# Preserve published AI page URLs, query parameters, and fragments.
+# Preserve the former AI app page URL, query parameters, and fragments.
 [[redirects]]
   from = "/experimental-ai"
   to = "/ai-assistant"
@@ -40,16 +40,6 @@
   to = "/ai-assistant"
   status = 301
   force = true
-
-[[redirects]]
-  from = "/docs/user-guide/experimental-ai"
-  to = "/docs/user-guide/ai-assistant/"
-  status = 301
-
-[[redirects]]
-  from = "/docs/user-guide/experimental-ai/*"
-  to = "/docs/user-guide/ai-assistant/:splat"
-  status = 301
 
 # Preserve published developer-guide URLs and their fragments.
 

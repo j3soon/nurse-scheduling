@@ -283,8 +283,6 @@ for development, tests, coverage, and static builds.
 Follow the [Netlify hosting instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/README.md#hosting-on-netlify)
 for build settings and Sentry credentials.
 
-<a id="experimental-ai-chat"></a>
-
 ### AI Assistant
 
 Follow the [AI startup instructions](https://github.com/j3soon/nurse-scheduling/blob/dev/core/README.md#ai-assistant).
