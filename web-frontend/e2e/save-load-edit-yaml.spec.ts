@@ -150,3 +150,33 @@ export:
   await expect(yamlPreview).not.toContainText('extraColumns');
   await expect(yamlPreview).not.toContainText('extraRows');
 });
+
+test('uploading equivalent date spellings populates the requests grid after reload', async ({ page }) => {
+  await disableModalDialogs(page);
+  await page.goto('/save-and-load');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'december.yaml',
+    mimeType: 'application/yaml',
+    buffer: Buffer.from(`
+apiVersion: alpha
+dates:
+  range: {startDate: 2026-12-01, endDate: 2026-12-31}
+people:
+  items: [{id: P1}]
+shiftTypes:
+  items: [{id: D}]
+preferences:
+  - type: at most one shift per day
+  - {type: shift request, person: [P1], date: ['12-02'], shiftType: [D], weight: 3}
+  - {type: shift request, person: [P1], date: [2026-12-03], shiftType: [D], weight: 4}
+`),
+  });
+  await expect(page.getByText('Schedule Spec uploaded:', { exact: true })).toBeVisible();
+
+  await page.goto('/shift-requests');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 02')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toHaveText('D (+4)');
+  await page.reload();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 02')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toHaveText('D (+4)');
+});

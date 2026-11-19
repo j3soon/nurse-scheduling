@@ -22,14 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
-test('shrinking a month-spanning range back into one month reverts downstream IDs to DD format', async ({ page }) => {
-  /*
-   * Steps:
-   * 1. Confirm a seeded month-spanning range renders MM-DD IDs downstream.
-   * 2. Update the range so it stays within one month.
-   * 3. Confirm the Dates page shows the shorter duration.
-   * 4. Revisit Shift Requests and confirm the IDs now use DD format.
-   */
+test('shrinking a month-spanning range preserves requests for retained dates', async ({ page }) => {
   await disableModalDialogs(page);
   await seedScheduleSpecState(page, {
     apiVersion: 'test',
@@ -37,13 +30,16 @@ test('shrinking a month-spanning range back into one month reverts downstream ID
     dates: { range: { startDate: '2026-05-31', endDate: '2026-06-01' }, groups: [] },
     people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
     shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
-    preferences: [{ type: 'at most one shift per day' }],
+    preferences: [
+      { type: 'at most one shift per day' },
+      { type: 'shift request', person: ['P1'], date: ['05-31', '06-01'], shiftType: ['D'], weight: 3 },
+    ],
     export: { formatting: [] },
   });
 
   await page.goto('/shift-requests');
-  await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toBeVisible();
-  await expect(page.getByTitle('Click to update preferences for P1 on date 06-01')).toBeVisible();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 06-01')).toHaveText('D (+3)');
 
   await page.goto('/dates');
   await page.getByRole('button', { name: /Set Date Range|Edit Date Range/ }).click();
@@ -53,6 +49,6 @@ test('shrinking a month-spanning range back into one month reverts downstream ID
   await expect(page.getByText('Duration: 1 days')).toBeVisible();
 
   await page.goto('/shift-requests');
-  await expect(page.getByTitle('Click to update preferences for P1 on date 31')).toBeVisible();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 31')).toHaveText('D (+3)');
   await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toHaveCount(0);
 });
