@@ -116,6 +116,9 @@ export function normalizeDateReferences(state: ScheduleSpecState): ScheduleSpecS
       aliases.set(String(Number(id)), id);
     }
   }
+  // Preserve references to imported groups with date-shaped IDs so users can
+  // rename the groups in the browser.
+  for (const group of state.dates.groups) aliases.delete(group.id);
 
   return mapDateReferences(state, id => {
     const input: unknown = id;

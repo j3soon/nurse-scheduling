@@ -4776,6 +4776,40 @@ describe('useScheduleSpec', () => {
     expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['02'] }]);
   });
 
+  it('keeps date-shaped group references as imported YAML is normalized and restored', () => {
+    const { result, unmount } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const groupId = '2026-11-02';
+    const request = { type: SHIFT_REQUEST, person: ['P1'], shiftType: ['D'], weight: 3 };
+
+    act(() => {
+      result.current.loadFromYaml({
+        dates: {
+          range: { startDate: '2026-11-01', endDate: '2026-11-03' },
+          groups: [{ id: groupId, members: ['2026-11-03'] }],
+        },
+        people: { items: [{ id: 'P1' }] },
+        shiftTypes: { items: [{ id: 'D' }] },
+        preferences: [
+          { type: AT_MOST_ONE_SHIFT_PER_DAY },
+          { ...request, date: [new Date(groupId)] },
+          { ...request, date: ['2026-11-01'], weight: 5 },
+        ],
+        export: { formatting: [{ type: 'column', dates: [groupId] }] },
+      });
+    });
+
+    expect(result.current.dateData.groups.find(group => group.id === groupId)?.members).toEqual(['03']);
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual(expect.arrayContaining([
+      { ...request, date: [groupId] },
+      { ...request, date: ['01'], weight: 5 },
+    ]));
+    unmount();
+
+    const restored = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(restored.result.current.getPreferencesByType(SHIFT_REQUEST)).toContainEqual({ ...request, date: [groupId] });
+    expect(restored.result.current.exportData?.formatting).toEqual([{ type: 'column', dates: [groupId] }]);
+  });
+
   it('normalizes saved date references in the current Schedule Spec and Undo history', () => {
     const { state } = createPopulatedHistoryState();
     const dates = { ...state.dates, range: { startDate: '2026-12-01', endDate: '2026-12-31' } };
