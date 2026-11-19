@@ -12,6 +12,8 @@ Schedule Spec and up to 50 undo-history entries are stored in browser `localStor
 
 The AI Assistant page stores its selected server and display preferences in browser `localStorage`. It also stores AI API keys by server endpoint there when you choose to save them. It stores the current chat in tab `sessionStorage` so a reload can restore it. That record includes the chat messages and attachment filenames, assistant responses and reasoning, tool activity and Schedule Spec changes with before and after YAML, the full Schedule Spec last synced with the AI service, optimizer progress and job details, and session identifiers and expiry data. These values are stored as plain JSON. The page clears the chat record when you start a new chat or it detects that the session expired or became unavailable. Tab `sessionStorage` normally lasts until the tab is closed. Clearing the chat does not clear saved AI API keys or the Schedule Spec in `localStorage`.
 
+**Recent chats** stores copies of the chat data described above in browser `localStorage` under `nurse-scheduling-ai-history`. Each copy expires seven days after the last chat activity. The AI Assistant page prunes expired copies when it opens and while it remains open. Use **Remove** to delete an individual copy or **Clear history** to delete all copies. Remove retains the server URL and session ID until Clear history so another tab cannot restore the deleted copy.
+
 ## Analytics and Error Reporting
 
 The hosted frontend uses Google Analytics and Sentry for analytics, diagnostics, performance monitoring, feedback, and error reporting. Depending on the event, they may receive IP addresses, request headers, interaction metadata, logs, feedback contact details, and Schedule Spec.

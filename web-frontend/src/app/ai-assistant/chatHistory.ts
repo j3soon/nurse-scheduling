@@ -41,6 +41,11 @@ export interface RecentChat {
   lastActivityAt: number;
 }
 
+interface HistoryMarkers {
+  clearGeneration: string;
+  removedChatKeys: string[];
+}
+
 export function chatKey(chat: Pick<StoredChatConversation, 'endpoint' | 'sessionId'>): string {
   return `${chat.endpoint}\n${chat.sessionId}`;
 }
@@ -49,19 +54,31 @@ export function chatTitle(chat: StoredChatConversation): string {
   return chat.messages.find(message => message.role === 'user' && !message.source)?.content.trim().slice(0, 80) || 'New chat';
 }
 
-/** Keep the clear marker in the same record so clearing is one atomic storage write. */
-export function readChatHistoryGeneration(): string {
+function readHistoryMarkers(): HistoryMarkers {
   const raw = localStorage.getItem(AI_HISTORY_STORAGE_KEY);
-  if (!raw) return '';
-  const stored = JSON.parse(raw) as { clearGeneration?: unknown } | null;
-  const generation = stored?.clearGeneration ?? '';
-  if (typeof generation !== 'string') throw new Error('The saved chat history has an invalid clear marker.');
-  return generation;
+  const stored = raw ? JSON.parse(raw) as Partial<HistoryMarkers> | null : null;
+  const clearGeneration = stored?.clearGeneration ?? '';
+  const removedChatKeys = stored?.removedChatKeys ?? [];
+  if (typeof clearGeneration !== 'string') throw new Error('The saved chat history has an invalid clear marker.');
+  if (!Array.isArray(removedChatKeys) || removedChatKeys.some(key => typeof key !== 'string')) {
+    throw new Error('The saved chat history has invalid removal markers.');
+  }
+  return { clearGeneration, removedChatKeys };
 }
 
-function writeHistory(entries: RecentChat[], clearGeneration = readChatHistoryGeneration()): boolean {
-  const next = entries.length || clearGeneration
-    ? JSON.stringify({ appVersion: CURRENT_APP_VERSION, entries, ...(clearGeneration ? { clearGeneration } : {}) }) : null;
+export function readChatHistoryGeneration(): string {
+  return readHistoryMarkers().clearGeneration;
+}
+
+/** Store deletion markers and entries in one atomic write. */
+function writeHistory(entries: RecentChat[], { clearGeneration, removedChatKeys } = readHistoryMarkers()): boolean {
+  const next = entries.length || clearGeneration || removedChatKeys.length
+    ? JSON.stringify({
+      appVersion: CURRENT_APP_VERSION,
+      entries,
+      ...(clearGeneration ? { clearGeneration } : {}),
+      ...(removedChatKeys.length ? { removedChatKeys } : {}),
+    }) : null;
   if (localStorage.getItem(AI_HISTORY_STORAGE_KEY) === next) return false;
   if (next) localStorage.setItem(AI_HISTORY_STORAGE_KEY, next);
   else localStorage.removeItem(AI_HISTORY_STORAGE_KEY);
@@ -105,29 +122,41 @@ function parseChatHistory(raw: string | null, now: number): RecentChat[] {
 
 export function saveChatHistory(conversation: StoredChatConversation, create = false, signal?: AbortSignal): Promise<HistorySaveResult> {
   return mutateHistory<HistorySaveResult>(() => {
-    if ((conversation.historyGeneration ?? '') !== readChatHistoryGeneration()) return { result: 'cleared', changed: false };
+    const markers = readHistoryMarkers();
+    if ((conversation.historyGeneration ?? '') !== markers.clearGeneration) return { result: 'cleared', changed: false };
     const entries = readChatHistory();
-    const index = entries.findIndex(entry => chatKey(entry.conversation) === chatKey(conversation));
-    // Only the first save may create a record. Later saves must respect removal.
-    if (index < 0 && !create) return { result: 'missing', changed: false };
+    const key = chatKey(conversation);
+    const index = entries.findIndex(entry => chatKey(entry.conversation) === key);
+    // Only a first save may create a record, and Remove also blocks first-save retries.
+    if (markers.removedChatKeys.includes(key) || (index < 0 && !create)) return { result: 'missing', changed: false };
     const lastActivityAt = conversation.lastActivityAt ?? Date.now();
     if (lastActivityAt + HISTORY_RETENTION_MS <= Date.now()) return { result: 'expired', changed: false };
-    if (index >= 0 && entries[index].lastActivityAt > lastActivityAt) return { result: 'newer', changed: false };
+    const existing = entries[index];
+    if (existing && (
+      existing.lastActivityAt > lastActivityAt
+      || (existing.lastActivityAt === lastActivityAt
+        && (existing.conversation.sessionEventId ?? 0) > (conversation.sessionEventId ?? 0))
+    )) return { result: 'newer', changed: false };
     const entry = { conversation, lastActivityAt };
     if (index < 0) entries.push(entry);
     else entries[index] = entry;
-    return { result: 'saved', changed: writeHistory(entries) };
+    return { result: 'saved', changed: writeHistory(entries, markers) };
   }, signal);
 }
 
 export function forgetChat(key: string): Promise<void> {
-  return mutateHistory(() => ({ result: undefined, changed: writeHistory(readChatHistory().filter(entry => chatKey(entry.conversation) !== key)) }));
+  return mutateHistory(() => {
+    const markers = readHistoryMarkers();
+    if (!markers.removedChatKeys.includes(key)) markers.removedChatKeys.push(key);
+    const entries = readChatHistory().filter(entry => chatKey(entry.conversation) !== key);
+    return { result: undefined, changed: writeHistory(entries, markers) };
+  });
 }
 
 export function clearChatHistory(): Promise<void> {
   return mutateHistory(() => {
     const clearGeneration = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
-    return { result: undefined, changed: writeHistory([], clearGeneration) };
+    return { result: undefined, changed: writeHistory([], { clearGeneration, removedChatKeys: [] }) };
   });
 }
 

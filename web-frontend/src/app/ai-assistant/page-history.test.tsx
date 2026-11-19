@@ -109,7 +109,7 @@ describe('AiAssistantPage', () => {
     await user.type(input, 'Continue forgotten conversation');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     act(() => window.dispatchEvent(new Event('pagehide')));
-    expect(localStorage.getItem(AI_HISTORY_STORAGE_KEY)).toBeNull();
+    expect(readChatHistory()).toEqual([]);
     expect(sessionStorage.getItem('nurse-scheduling-ai-conversation')).toBeNull();
     expect(mockStopSession).not.toHaveBeenCalled();
   });
@@ -329,10 +329,12 @@ describe('AiAssistantPage', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     await within(history).findByRole('button', { name: /^Keep this chat/ });
-    const remove = Storage.prototype.removeItem;
-    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(function (this: Storage, key: string) {
-      if (this === localStorage && key === AI_HISTORY_STORAGE_KEY) throw new Error('Storage unavailable');
-      remove.call(this, key);
+    const write = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (this === localStorage && key === AI_HISTORY_STORAGE_KEY && JSON.parse(value).removedChatKeys) {
+        throw new Error('Storage unavailable');
+      }
+      write.call(this, key, value);
     });
     await user.click(within(history).getByRole('button', { name: 'Remove chat: Keep this chat' }));
     expect(await screen.findByText('This chat could not be removed from browser storage.')).toBeInTheDocument();

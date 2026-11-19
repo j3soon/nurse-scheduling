@@ -33,7 +33,7 @@ All records below use `localStorage` except the active conversation.
 | --- | --- | --- |
 | `nurse-scheduling-spec` | Schedule Spec and Undo/Redo history. | No automatic expiry. |
 | `nurse-scheduling-optimize-server-options` | Optimize backend endpoints, selected endpoint, remembered tokens, and saving `appVersion`. | No automatic expiry. |
-| `nurse-scheduling-ai-history` | Recent conversation snapshots, activity times, saving `appVersion`, and a Clear history marker. | Entries expire seven days after activity. The clear marker has no automatic expiry. |
+| `nurse-scheduling-ai-history` | Recent conversation snapshots, activity times, saving `appVersion`, and deletion markers. | Entries expire seven days after activity. Clear history replaces the deletion markers with a new clear marker. |
 | `nurse-scheduling-ai-conversation` | Active conversation snapshot in `sessionStorage`. | Tab session, subject to the seven-day activity check. |
 | `nurse-scheduling-ai-data` | Display preferences for reasoning, tools, turn costs, models, and Chinese conversion. | No automatic expiry. |
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
@@ -96,7 +96,7 @@ a hidden page, navigation, or a conversation switch flushes the latest snapshot.
 Failure in tab storage does not prevent a shared-history save.
 
 The tab snapshot keeps `historyPending` until the first shared save succeeds.
-Reload can retry that save unless Clear history has invalidated it. A delayed
+Reload can retry that save until Remove or Clear history invalidates it. A delayed
 save completion updates recovery metadata only for its original conversation
 and preserves the latest transcript and cursor.
 Closing the tab can interrupt queued shared saves, so page-close handlers do not
@@ -128,9 +128,10 @@ markers match. An absent marker means no Clear has occurred. Cleanup and removal
 preserve the latest marker even when no entries remain. A failed Clear write
 changes neither the marker nor the entries.
 
-Individual Remove has no persistent deletion marker. A duplicated tab that copied
-an unacknowledged first-save backup can recreate that chat after Remove. Use Clear
-history when pending recovery from other tabs must also stay excluded.
+Remove saves the chat's endpoint and session ID in `removedChatKeys` in the
+same write that deletes the transcript. The marker blocks stale first-save
+retries for that chat across tabs and reloads. Clear history replaces these
+markers with a new `clearGeneration`.
 
 Backend retention is separate. A chat can become unavailable after expiry or a
 server restart even while a local record remains. Recent chats are a recovery
@@ -158,10 +159,10 @@ be saved, removed, cleared, or pruned. The page shows a warning. The open chat a
 tab recovery continue to work. This includes plain HTTP LAN origins where Web
 Locks are unavailable.
 
-Locking orders storage operations. It does not merge conflicting snapshots of the
-same chat. `saveChatHistory` rejects a snapshot when the stored activity timestamp
-is strictly newer. A tab receiving older events later can still have a newer
-activity timestamp and overwrite a more advanced snapshot.
+When tabs save snapshots of the same chat, `saveChatHistory` prefers the newer
+activity timestamp. If the timestamps match, it rejects a snapshot whose event
+cursor is behind the stored cursor. A tab receiving older events later can still
+have a newer activity timestamp and overwrite a more advanced snapshot.
 
 Overwrites do not change another open tab's in-memory conversation or backend
 execution. Restoring an older snapshot can require additional backend replay.

@@ -213,6 +213,24 @@ test('removing an open chat cancels waiting updates and prevents later saves', a
   expect(await tabSnapshot(page)).toBeNull();
 });
 
+test('keeps a removed chat out of history when another tab restores a pending first save', async ({ page, context }) => {
+  await openChat(page, 'removed');
+  await ask(page, 'Remove this chat');
+  await expect.poll(async () => (await tabSnapshot(page))?.historyPending).toBe(false);
+  const unacknowledged = { ...await tabSnapshot(page), historyPending: true };
+  await page.getByRole('button', { name: 'Remove chat: Remove this chat' }).click();
+  await expect.poll(() => storedIds(page)).toEqual([]);
+
+  const stale = await context.newPage();
+  await stale.addInitScript(({ key, snapshot }) => sessionStorage.setItem(key, JSON.stringify(snapshot)),
+    { key: tabKey, snapshot: unacknowledged });
+  await openChat(stale, 'removed');
+  await expect(stale.getByRole('region', { name: 'Chat messages' }).getByText('Answer 1.', { exact: true })).toBeVisible();
+  await stale.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await expect.poll(() => tabSnapshot(stale)).toBeNull();
+  expect(await storedIds(stale)).toEqual([]);
+});
+
 test('clearing history cancels a waiting first save and keeps it forgotten', async ({ page, context }) => {
   await openChat(page, 'first');
   await ask(page, 'Older chat');
