@@ -26,9 +26,9 @@ The app creates one date item per day and automatic groups such as `ALL`,
 
 !!! warning "Changing an established range"
 
-    Rules lose references to dates that disappear. References can also be
-    removed when the generated date ID format changes. Review every rule after
-    changing the range.
+    Rules keep references to dates that stay in range, even when their
+    displayed IDs change. Rules lose references to dates that leave the range.
+    Review every rule after changing the range.
 
 ## Add date groups
 
