@@ -11,7 +11,7 @@ changed, why, and is it safe" without a terminal.
 
 Detect the session location with `test -f /.dockerenv` and resolve
 `artifacts/` from `git rev-parse --show-toplevel`. A dev container mounts the
-checkout at `/workspace`; a host checkout uses the local clone path.
+checkout at `/app`; a host checkout uses the local clone path.
 
 ## Gather commit facts
 

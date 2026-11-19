@@ -78,7 +78,7 @@ class CheckDocsLinksTests(unittest.TestCase):
 
     def test_relative_links_cannot_leave_the_docs_root(self):
         page = "site/developer-guide/containers/index.html"
-        self.write(page, '<a href="/experimental-ai/">Open the app</a>')
+        self.write(page, '<a href="/ai-assistant/">Open the app</a>')
         self.assertEqual(check_links(self.root), [])
         self.write(
             page,

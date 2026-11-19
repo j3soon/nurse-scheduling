@@ -1,4 +1,4 @@
-# People
+# People (人員)
 
 [Open People](https://nursescheduling.org/people){ .md-button .md-button--primary }
 

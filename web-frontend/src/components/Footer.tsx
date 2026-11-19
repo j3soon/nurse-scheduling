@@ -37,7 +37,7 @@ import { CURRENT_APP_VERSION } from '@/utils/version';
 export default function Footer() {
   const { t } = useI18n();
   const pathname = usePathname();
-  if (pathname === '/experimental-ai') return null;
+  if (pathname === '/ai-assistant') return null;
 
   return (
     // The bottom padding on phones keeps the floating Feedback button clear of the text.

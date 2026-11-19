@@ -5,8 +5,9 @@ The app uses the Next.js App Router. Shared code lives under `src/components/`,
 
 ## Commands
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
-section. In a dev container the checkout mounts at `/workspace/web-frontend`
-and the toolchain comes preinstalled. On a host checkout, run from your
+section. In a dev container the main clone mounts at `/app`. Resolve the
+current checkout with `git rev-parse --show-toplevel` and use its
+`web-frontend/` directory. The toolchain comes preinstalled. On a host checkout, run from your
 local `web-frontend/` clone and run `bun install --frozen-lockfile` before
 the other commands.
 
@@ -109,7 +110,7 @@ by its label or content. A foreground stream can prepend a system message after
 the export snapshot, so message position is not stable.
 Check saved transcript reconstruction against live message order as well as export
 byte parity. Include steering before output and optimizer events between replies.
-Run `experimental-ai-rendering.spec.ts` for transcript, activity, Markdown, cost,
+Run `ai-assistant-rendering.spec.ts` for transcript, activity, Markdown, cost,
 or shared-style changes. It compares the current page and Python exporter from
 one event scenario, including disclosure behavior and browser screenshots.
 Extend the scenario or its variants when adding a transcript activity kind.
@@ -124,7 +125,7 @@ Both affected commands accept `--base REF` to include committed branch changes
 since the merge base with `REF`, `--list` to inspect selection, and `--full` to
 run their whole suite. `test:e2e:affected` passes its first undefined option
 and every later argument to Playwright. For example,
-`bun run test:e2e:affected e2e/experimental-ai-basic.spec.ts -g 'model'` runs
+`bun run test:e2e:affected e2e/ai-assistant-basic.spec.ts -g 'model'` runs
 the matching tests of that spec. `test:e2e:affected` cannot infer browser
 coverage from changed app source or public assets. Without explicit spec paths or `--full`,
 it fails rather than silently skipping those changes. Every Playwright run
@@ -180,8 +181,8 @@ explicitly when an E2E build must use another version.
 Persist the saving app version with Optimize and Export backend settings. Add
 targeted migrations for known older app versions or legacy shapes, and preserve
 unrecognized versioned settings until a migration is defined.
-After decoding legacy browser storage, check the current key again so a newer
-save from another tab takes precedence over the migration.
+After decoding browser storage, check the current key again before rewriting it.
+Preserve newer saves and deletions from another tab during migration or cleanup.
 
 Send backend requests through the page's authorized fetch helper so the selected
 backend's token is attached. Job events use `EventSource` with the backend's
@@ -196,6 +197,10 @@ material to the change.
 Page-title help icons link to the matching Zensical page under `/docs`. Keep
 the mapping in `src/constants/urls.ts` synchronized with `../zensical.toml`.
 
+When renaming an app route, update path-based UI behavior and affected-test
+selectors. Preserve its published URL with a redirect. Test query parameters,
+fragments, and Back navigation against the static build.
+
 Protect transient in-memory user work with `useTabSwitchWarning` when changing
 tabs would discard it. Add a `beforeunload` guard when reload or close also
 destroys that state.
@@ -204,7 +209,7 @@ Derive the AI context percentage and token count from the same backend token
 value and model context limit. Label estimates. Keep character retention limits
 out of the context percentage.
 
-Experimental AI controls must follow backend `/capabilities` responses. The
+AI Assistant controls must follow backend `/capabilities` responses. The
 backend remains authoritative for feature enablement and input limits.
 Keep the chat textarea editable while submission is unavailable. Guard Send and
 Queue separately. Restore draft focus when a user submits, without moving focus
@@ -286,6 +291,14 @@ Keep local history expiry separate from backend session expiry. Test that forget
 an open chat also prevents later saves and pagehide from recreating its record.
 Scope transcript assertions to the Chat messages region when history titles repeat
 the same question.
+Keep every shared AI history mutation under the same Web Lock. Keep tab recovery
+synchronous and scope asynchronous save completions to their conversation. Test
+contention with real browser locks, including reload, navigation, and closing the lock holder.
+Clear history must invalidate earlier chats' first-save retries across tabs and
+reloads. Keep its persistent marker in the locked history record, including when
+the list is empty. Forgetting must clear only the matching tab backup even when
+the AI page has unmounted.
+Failed session creation and retries remain in the original chat's clear boundary.
 
 For session actions, check the action's full server event sequence through the
 client decoder and transcript. Include `model_input`, not only `run_start`, text,

@@ -282,6 +282,7 @@ async def run_case(
                         model,
                         count=step.value.get("count"),
                         context=step.value.get("judge_context", "replies"),
+                        opencc=step.value.get("opencc", False),
                     )
                 finally:
                     elapsed = perf_counter() - judge_started
@@ -319,7 +320,7 @@ async def run_cases(
     jobs: int = 1,
     repeat: int = 1,
 ) -> bool:
-    """Run independent conversations concurrently, retaining every failure."""
+    """Run independent conversations concurrently, applying each case's pass threshold."""
     if jobs < 1 or repeat < 1:
         raise ValueError("jobs and repeat must be positive")
     started = perf_counter()
@@ -332,9 +333,10 @@ async def run_cases(
     async def attempts(case, repetition):
         results = []
         label = case.path.stem if repeat == 1 else f"{case.path.stem} (run {repetition})"
-        for attempt in range(1, diagnostic_attempts + 1):
+        attempt_count = case.attempts if case.attempts > 1 else diagnostic_attempts
+        relative = case.path.relative_to(TESTCASES) if case.path.is_relative_to(TESTCASES) else Path(case.path.name)
+        for attempt in range(1, attempt_count + 1):
             print(f"Attempt {attempt}: {case.path} (run {repetition}/{repeat})", flush=True)
-            relative = case.path.relative_to(TESTCASES) if case.path.is_relative_to(TESTCASES) else Path(case.path.name)
             directory = relative.with_suffix("")
             if repeat > 1:
                 directory /= f"run-{repetition}"
@@ -360,20 +362,31 @@ async def run_cases(
                     "timing": asdict(timing),
                 }
             )
-            if attempt == 1 and passed:
+            if case.attempts == 1 and attempt == 1 and passed:
                 break
-        return results
+        passed_attempts = sum(result["passed"] for result in results)
+        required_passes = case.required_passes if case.attempts > 1 else len(results)
+        return results, {
+            "case": label,
+            "testcase": relative.as_posix(),
+            "passed": passed_attempts >= required_passes,
+            "passed_attempts": passed_attempts,
+            "executed_attempts": len(results),
+            "required_passes": required_passes,
+        }
 
     batches = await asyncio.gather(*(run(case, repetition) for case in cases for repetition in range(1, repeat + 1)))
-    results = [result for batch in batches for result in batch]
+    results = [result for batch, _ in batches for result in batch]
+    outcomes = [outcome for _, outcome in batches]
     elapsed = perf_counter() - started
     if output_dir is not None:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "timings.json").write_text(
-            json.dumps({"elapsed_seconds": elapsed, "attempts": results}, indent=2) + "\n", encoding="utf-8"
+            json.dumps({"elapsed_seconds": elapsed, "attempts": results, "outcomes": outcomes}, indent=2) + "\n",
+            encoding="utf-8",
         )
-    print_summary(results, elapsed_seconds=elapsed)
-    return all(result["passed"] for result in results)
+    print_summary(results, outcomes=outcomes, elapsed_seconds=elapsed)
+    return all(outcome["passed"] for outcome in outcomes)
 
 
 TRANSCRIPTS = ROOT.parents[2] / "artifacts" / "ai-testcases"
@@ -432,7 +445,8 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         choices=range(1, 4),
         default=1,
-        help="total conversation and judge attempts after initial failure, without clearing failure (default: 1)",
+        help="diagnostic conversation and judge attempts after failure, without clearing it. "
+        "Explicit testcase attempts override the conversation count (default: 1)",
     )
     parser.add_argument("--jobs", type=int, help="lower the automatically discovered concurrency limit")
     parser.add_argument("--repeat", type=int, default=1, help="independent runs per testcase (default: 1)")

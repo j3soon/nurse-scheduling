@@ -22,8 +22,10 @@
 import asyncio
 import json
 import re
+import subprocess
 from dataclasses import replace
 from datetime import datetime
+from itertools import product
 
 import httpx
 import pytest
@@ -42,6 +44,7 @@ from nurse_scheduling.ai.sandbox.fake import FakeSandboxBackend, FakeSandboxFact
 from nurse_scheduling.ai.transcript import ToolCall
 from nurse_scheduling.ai.workspace import WORKSPACE_SCHEDULE_SPEC
 from tests.ai.assertions import check_event, check_schedule
+from tests.ai.display_text import displayed_text
 from tests.ai.judge import evaluate
 from tests.ai.runner import DatedFactory, _timezone, main, run_case, run_cases
 from tests.ai.schema import FIXTURES, TESTCASES, DefinitionError, Step, load_case, load_yaml
@@ -75,6 +78,61 @@ def test_parser_retains_order_dates_and_attachment_lists(tmp_path):
     assert [step.kind for step in case.steps] == ["date", "yaml", "user", "tool", "assistant", "schedule"]
     assert case.steps[0].value.isoformat() == "2026-10-25T09:00:00+08:00"
     assert case.steps[2].options["attachment"] == (FIXTURES / "people.txt", FIXTURES / "empty.yaml")
+
+
+@pytest.mark.parametrize(
+    ("policy", "attempts", "required_passes"),
+    [("", 1, 1), ("attempts: 3\n", 3, 3), ("attempts: 3\nrequired_passes: 2\n", 3, 2)],
+    ids=["default", "all-attempts-required", "two-of-three"],
+)
+def test_parser_retains_attempt_policy(tmp_path, policy, attempts, required_passes):
+    case = definition(tmp_path, policy + "steps: [{user: hi}]")
+    assert (case.attempts, case.required_passes) == (attempts, required_passes)
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "attempts: 0",
+        "attempts: -1",
+        "attempts: true",
+        "attempts: 1.5",
+        "attempts: '3'",
+        "attempts: null",
+        "required_passes: 0",
+        "required_passes: -1",
+        "required_passes: true",
+        "required_passes: 1.5",
+        "required_passes: '1'",
+        "required_passes: null",
+        "required_passes: 2",
+        "attempts: 3\nrequired_passes: 4",
+    ],
+    ids=[
+        "zero-attempts",
+        "negative-attempts",
+        "boolean-attempts",
+        "fractional-attempts",
+        "string-attempts",
+        "null-attempts",
+        "zero-required",
+        "negative-required",
+        "boolean-required",
+        "fractional-required",
+        "string-required",
+        "null-required",
+        "required-exceeds-default",
+        "required-exceeds-attempts",
+    ],
+)
+def test_invalid_attempt_policies_fail_without_credentials(tmp_path, policy):
+    with pytest.raises(DefinitionError, match="attempts"):
+        definition(tmp_path, policy + "\nsteps: [{user: hi}]")
+
+
+def test_traditional_chinese_case_requires_two_of_three_conversations():
+    case = load_case(TESTCASES / "basics" / "01_lang_traditional_chinese.yaml")
+    assert (case.attempts, case.required_passes) == (3, 2)
 
 
 @pytest.mark.parametrize(
@@ -204,6 +262,91 @@ def test_ordered_events_and_case_matching():
         check_event(tool, events, cursor)
     with pytest.raises(AssertionError):
         check_event(tool, [], 0)  # A prior turn's calls cannot satisfy this turn.
+
+
+def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {contains_all: [首頁, 排班請求, AI 助理], case_sensitive: true}}]",
+    )
+    assertion = case.steps[1]
+    assert check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、AI 助理"}], 0) == 1
+    with pytest.raises(AssertionError):
+        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求"}], 0)
+    with pytest.raises(AssertionError):
+        check_event(
+            assertion,
+            [
+                {"kind": "assistant", "text": "首頁、排班請求"},
+                {"kind": "assistant", "text": "AI 助理"},
+            ],
+            0,
+        )
+    with pytest.raises(AssertionError):
+        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、ai 助理"}], 0)
+
+
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
+def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path, monkeypatch, default_encoding):
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: default_encoding)
+    reply = "**人员**管理。 [人员链接](https://example.com/人员)\n\n> 人员引用\n\n`人员代码`"
+    shown = displayed_text(reply)
+    assert "**" not in shown
+    assert "人員管理" in shown
+    assert "人员链接" in shown
+    assert "人员引用" in shown
+    assert "人员代码" in shown
+    case = definition(
+        tmp_path,
+        "steps: [{user: hi}, {assistant: {contains_all: [人員管理], opencc: true}}]",
+    )
+    assert check_event(case.steps[1], [{"kind": "assistant", "text": reply}], 0) == 1
+    raw = definition(tmp_path, "steps: [{user: hi}, {assistant: {contains_all: [人員管理]}}]")
+    with pytest.raises(AssertionError):
+        check_event(raw.steps[1], [{"kind": "assistant", "text": reply}], 0)
+
+
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        ("> [来源](https://example.com) 人员引用\n\n人员正文", "来源 人员引用\n人員正文\n"),
+        ("> > 人员内层\n>\n> 人员外层\n\n人员正文", "人员内层\n人员外层\n人員正文\n"),
+    ],
+)
+def test_opencc_preserves_text_in_quotes_after_inner_markdown(markdown, expected):
+    assert displayed_text(markdown) == expected
+
+
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
+def test_opencc_judge_sees_displayed_text_and_transcript_retains_raw(tmp_path, monkeypatch, default_encoding):
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: default_encoding)
+    case = definition(
+        tmp_path,
+        "steps: [{user: 請介紹頁面}, {assistant: {contains_all: [人員管理], opencc: true, judge: Check the page.}}]",
+    )
+    provider = ScriptedProvider([[TextDelta("**人员**管理。"), ResponseEnd("stop")]])
+    judge = ScriptedProvider([[TextDelta('{"passed": true, "reason": "Page described."}'), ResponseEnd("stop")]])
+    transcript = tmp_path / "attempt.md"
+    assert asyncio.run(
+        run_case(case, provider, settings(), FakeSandboxFactory(), judge_provider=judge, transcript_path=transcript)
+    )
+    evidence = json.loads(judge.requests[0][1]["content"])
+    assert evidence["conversation"][0]["events"][0]["text"] == "人員管理。\n"
+    assert "**人员**管理。" in transcript.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("phrases", [[], [True], ["valid", ""]])
+def test_invalid_contains_all_definitions(tmp_path, phrases):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"contains_all": phrases}}]})
+    with pytest.raises(DefinitionError, match="contains_all"):
+        definition(tmp_path, text)
+
+
+@pytest.mark.parametrize("value", [None, 1, "true"])
+def test_invalid_opencc_definition(tmp_path, value):
+    text = json.dumps({"steps": [{"user": "hi"}, {"assistant": {"judge": "Check reply.", "opencc": value}}]})
+    with pytest.raises(DefinitionError, match="opencc"):
+        definition(tmp_path, text)
 
 
 def test_schedule_additions_are_exact_and_keep_existing_item_order():
@@ -714,9 +857,9 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
 @pytest.mark.parametrize(
     ("reply", "passed"),
     [
-        ("You're already here in the Experimental AI chat.", True),
-        ("你已經在這裡了！這個對話窗就是 app 中的 Experimental AI 助手，不需要另外開啟。", True),
-        ("Open Experimental AI from the menu to reach the assistant.", False),
+        ("You're already here in the AI Assistant chat.", True),
+        ("你已經在這裡了！這個對話窗就是 app 中的 AI 助理，不需要另外開啟。", True),
+        ("Open AI Assistant from the menu to reach the assistant.", False),
     ],
     ids=["english", "traditional-chinese", "navigation-only"],
 )
@@ -828,11 +971,84 @@ def test_diagnostic_attempts_preserve_initial_failure_and_isolate_history(tmp_pa
     for attempt, reply in enumerate(replies, start=1):
         assert f"Attempt {attempt}:" in log
         assert f"| case | {attempt} | {'PASS' if reply == 'expected' else 'FAIL'} |" in log
-    assert f"| case | {sum(reply != 'expected' for reply in replies)}/{len(replies)} |" in log
+    assert (
+        f"| case | {'PASS' if passed else 'FAIL'} | {sum(reply == 'expected' for reply in replies)}/{len(replies)} | "
+        f"{len(replies)} |" in log
+    )
     transcripts = sorted((output_dir / "case").glob("attempt-*.md"))
     assert len(transcripts) == len(replies)
     for path, reply in zip(transcripts, replies, strict=True):
         assert reply in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("diagnostic_attempts", [1, 3], ids=["local", "ci-diagnostics"])
+@pytest.mark.parametrize(
+    "verdicts",
+    list(product([False, True], repeat=3)),
+    ids=lambda items: "-".join("pass" if v else "fail" for v in items),
+)
+def test_two_of_three_always_runs_every_conversation(tmp_path, capsys, verdicts, diagnostic_attempts):
+    case = definition(
+        tmp_path,
+        "attempts: 3\nrequired_passes: 2\nsteps: [{user: hi}, {assistant: {contains_any: [expected]}}]",
+    )
+    provider = ScriptedProvider(
+        [
+            response
+            for passed in verdicts
+            for response in (
+                [tool_call("read", "read", json.dumps({"path": WORKSPACE_SCHEDULE_SPEC}))],
+                [TextDelta("expected" if passed else "wrong"), ResponseEnd("stop")],
+            )
+        ]
+    )
+    factory = FakeSandboxFactory()
+    output_dir = tmp_path / "results"
+    passed = asyncio.run(
+        run_cases([case], provider, settings(), factory, diagnostic_attempts=diagnostic_attempts, output_dir=output_dir)
+    )
+    assert passed is (sum(verdicts) >= 2)
+    assert len(factory.created) == 3 and all(sandbox.closed for sandbox in factory.created)
+    assert all(sum(message["role"] == "user" for message in request) == 1 for request in provider.requests)
+    assert len(list((output_dir / "case").glob("attempt-*.md"))) == 3
+    record = json.loads((output_dir / "timings.json").read_text(encoding="utf-8"))
+    assert [item["passed"] for item in record["attempts"]] == list(verdicts)
+    assert record["outcomes"] == [
+        {
+            "case": "case",
+            "testcase": "case.yaml",
+            "passed": passed,
+            "passed_attempts": sum(verdicts),
+            "executed_attempts": 3,
+            "required_passes": 2,
+        }
+    ]
+    assert f"| case | {'PASS' if passed else 'FAIL'} | {sum(verdicts)}/3 | 2 |" in capsys.readouterr().out
+
+
+def test_passes_are_not_pooled_between_repetitions_or_cases(tmp_path):
+    case = definition(
+        tmp_path,
+        "attempts: 3\nrequired_passes: 2\nsteps: [{user: hi}, {assistant: {contains_any: [expected]}}]",
+    )
+    strict_case = replace(case, path=tmp_path / "strict.yaml", attempts=1, required_passes=1)
+    # One repeated case passes. Another fails with one pass. A strict case still fails.
+    provider = ScriptedProvider(
+        [
+            [TextDelta(reply), ResponseEnd("stop")]
+            for reply in ["expected"] * 4 + ["wrong", "wrong", "expected", "wrong"]
+        ]
+    )
+    assert not asyncio.run(
+        run_cases(
+            [case, strict_case], provider, settings(), FakeSandboxFactory(), repeat=2, output_dir=tmp_path / "results"
+        )
+    )
+    record = json.loads((tmp_path / "results/timings.json").read_text(encoding="utf-8"))
+    assert [outcome["passed"] for outcome in record["outcomes"]] == [True, False, True, False]
+    assert [outcome["required_passes"] for outcome in record["outcomes"]] == [2, 2, 1, 1]
+    assert len(list((tmp_path / "results/case/run-1").glob("attempt-*.md"))) == 3
+    assert len(list((tmp_path / "results/case/run-2").glob("attempt-*.md"))) == 3
 
 
 def test_parallel_repetitions_bound_concurrency_and_retain_failed_attempts(tmp_path, monkeypatch):
@@ -1224,9 +1440,9 @@ def test_judge_point_count_reports_missing_points_in_transcript(tmp_path, count)
     ("reply", "judge_pass", "expected"),
     [
         ("You're already here.", True, True),
-        ("You already know the menu. Go to Experimental AI.", False, False),
+        ("You already know the menu. Go to AI Assistant.", False, False),
         ("You're speaking to the AI assistant right now.", True, False),
-        ("Go to Experimental AI.", False, False),
+        ("Go to AI Assistant.", False, False),
     ],
     ids=["both-pass", "term-only", "judge-only", "both-fail"],
 )

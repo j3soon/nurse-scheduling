@@ -44,7 +44,7 @@ export default function FeedbackWidget() {
     if (!feedback) return;
     const phone = window.matchMedia('(max-width: 639px)');
     const update = () => {
-      if (pathname === '/experimental-ai' && phone.matches) {
+      if (pathname === '/ai-assistant' && phone.matches) {
         actorRef.current?.removeFromDom();
       } else {
         const actor = actorsRef.current.get(locale);

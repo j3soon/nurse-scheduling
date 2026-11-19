@@ -31,22 +31,22 @@ import {
   mockSendMessage,
   defaultCapabilities,
   seedRecentChat,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import { AI_HISTORY_STORAGE_KEY } from './chatHistory';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('protects drafts on selection and scopes credentials to the selected backend', async () => {
-    seedRecentChat('external-session', 'https://example.com/ai');
+    await seedRecentChat('external-session', 'https://example.com/ai');
     localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { 'https://example.com/ai': 'external-token' } }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     const entry = await within(history).findByRole('button', { name: /^Review external-session/ });
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
@@ -65,14 +65,14 @@ describe('ExperimentalAiPage', () => {
   it('uses optimizer identity when the deployed AI capabilities omit the app version', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
     mockGetBackendVersion.mockResolvedValue('v0.2.0-production');
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(screen.getByText(/^Backend(?:\s|$)/)).toHaveTextContent('Backend v0.2.0-production'));
     expect(mockGetBackendVersion).toHaveBeenCalledWith(expect.any(AbortSignal), '/ai');
   });
 
   it('warns about the AI service version even when the parent backend reports another build', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: 'v0.4.2-ai' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const versions = screen.getByRole('group', { name: 'AI versions' });
     await waitFor(() => expect(versions).toHaveTextContent('Backend v0.4.2-ai'));
@@ -82,7 +82,7 @@ describe('ExperimentalAiPage', () => {
   it('shows an unknown backend version without declaring a mismatch', async () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, app_version: undefined });
     mockGetBackendVersion.mockResolvedValue(undefined);
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await waitFor(() => expect(mockGetBackendVersion).toHaveBeenCalled());
     const versions = screen.getByRole('group', { name: 'AI versions' });
@@ -92,7 +92,7 @@ describe('ExperimentalAiPage', () => {
 
   it('selects localhost and locks that server after the conversation starts', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.click(screen.getByRole('button', { name: 'Change' }));
     await user.click(screen.getByRole('button', { name: 'Use localhost' }));
@@ -120,7 +120,7 @@ describe('ExperimentalAiPage', () => {
 
   it('normalizes a custom AI server URL', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.click(screen.getByRole('button', { name: 'Change' }));
     const serverInput = screen.getByRole('textbox', { name: 'Custom AI server URL' });
@@ -153,7 +153,7 @@ describe('ExperimentalAiPage', () => {
       await new Promise<void>(resolve => { finishStream = resolve; });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await waitFor(() => expect(screen.getByLabelText('AI model')).toHaveValue('fast'));
     await user.selectOptions(screen.getByLabelText('AI model'), 'deep');
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
@@ -183,7 +183,7 @@ describe('ExperimentalAiPage', () => {
       auth: { required: true, scheme: 'bearer' },
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const tokenButton = await screen.findByRole('button', { name: 'Enter token for AI assistant' });
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
@@ -216,7 +216,7 @@ describe('ExperimentalAiPage', () => {
       auth: { required: true, scheme: 'bearer' },
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
     await user.type(screen.getByLabelText('Token for AI assistant'), 'remembered-ai-token');
@@ -239,7 +239,7 @@ describe('ExperimentalAiPage', () => {
     });
     mockCreateSession.mockRejectedValueOnce(Object.assign(new Error('Invalid credentials'), { status: 401 }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.click(await screen.findByRole('button', { name: 'Enter token for AI assistant' }));
     await user.type(screen.getByLabelText('Token for AI assistant'), 'stale-ai-token');
@@ -256,7 +256,7 @@ describe('ExperimentalAiPage', () => {
   it('shows an error when capability discovery fails', async () => {
     mockGetCapabilities.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Could not load AI capabilities from /ai. Check that the AI backend is reachable from this browser.',
@@ -271,7 +271,7 @@ describe('ExperimentalAiPage', () => {
       finishStream = resolve;
     }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Think about this.');
     await user.click(screen.getByRole('button', { name: 'Send' }));

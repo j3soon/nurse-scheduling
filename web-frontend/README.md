@@ -60,7 +60,7 @@ In GitHub Actions, frontend browser integration tests run independently of unit 
 with the configured thresholds. The workflow uploads Playwright reports as build artifacts so failed CI runs keep
 browser traces and reports for debugging.
 
-`e2e/experimental-ai-rendering.spec.ts` compares the live transcript and fresh
+`e2e/ai-assistant-rendering.spec.ts` compares the live transcript and fresh
 export HTML from the same conversation events. It checks content, disclosure
 states, and screenshots at desktop and phone widths, including after reload.
 Comparison HTML, screenshots, and visual differences are saved under the

@@ -23,7 +23,7 @@ checks against PostgreSQL.
 ```sh
 ./scripts/test_core_affected.sh core/tests/test_ai_lifecycle.py
 ./scripts/test_ai_postgres.sh core/tests/test_ai_history.py::test_postgres_duplicates_and_reconnection
-(cd web-frontend && bun run test:affected -- src/app/experimental-ai/aiClient.test.ts)
+(cd web-frontend && bun run test:affected -- src/app/ai-assistant/aiClient.test.ts)
 ```
 
 The affected wrappers stop on the first failure. If integration failures appear,
@@ -31,7 +31,7 @@ collect the related deterministic failures once without that limit:
 
 ```sh
 ./scripts/test_ai_postgres.sh --command pytest -q --tb=short tests/test_ai_history.py tests/test_ai_reconnect.py
-(cd web-frontend && bunx vitest run src/app/experimental-ai/aiClient.test.ts src/app/experimental-ai/sessionEventRouter.test.ts --reporter=dot)
+(cd web-frontend && bunx vitest run src/app/ai-assistant/aiClient.test.ts src/app/ai-assistant/sessionEventRouter.test.ts --reporter=dot)
 ```
 
 Group failures by their shared interface or invariant. Fix each group, then rerun
@@ -66,7 +66,7 @@ or visible state. Deterministic API and client tests do not prove browser behavi
 The runner builds the current checkout and starts an isolated server:
 
 ```sh
-(cd web-frontend && bun run test:e2e:affected -- e2e/experimental-ai-basic.spec.ts e2e/experimental-ai-schedule-spec-changes.spec.ts)
+(cd web-frontend && bun run test:e2e:affected -- e2e/ai-assistant-basic.spec.ts e2e/ai-assistant-schedule-spec-changes.spec.ts)
 ```
 
 Select specs explicitly for app changes, since browser coverage cannot be inferred

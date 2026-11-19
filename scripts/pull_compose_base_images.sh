@@ -10,7 +10,7 @@ images=(
   "redis/redisinsight:3.8.0"
   "postgres:18-alpine"
   "dpage/pgadmin4:9.17"
-  "nginx:1.29-alpine"
+  "nginx:1.31-alpine"
   "cloudflare/cloudflared:latest"
 )
 

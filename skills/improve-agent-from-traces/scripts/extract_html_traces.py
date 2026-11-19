@@ -1,4 +1,4 @@
-"""Extract local Schedule AI Chat HTML exports without executing their contents."""
+"""Extract local AI Assistant HTML exports without executing their contents."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #
@@ -219,7 +219,7 @@ def extract_export(html, *, include_reasoning=False):
             }
         )
     if not messages:
-        raise ValueError("No Schedule AI Chat message articles found")
+        raise ValueError("No AI Assistant message articles found")
     inventory = {
         "messages": len(messages),
         "tool_calls": sum(counts.values()),

@@ -22,6 +22,7 @@ import type { Catalog } from './messages';
 
 // Taiwan terminology: 排班設定 is input, 班表 is output.
 export const zhTW: Catalog = {
+  "AI Assistant": "AI 助理",
   "Convert assistant prose for display. Saved and exported messages keep the original text.": "轉換助理回覆的顯示文字。儲存及匯出的訊息保留原文。",
   "Convert to Taiwan Traditional Chinese": "自動轉換為臺灣繁體中文",
   "Download YAML": "下載 YAML",
@@ -83,7 +84,7 @@ export const zhTW: Catalog = {
   "1. Dates": "1. 日期",
   "10. Save and Load": "10. 儲存與載入",
   "11. Optimize and Export": "11. 最佳化與匯出",
-  "12. Experimental AI": "12. 實驗性 AI",
+  "12. AI Assistant": "12. AI 助理",
   "2. People": "2. 人員",
   "3. Shift Types": "3. 班別",
   "4. Shift Type Requirements": "4. 班別需求",
@@ -377,7 +378,6 @@ export const zhTW: Catalog = {
   "Est. cost: ": "預估費用：",
   "Estimated LLM cost across this conversation, including retries and tool follow-up calls.": "此對話的預估大型語言模型費用，包含重試與工具後續呼叫。",
   "Experimental": "實驗性功能",
-  "Experimental AI": "實驗性 AI",
   "Export Chat": "匯出對話",
   "Export Layout": "匯出版面",
   "Expression *": "運算式 *",
@@ -602,6 +602,7 @@ export const zhTW: Catalog = {
   "Reasoning": "推理",
   "Reasoning · {value0} characters": "推理 · {value0} 字元",
   "Recent chats": "最近的對話",
+  "Recent chats cannot be saved or removed in this browser. The open chat remains available in this tab.": "此瀏覽器無法儲存或移除最近的對話。開啟中的對話仍可在此分頁使用。",
   "Recent chats ({value0})": "最近的對話（{value0}）",
   "Reconnecting. Your AI response continues on the server.": "重新連線中。AI 回覆會在伺服器上繼續產生。",
   "Redo": "重做",
@@ -658,7 +659,6 @@ export const zhTW: Catalog = {
   "Saving model choice…": "正在儲存模型選擇…",
   "Saving with this enabled will create or overwrite normal editable Taiwan holiday date groups once, including WORKDAY and FREEDAY.": "啟用後儲存時，會建立或覆寫一般可編輯的臺灣假日日期群組一次，包括 WORKDAY 與 FREEDAY。",
   "Scatter shift requests (developer only)": "分散排班請求（僅供開發使用）",
-  "Schedule AI Chat": "排班 AI 對話",
   "Schedule Spec check failed": "排班設定檢查失敗",
   "Schedule Spec check passed": "排班設定檢查通過",
   "Schedule Spec edit": "排班設定編輯",

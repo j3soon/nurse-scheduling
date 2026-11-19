@@ -15,7 +15,7 @@ backends. An already-open development tab can require a reload after an update.
 | --- | --- |
 | Tagged frontend → newer optimizer | Preserve the optimizer requests, responses, job controls, events, and downloads used by tagged release frontends. |
 | Browser Schedule Specs and settings | Automatically migrate Schedule Specs, Undo/Redo history, settings, and saved backend selections when their stored format changes. |
-| Experimental AI conversations | Client and server upgrade together. AI APIs, browser conversations, backend sessions, and chat history have no compatibility guarantee across updates or restarts. |
+| AI Assistant conversations | Client and server upgrade together. AI APIs, browser conversations, backend sessions, and chat history have no compatibility guarantee across updates or restarts. |
 
 The current development frontend uses the current optimizer API. It does not
 need to support an older optimizer backend. Python imports, sandbox filenames,

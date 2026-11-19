@@ -10,7 +10,9 @@ The hosted optimization workflow anonymizes individual people IDs and removes de
 
 Schedule Spec and up to 50 undo-history entries are stored in browser `localStorage` until cleared or replaced.
 
-The experimental AI page stores its selected server and display preferences in browser `localStorage`. It also stores AI API keys by server endpoint there when you choose to save them. It stores the current chat in tab `sessionStorage` so a reload can restore it. That record includes the chat messages and attachment filenames, assistant responses and reasoning, tool activity and Schedule Spec changes with before and after YAML, the full Schedule Spec last synced with the AI service, optimizer progress and job details, and session identifiers and expiry data. These values are stored as plain JSON. The page clears the chat record when you start a new chat or it detects that the session expired or became unavailable. Tab `sessionStorage` normally lasts until the tab is closed. Clearing the chat does not clear saved AI API keys or the Schedule Spec in `localStorage`.
+The AI Assistant page stores its selected server and display preferences in browser `localStorage`. It also stores AI API keys by server endpoint there when you choose to save them. It stores the current chat in tab `sessionStorage` so a reload can restore it. That record includes the chat messages and attachment filenames, assistant responses and reasoning, tool activity and Schedule Spec changes with before and after YAML, the full Schedule Spec last synced with the AI service, optimizer progress and job details, and session identifiers and expiry data. These values are stored as plain JSON. The page clears the chat record when you start a new chat or it detects that the session expired or became unavailable. Tab `sessionStorage` normally lasts until the tab is closed. Clearing the chat does not clear saved AI API keys or the Schedule Spec in `localStorage`.
+
+**Recent chats** stores copies of the chat data described above in browser `localStorage` under `nurse-scheduling-ai-history`. Each copy expires seven days after the last chat activity. The AI Assistant page prunes expired copies when it opens and while it remains open. Use **Remove** to delete an individual copy or **Clear history** to delete all copies. Remove retains the server URL and session ID until Clear history so another tab cannot restore the deleted copy.
 
 ## Analytics and Error Reporting
 
@@ -35,7 +37,7 @@ Clicking **Optimize** sends the current Schedule Spec YAML to the backend shown 
 - The backend stores a salted digest of the connecting address with each unauthenticated optimization job, never the address itself, to limit how many jobs one address runs at once. The digest is deleted with the job and is excluded from reporting telemetry. The AI service keeps the browser's address in memory to forward it with optimizer requests and does not save it.
 - Docker Redis deployments retain minimal per-job telemetry for weekly reports, including job and pseudonymous client IDs, solver, lifecycle timestamps and state, queue and runtime durations, outcome, failure code, solver status, termination reason, configured timeout, download count, people and shift type counts, and the schedule date range. Telemetry excludes the uploaded YAML, people and shift type identifiers, descriptions, filenames, IP addresses, and email addresses. Reporting does not remove telemetry. Rows expire 30 days after the end of their event week by default. Operators may send this telemetry through a configured reporting provider such as Mailgun.
 
-## Experimental AI
+## AI Assistant
 
 The hosted beta AI service is separate from the main optimization backend and requires beta API-key access. Ordinary optimization never uses this route, so users outside the beta will not trigger its data handling.
 

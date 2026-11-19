@@ -13,7 +13,7 @@ each fix in its own commit with a regression test.
 
 - Detect the session location with `test -f /.dockerenv` and resolve the
   repository root with `git rev-parse --show-toplevel`. A dev container
-  mounts the checkout at `/workspace`; a host checkout uses the local clone
+  mounts the checkout at `/app`; a host checkout uses the local clone
   path. The isolated stack needs Docker and Compose on the daemon that serves
   the user's shells, so confirm `command -v docker` and
   `docker compose ps` from a dev container before starting. When that daemon

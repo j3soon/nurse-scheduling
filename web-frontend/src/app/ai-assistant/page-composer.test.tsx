@@ -22,19 +22,19 @@
 import {
   mockRunEvents,
   mockSendMessage,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('pastes Markdown over the selection and submits the converted message', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     await user.type(input, 'Keep old ending');
@@ -47,7 +47,7 @@ describe('ExperimentalAiPage', () => {
 
   it('submits long messages without a character limit', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     expect(input).not.toHaveAttribute('maxlength');
@@ -60,7 +60,7 @@ describe('ExperimentalAiPage', () => {
 
   it('keeps complete formatted and plain text pastes', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const input = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }) as HTMLTextAreaElement;
     await waitFor(() => expect(input).toBeEnabled());
     input.focus();
@@ -74,7 +74,7 @@ describe('ExperimentalAiPage', () => {
 
   it('starts with a single-line composer and grows with the draft', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const composer = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
 
     expect(composer).toHaveAttribute('rows', '1');
@@ -120,7 +120,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
       await user.type(draft, 'Please');
       const languageSelect = await screen.findByRole('combobox', { name: 'Dictation language' });
@@ -156,6 +156,37 @@ describe('ExperimentalAiPage', () => {
     }
   });
 
+  it.each(['Send', 'New chat'])('stops dictation and ignores late results after %s clears the draft', async action => {
+    const recognition = {
+      onresult: null as ((event: { results: { transcript: string }[][] }) => void) | null,
+      onend: null as (() => void) | null,
+      onerror: null,
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    vi.stubGlobal('SpeechRecognition', function MockSpeechRecognition() { return recognition; });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    try {
+      render(<AiAssistantPage />);
+      const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
+      await user.type(draft, 'Please');
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+      const result = recognition.onresult!;
+      act(() => result({ results: [[{ transcript: 'check the schedule' }]] }));
+      expect(draft).toHaveValue('Please check the schedule');
+
+      await user.click(screen.getByRole('button', { name: action, exact: true }));
+      await waitFor(() => expect(draft).toHaveValue(''));
+      expect(recognition.stop).toHaveBeenCalledOnce();
+      expect(screen.getByRole('button', { name: 'Start dictation' })).toBeInTheDocument();
+      act(() => result({ results: [[{ transcript: 'from the old draft' }]] }));
+      expect(draft).toHaveValue('');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reports a real dictation fault but stays quiet when nobody spoke', async () => {
     const recognition = {
       continuous: false,
@@ -176,7 +207,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
 
       // Silence and a deliberate stop both arrive as errors, so neither may alarm the user.
@@ -203,7 +234,7 @@ describe('ExperimentalAiPage', () => {
     });
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
 
       const compatibilityLink = await screen.findByRole('link', { name: 'Firefox dictation compatibility' });
       expect(compatibilityLink).toHaveAttribute('href', 'https://www.firefox.com/channel/desktop/#nightly');
@@ -219,7 +250,7 @@ describe('ExperimentalAiPage', () => {
       'Mozilla/5.0 (X11; Linux x86_64; rv:158.0) Gecko/20100101 Firefox/158.0',
     );
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const setupLink = await screen.findByRole('link', { name: 'Enable experimental dictation in Firefox' });
     expect(setupLink).toHaveAttribute('href', 'https://bugzilla.mozilla.org/show_bug.cgi?id=1940906');
@@ -248,7 +279,7 @@ describe('ExperimentalAiPage', () => {
     const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
@@ -293,7 +324,7 @@ describe('ExperimentalAiPage', () => {
     const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
@@ -339,7 +370,7 @@ describe('ExperimentalAiPage', () => {
     const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
@@ -390,7 +421,7 @@ describe('ExperimentalAiPage', () => {
     const scrollY = vi.spyOn(window, 'scrollY', 'get').mockImplementation(() => scrollYPosition);
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Stream details.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(sendDelta).toBeDefined());
@@ -447,7 +478,7 @@ describe('ExperimentalAiPage', () => {
     const tool = { name: 'bash', arguments: '{"command":"date"}' };
 
     try {
-      render(<ExperimentalAiPage />);
+      render(<AiAssistantPage />);
       await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check the schedule.');
       await user.click(screen.getByRole('button', { name: 'Send' }));
       await waitFor(() => expect(startTool).toBeDefined());

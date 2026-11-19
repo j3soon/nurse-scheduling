@@ -13,17 +13,19 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Detect the session location first:
   `test -f /.dockerenv && echo container || echo host`.
 - Dev container (`/.dockerenv` exists, built from `docker/Dockerfile.dev*`):
-  the checkout mounts at `/workspace`, and module dependencies come
+  the main clone mounts at `/app`, and module dependencies come
   preinstalled system-wide. Do not run `./scripts/setup_env.sh`, install
   `uv`, or create a virtual environment. Run `python`, `pytest`, and `ruff`
   directly. In the cuOpt image, `python3` is the base 3.10 interpreter
   without project packages, so use `python`, which is Python 3.14 while CI
   uses 3.12.
+- Prefer APT packages from the distribution or the tool project's documented
+  package repository over custom source builds in development images.
 - Host checkout (no `/.dockerenv`): the repository lives wherever the user
   cloned it. Run `./scripts/setup_env.sh` for the initial Linux setup and
   follow each module's virtual-environment guidance.
 - Resolve the repository root with `git rev-parse --show-toplevel` instead of
-  assuming `/workspace` or a home-directory path. Never hardcode one
+  assuming `/app` or a home-directory path. Never hardcode one
   environment's absolute paths in scripts, skills, or documentation.
 - Host tools such as Docker, Compose, SSH keys, and browser profiles may be
   absent or different inside a dev container. Check `command -v` before using
@@ -53,6 +55,16 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   job logs, try the per-job download endpoint in `skills/fix-github-ci`.
   If log access is denied, reproduce the failing CI step locally or ask the
   user to restart the container with `GH_TOKEN`.
+- For concurrent agent edits, mount the main clone at `/app` and create one
+  checkout per agent with `scripts/add_worktree.sh NAME [BASE_REF]`. The helper
+  requires Git 2.48+ on both host and container and keeps relative Git links
+  under the ignored `.worktrees/` directory. Do not mount a linked checkout
+  alone, because its shared Git metadata lives outside that mount.
+  Each agent owns its branch and worktree. The coordinating agent reviews and
+  integrates completed commits, then removes clean checkouts with
+  `git worktree remove`. Do not reset another agent's branch or delete its work.
+  Keep dependencies and build output separate per worktree, choose distinct
+  service ports, and load shared secrets from the main clone's ignored env file.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat

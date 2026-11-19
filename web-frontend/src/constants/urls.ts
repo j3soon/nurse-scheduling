@@ -61,7 +61,7 @@ export const DOCUMENTATION_URLS = {
   exportLayout: `${DOCUMENTATION_BASE_URL}/user-guide/export-layout/`,
   saveAndLoad: `${DOCUMENTATION_BASE_URL}/user-guide/save-and-load/`,
   optimizeAndExport: `${DOCUMENTATION_BASE_URL}/user-guide/optimize-and-export/`,
-  experimentalAi: `${DOCUMENTATION_BASE_URL}/user-guide/experimental-ai/`,
+  aiAssistant: `${DOCUMENTATION_BASE_URL}/user-guide/ai-assistant/`,
 } as const;
 
 // Build URLs for environment switching (static entries)

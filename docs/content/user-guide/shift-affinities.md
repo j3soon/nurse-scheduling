@@ -1,4 +1,4 @@
-# Shift Affinities
+# Shift Affinities (同班偏好)
 
 [Open Shift Affinities](https://nursescheduling.org/shift-affinities){ .md-button .md-button--primary }
 

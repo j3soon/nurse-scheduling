@@ -39,23 +39,23 @@ import {
   MockAiHttpError,
   defaultCapabilities,
   seedRecentChat,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import { I18nProvider } from '@/i18n/I18nProvider';
 import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
 import { chatKey, readChatHistory } from './chatHistory';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('selects a recent chat without uploading or replacing browser Schedule Spec, then syncs on send', async () => {
-    const chat = seedRecentChat();
+    const chat = await seedRecentChat();
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     const history = screen.getByRole('complementary', { name: 'Recent chats' });
     await user.click(await within(history).findByRole('button', { name: /^Review older-session/ }));
     await waitFor(() => expect(mockGetSessionStatus).toHaveBeenCalledWith('older-session', null, '/ai'));
@@ -91,7 +91,7 @@ describe('ExperimentalAiPage', () => {
     let rejectUploads: (error: Error) => void = () => {};
     mockGetUploads.mockImplementation(() => new Promise((_resolve, reject) => { rejectUploads = reject; }));
     const user = userEvent.setup();
-    render(<I18nProvider><ExperimentalAiPage /></I18nProvider>);
+    render(<I18nProvider><AiAssistantPage /></I18nProvider>);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(mockGetUploads).toHaveBeenCalled());
@@ -100,7 +100,7 @@ describe('ExperimentalAiPage', () => {
 
     localStorage.setItem(LOCALE_STORAGE_KEY, 'zh-TW');
     fireEvent(window, new StorageEvent('storage', { key: LOCALE_STORAGE_KEY }));
-    expect(screen.getByRole('heading', { name: '排班 AI 對話' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'AI 助理' })).toBeInTheDocument();
     expect(mockGetUploads).toHaveBeenCalledTimes(requestCount);
     expect(signal.aborted).toBe(false);
 
@@ -122,7 +122,7 @@ describe('ExperimentalAiPage', () => {
     // The run stays active after the backend accepts the message.
     mockRunEvents.mockImplementation(() => new Promise<void>(resolve => { finishResponse = resolve; }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.upload(await screen.findByLabelText('Attach files'), new File(['workbook'], 'ward.xlsx'));
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the workbook');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -141,7 +141,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'download', downloadId: 'zip-run' });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a downloadable CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-zip');
@@ -162,7 +162,7 @@ describe('ExperimentalAiPage', () => {
       finishRemoval = () => failure ? reject(new Error('Removal failed.')) : resolve();
     }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(await screen.findByRole('button', { name: 'Remove ZIP' }));
@@ -187,7 +187,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'warning', message: 'The generated ZIP could not be retained.' });
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Make a CSV');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
@@ -203,7 +203,7 @@ describe('ExperimentalAiPage', () => {
     const open = vi.spyOn(window, 'open');
     let finishPreparation!: (url: string) => void;
     mockGetChatExportUrl.mockReturnValue(new Promise<string>(resolve => { finishPreparation = resolve; }));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
@@ -228,7 +228,7 @@ describe('ExperimentalAiPage', () => {
     mockGetCapabilities.mockResolvedValue({ ...defaultCapabilities, saved_chat_export: true });
     mockGetChatExportUrl.mockRejectedValue(new Error('The chat archive could not be created. Try again.'));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await user.click(screen.getByRole('button', { name: 'Export Chat', exact: true }));
@@ -239,7 +239,7 @@ describe('ExperimentalAiPage', () => {
 
   it('disables chat export when the server has no saved history', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     expect(screen.getByRole('button', { name: 'Export Chat', exact: true })).toBeDisabled();
@@ -259,7 +259,7 @@ describe('ExperimentalAiPage', () => {
       ],
       syncedScheduleSpec: 'description: original schedule\n', pendingRequest,
     }));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText('This question was not sent because its files did not finish uploading. Uploaded files stay in this chat. Attach second.xlsx again, then send the question.'))
       .toBeInTheDocument();
@@ -279,7 +279,7 @@ describe('ExperimentalAiPage', () => {
       })));
     }));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.upload(await screen.findByLabelText('Attach files'), new File(['a,b'], 'ward.csv', { type: 'text/csv' }));
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the file');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -299,7 +299,7 @@ describe('ExperimentalAiPage', () => {
     const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const user = userEvent.setup();
     const image = new File(['png'], 'ward.png', { type: 'image/png' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const input = await screen.findByLabelText('Attach files');
     expect(input.closest('label')?.querySelector('svg')).not.toBeNull();
@@ -331,7 +331,7 @@ describe('ExperimentalAiPage', () => {
     mockGetCapabilities.mockResolvedValueOnce(defaultCapabilities);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:dropped-image');
     const image = new File(['png'], 'dropped.png', { type: 'image/png' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const composer = await screen.findByRole('form', { name: 'Message composer' });
     const dataTransfer = { files: [image], types: ['Files'], dropEffect: 'none' };
@@ -356,7 +356,7 @@ describe('ExperimentalAiPage', () => {
     } });
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 4 }]);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
@@ -377,7 +377,7 @@ describe('ExperimentalAiPage', () => {
     } });
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 123_456_788 }]);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
@@ -393,7 +393,7 @@ describe('ExperimentalAiPage', () => {
     } });
     mockGetUploads.mockResolvedValue([{ id: 'existing', filename: 'existing.txt', media_type: 'text/plain', bytes: 3 }]);
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(await screen.findByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByRole('button', { name: 'Remove existing.txt' });
@@ -419,7 +419,7 @@ describe('ExperimentalAiPage', () => {
     mockUploadFiles.mockResolvedValueOnce([{ id: 'first', filename: 'one.txt', media_type: 'text/plain', bytes: 3 }])
       .mockRejectedValueOnce(new Error('Later batch failed.'));
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.upload(await screen.findByLabelText('Attach files'), [new File(['abc'], 'one.txt'), new File(['def'], 'two.txt')]);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Read the files.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -441,7 +441,7 @@ describe('ExperimentalAiPage', () => {
     });
     const user = userEvent.setup();
     const document = new File(['custom bytes'], 'staff.custom', { type: 'application/x-custom' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const input = await screen.findByLabelText('Attach files');
     expect(input).not.toHaveAttribute('accept');
@@ -472,7 +472,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     const pdf = new File(['pdf'], 'notes.pdf', { type: '' });
     const workbook = new File(['xlsx'], 'coverage.xlsx', { type: '' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     const input = await screen.findByLabelText('Attach files');
     await user.upload(input, [pdf, workbook]);
@@ -505,7 +505,7 @@ describe('ExperimentalAiPage', () => {
     mockUploadFiles.mockRejectedValueOnce(new Error('The upload connection failed.'));
     const user = userEvent.setup();
     const image = new File(['png'], 'ward.png', { type: 'image/png' });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.upload(await screen.findByLabelText('Attach files'), image);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check this image.');
@@ -523,7 +523,7 @@ describe('ExperimentalAiPage', () => {
       throw new Error('The temporary AI sandbox failed.');
     });
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.upload(await screen.findByLabelText('Attach files'), new File(['png'], 'ward.png', { type: 'image/png' }));
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check this image.');

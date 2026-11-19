@@ -32,7 +32,7 @@ nav = [
           { "Export Layout" = "user-guide/export-layout.md" },
           { "Save and Load" = "user-guide/save-and-load.md" },
           { "Optimize and Export" = "user-guide/optimize-and-export.md" },
-          { "Experimental AI" = "user-guide/experimental-ai.md" },
+          { "AI Assistant" = "user-guide/ai-assistant.md" },
         ]
       },
       { "Shared Reference" = "user-guide/reference.md" },

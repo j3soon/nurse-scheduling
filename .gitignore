@@ -166,3 +166,6 @@ cython_debug/
 
 # Local database backup archives.
 /backups/
+
+# Isolated checkouts for concurrent agents.
+/.worktrees/

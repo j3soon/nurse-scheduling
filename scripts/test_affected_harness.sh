@@ -77,14 +77,14 @@ assert_line "$output" 'test: tests/test_ai_chat_export.py'
 assert_line "$output" 'test: tests/test_ai_chat_archive.py'
 assert_no_line "$output" 'test: tests/test_ai_basic.py'
 output="$("$fixture_root/scripts/test_frontend_affected.sh" --list)"
-assert_line "$output" 'related: src/app/experimental-ai/chineseConversion.ts'
+assert_line "$output" 'related: src/app/ai-assistant/chineseConversion.ts'
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list)"
-assert_line "$output" 'spec: e2e/experimental-ai-rendering.spec.ts'
+assert_line "$output" 'spec: e2e/ai-assistant-rendering.spec.ts'
 rm -- "$fixture_root/thirdparty/opencc/cn2t.js"
 
 write_fixture core/nurse_scheduling/ai/chat_styles.css
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list)"
-assert_line "$output" 'spec: e2e/experimental-ai-rendering.spec.ts'
+assert_line "$output" 'spec: e2e/ai-assistant-rendering.spec.ts'
 rm -- "$fixture_root/core/nurse_scheduling/ai/chat_styles.css"
 
 printf 'change\n' >> "$fixture_root/core/nurse_scheduling/ai/pi/read.py"

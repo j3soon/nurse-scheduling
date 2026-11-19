@@ -21,7 +21,7 @@ authentication, storage, Sentry, usage reports, and diagnostics.
 - [Frontend browser storage](frontend-storage.md)
 - [Backend server](backend-server.md)
 - [Backend containers and networks](containers.md)
-- [Experimental AI assistant backend](ai-assistant.md)
+- [AI assistant backend](ai-assistant.md)
 - [Solver behavior](solvers.md)
 - [Design rationale](design-rationale.md)
 - [Project timeline](../timeline.md)

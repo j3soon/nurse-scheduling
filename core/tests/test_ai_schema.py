@@ -227,7 +227,7 @@ def test_user_guide_references_are_the_published_user_guide_markdown():
     assert set(references) == {
         path.relative_to(USER_GUIDE_DIRECTORY).as_posix() for path in USER_GUIDE_DIRECTORY.rglob("*.md")
     }
-    assert references["experimental-ai.md"] == (USER_GUIDE_DIRECTORY / "experimental-ai.md").read_text(encoding="utf-8")
+    assert references["ai-assistant.md"] == (USER_GUIDE_DIRECTORY / "ai-assistant.md").read_text(encoding="utf-8")
     assert "developer-guide" not in references
 
 

@@ -1,4 +1,4 @@
-# Shift Counts
+# Shift Counts (班次計數)
 
 [Open Shift Counts](https://nursescheduling.org/shift-counts){ .md-button .md-button--primary }
 

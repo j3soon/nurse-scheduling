@@ -4,9 +4,10 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 
 ## Setup And Commands
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
-section. In a dev container the checkout mounts at `/workspace/core`, and
-project packages are installed system-wide, so run `python`, `pytest`, and
-`ruff` directly. On a host checkout, run commands below from your local
+section. In a dev container the main clone mounts at `/app`. Resolve the
+current checkout with `git rev-parse --show-toplevel` and use its `core/`
+directory. Project packages are installed system-wide, so run `python`,
+`pytest`, and `ruff` directly. On a host checkout, run commands below from your local
 `core/` clone and create the virtual environment once with
 `uv venv --python 3.12 && source .venv/bin/activate`.
 - `uv pip install -r requirements-optional.txt`: the development install. See
@@ -154,7 +155,7 @@ services upgrade together. Older AI APIs, sessions, histories, Python imports,
 and sandbox paths do not require compatibility. Keep database schema upgrades
 and current session recovery working.
 
-## Experimental AI
+## AI Assistant
 - AI test migration: follow the root `AGENTS.md` transition policy. Use only
   focused, human-reviewed cases in `tests/ai/` for new behavior checks.
   Default pytest discovery excludes legacy evaluation modules before import.
@@ -291,7 +292,7 @@ and current session recovery working.
   browser archives before starting native downloads. Bound pending disk files and
   close them after download, expiry, preparation failure, or service shutdown.
   Share transcript styles with the frontend. Compare fresh Python HTML against
-  the current live page with `experimental-ai-rendering.spec.ts` when changing
+  the current live page with `ai-assistant-rendering.spec.ts` when changing
   chat presentation or saved-event projection. Frozen export hashes alone do
   not establish frontend parity.
 - Retry temporary provider failures automatically inside the provider request,
@@ -764,6 +765,8 @@ and current session recovery working.
   Validate definitions with `python -m tests.ai.runner validate` without AI
   credentials. Run behavior with `python -m tests.ai.runner run` and the existing
   provider and E2B settings. Read `tests/ai/README.md` before authoring cases.
+  Declare repeated-run pass thresholds in testcase YAML. Run every configured
+  attempt and retain each outcome, including failures in a passing case.
   Keep this tester independent of `ai_eval` and `ai_fixtures`. Older `ai_eval`
   code can read reviewed YAML cases for prompt evidence. Do not import `ai_eval`
   from the reviewed tester. Inspect failed replies before changing production
@@ -773,6 +776,13 @@ and current session recovery working.
   When only a judge rubric changes, use `tests.ai.judge.evaluate` to regrade
   saved replies first. Include known failures and valid alternatives before
   starting new live agent runs.
+  Before claiming that an edit to an existing testcase improves its pass rate,
+  compare old and new results under the same model and settings. Regrade the
+  same saved replies for rubric edits, then repeat live runs for prompt edits.
+  Use roughly 100 runs per version when failures are rare. Keep the edit as an
+  improvement only when comparable evidence shows a higher pass rate without
+  accepting known wrong replies. Separate model, judge, and infrastructure
+  failures. Report small or uncertain differences as unproven.
   For script checks, include isolated wrong characters in long replies, valid
   shared characters and exact source quotations. Check verdict format and
   runtime as well as classification accuracy.
@@ -798,6 +808,7 @@ and current session recovery working.
   neutral, including paths, line endings, and environment limits.
   Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
   Reconfigure stdin and stdout to UTF-8 in helpers that exchange text through pipes.
+  Set `encoding="utf-8"` on subprocess text pipes as well.
   Windows can use a legacy default encoding. Compare text-loaded references with UTF-8 text
   because text reads normalize checkout line endings. Use byte comparisons
   only when exact bytes are required.

@@ -1,4 +1,4 @@
-# Dates
+# Dates (日期)
 
 [Open Dates](https://nursescheduling.org/dates){ .md-button .md-button--primary }
 

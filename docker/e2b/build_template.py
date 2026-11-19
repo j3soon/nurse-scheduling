@@ -1,4 +1,4 @@
-"""Build the minimal E2B template used by the experimental AI assistant."""
+"""Build the minimal E2B template used by the AI assistant."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

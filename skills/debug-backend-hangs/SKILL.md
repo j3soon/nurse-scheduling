@@ -18,7 +18,7 @@ outside.
 
 - Detect the session location with `test -f /.dockerenv` and resolve the
   repository root with `git rev-parse --show-toplevel`. A dev container
-  mounts the checkout at `/workspace`; a host checkout uses the local clone
+  mounts the checkout at `/app`; a host checkout uses the local clone
   path.
 - The bypass and instrumentation steps need `docker` and Compose against the
   daemon that runs the stack. From a dev container, check `command -v docker`

@@ -33,7 +33,7 @@ All records below use `localStorage` except the active conversation.
 | --- | --- | --- |
 | `nurse-scheduling-spec` | Schedule Spec and Undo/Redo history. | No automatic expiry. |
 | `nurse-scheduling-optimize-server-options` | Optimize backend endpoints, selected endpoint, remembered tokens, and saving `appVersion`. | No automatic expiry. |
-| `nurse-scheduling-ai-history` | Recent conversation snapshots and activity times, with saving `appVersion`. | Seven days after chat activity. |
+| `nurse-scheduling-ai-history` | Recent conversation snapshots, activity times, saving `appVersion`, and deletion markers. | Entries expire seven days after activity. Clear history replaces the deletion markers with a new clear marker. |
 | `nurse-scheduling-ai-conversation` | Active conversation snapshot in `sessionStorage`. | Tab session, subject to the seven-day activity check. |
 | `nurse-scheduling-ai-data` | Display preferences for reasoning, tools, turn costs, models, and Chinese conversion. | No automatic expiry. |
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
@@ -77,8 +77,8 @@ credentials. Conversation snapshots do not contain tokens.
 
 ## AI Chat Recovery
 
-[Chat history][chat-history] stores `{ appVersion, entries }`. Each entry contains
-a conversation snapshot and `lastActivityAt`. The backend endpoint and session
+[Chat history][chat-history] stores `{ appVersion, entries, clearGeneration? }`.
+Each entry contains a conversation snapshot and `lastActivityAt`. The backend endpoint and session
 ID identify a conversation. The saving frontend version uses `appVersion`,
 without a separate numeric storage version.
 
@@ -89,25 +89,49 @@ cursor, pending request metadata, optimization state, context usage, and costs.
 The tab snapshot has no version envelope. Its `backendVersion` identifies the
 AI backend rather than the frontend.
 
-Each tab owns an in-memory conversation and event reader. After state changes,
-[the chat hook][chat-hook] waits 200 ms before constructing a snapshot and writing
-it to tab storage, then shared history. These are independent writes. Failure in
-tab storage does not prevent an attempt to save shared history. Leaving the page,
-unmounting the chat, or switching conversations flushes the pending snapshot.
-Selecting a saved chat preserves the browser's current Schedule Spec.
+Each tab owns an in-memory conversation and event reader. During streaming,
+[the chat hook][chat-hook] waits 200 ms before constructing a snapshot. It writes
+tab recovery synchronously and queues shared history separately. A finished run,
+a hidden page, navigation, or a conversation switch flushes the latest snapshot.
+Failure in tab storage does not prevent a shared-history save.
+
+The tab snapshot keeps `historyPending` until the first shared save succeeds.
+Reload can retry that save until Remove or Clear history invalidates it. A delayed
+save completion updates recovery metadata only for its original conversation
+and preserves the latest transcript and cursor.
+Closing the tab can interrupt queued shared saves, so page-close handlers do not
+wait for them. Selecting a saved chat preserves the browser's current Schedule Spec.
 
 ### Retention and Removal
 
 Chat actions and newly observed server event IDs update activity time. Reading
 or selecting a saved chat does not renew it. History reads exclude expired
-entries. The AI page also prunes storage on initialization, storage-change
-notifications, and a one-minute interval while mounted. Expired records can
-remain physically stored while the app is closed.
+entries. The AI page also prunes storage on initialization and a one-minute
+interval while mounted. Storage notifications refresh the list without writing.
+Expired records can remain physically stored while the app is closed.
 
 **Remove** and **Clear history** forget browser records without deleting backend
 sessions. Forgetting the active chat leaves it visible but prevents later saves.
 New chat, local forgetting, and session-unavailability handling clear the active
 tab record.
+
+Clear history also excludes chats already in progress in other tabs, including
+first saves that have not completed. Retrying or reloading one of these chats
+cannot add it back to Recent chats. Its open conversation remains usable. Only
+chats started after Clear history completes can enter history again.
+
+Each chat captures `historyGeneration` before its first session-creation request
+and keeps it across failed creation attempts. It saves the marker in tab recovery
+once a session exists. Clear history writes a new `clearGeneration` with
+an empty entry list in one locked storage write. Every save checks that these
+markers match. An absent marker means no Clear has occurred. Cleanup and removal
+preserve the latest marker even when no entries remain. A failed Clear write
+changes neither the marker nor the entries.
+
+Remove saves the chat's endpoint and session ID in `removedChatKeys` in the
+same write that deletes the transcript. The marker blocks stale first-save
+retries for that chat across tabs and reloads. Clear history replaces these
+markers with a new `clearGeneration`.
 
 Backend retention is separate. A chat can become unavailable after expiry or a
 server restart even while a local record remains. Recent chats are a recovery
@@ -115,17 +139,30 @@ cache. Use **Export chat** to preserve a copy independently.
 
 ### Concurrent Tabs
 
-Tabs keep separate active snapshots but share the recent-chat array.
-`saveChatHistory` rejects a snapshot when the stored activity timestamp is
-strictly newer. Ordinary updates cannot recreate a missing entry. Storage
-notifications refresh the list and detect forgotten chats without replacing an
-open tab's transcript or changing its event reader.
+Tabs keep separate active snapshots but share the recent-chat array. Save,
+Remove, Clear history, and cleanup use the exclusive [Web Lock][web-locks]
+named `nurse-scheduling-ai-history`. Each operation reads the current array
+after acquiring the lock and completes its storage write before releasing it.
+All open tabs must run the updated frontend to participate in this coordination.
 
-These checks do not make shared history transactional. A tab receiving older
-events later can have a newer activity timestamp and overwrite a more advanced
-snapshot. Concurrent writes to the whole array can also lose another chat's
-update or restore an entry removed by another tab. Storage notifications do not
-lock writers.
+Each conversation keeps one save in flight and only its latest waiting snapshot.
+Navigation back to the AI page reuses its pending writer. Creation acknowledgements
+also update the matching tab backup while the AI page is unmounted.
+Forgetting clears the matching backup even when there are no mounted listeners.
+Remove and Clear history cancel waiting saves for the open chat. Only its first
+save can create a record. Later saves cannot recreate a missing entry.
+Storage notifications refresh the list without replacing an open tab's transcript
+or changing its event reader.
+
+When browser locking is unavailable, shared history remains readable but cannot
+be saved, removed, cleared, or pruned. The page shows a warning. The open chat and
+tab recovery continue to work. This includes plain HTTP LAN origins where Web
+Locks are unavailable.
+
+When tabs save snapshots of the same chat, `saveChatHistory` prefers the newer
+activity timestamp. If the timestamps match, it rejects a snapshot whose event
+cursor is behind the stored cursor. A tab receiving older events later can still
+have a newer activity timestamp and overwrite a more advanced snapshot.
 
 Overwrites do not change another open tab's in-memory conversation or backend
 execution. Restoring an older snapshot can require additional backend replay.
@@ -146,7 +183,8 @@ through browser downloads are outside these storage keys.
 
 [schedule-storage]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/hooks/schedulingStorage.ts
 [optimize-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/optimize-and-export/page.tsx
-[ai-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/page.tsx
-[chat-history]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/chatHistory.ts
-[conversation-parser]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/chatConversation.ts
-[chat-hook]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/experimental-ai/useAiChat.ts
+[ai-page]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/page.tsx
+[chat-history]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/chatHistory.ts
+[conversation-parser]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/chatConversation.ts
+[chat-hook]: https://github.com/j3soon/nurse-scheduling/blob/dev/web-frontend/src/app/ai-assistant/useAiChat.ts
+[web-locks]: https://www.w3.org/TR/web-locks/

@@ -25,19 +25,19 @@ import {
   mockStreamSessionEvents,
   mockStopSession,
   mockQueueMessage,
-  setupExperimentalAiPageTests,
-} from '@/test/experimentalAiPage';
+  setupAiAssistantPageTests,
+} from '@/test/aiAssistantPage';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ExperimentalAiPage from './page';
+import AiAssistantPage from './page';
 import type { SessionStreamOptions } from './sessionEvents';
 
-describe('ExperimentalAiPage', () => {
-  setupExperimentalAiPageTests();
+describe('AiAssistantPage', () => {
+  setupAiAssistantPageTests();
 
   it('explains when the server does not report context usage', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     const usage = await screen.findByText('Context unavailable');
@@ -52,7 +52,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'delta', text: 'Done.' });
     });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     expect(screen.queryByText(/Context /)).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -71,7 +71,7 @@ describe('ExperimentalAiPage', () => {
       callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 600, maxChars: 2000 } });
       callbacks.onEvent({ type: 'delta', text: 'Done.' });
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Question');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
@@ -83,7 +83,7 @@ describe('ExperimentalAiPage', () => {
 
   it('compacts an idle conversation through the session stream without sending a question', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Who works Monday?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -125,7 +125,7 @@ describe('ExperimentalAiPage', () => {
     const user = userEvent.setup();
     let accept: ((id: string) => void) | undefined;
     mockCompactSession.mockImplementationOnce(() => new Promise<string>(resolve => { accept = resolve; }));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -149,7 +149,7 @@ describe('ExperimentalAiPage', () => {
 
   it('keeps compaction busy when an unrelated optimizer review finishes', async () => {
     const user = userEvent.setup();
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -170,7 +170,7 @@ describe('ExperimentalAiPage', () => {
   it('releases a rejected compaction and leaves the conversation available', async () => {
     const user = userEvent.setup();
     mockCompactSession.mockRejectedValueOnce(new Error('Compaction is unavailable.'));
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Alice works Monday.');
@@ -191,7 +191,7 @@ describe('ExperimentalAiPage', () => {
       backgroundCallbacks = callbacks;
       await new Promise<void>(() => {});
     });
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize it.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
@@ -217,7 +217,7 @@ describe('ExperimentalAiPage', () => {
       trimmedHistoryCount: 3,
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     // The event announcing the trim is behind the stored cursor, so it never replays.
     expect(await screen.findByText(/3 oldest messages are/)).toBeInTheDocument();
@@ -240,7 +240,7 @@ describe('ExperimentalAiPage', () => {
       trimmedHistoryCount: 3,
     }));
 
-    render(<ExperimentalAiPage />);
+    render(<AiAssistantPage />);
 
     expect(await screen.findByText(/This chat expired after 2 days of inactivity/)).toBeInTheDocument();
     // An expired chat sends nothing, so a warning about what it omits would mislead.

@@ -1,6 +1,6 @@
-# Experimental AI Chat
+# AI Assistant (AI 助理)
 
-[Open Experimental AI](https://nursescheduling.org/experimental-ai){ .md-button .md-button--primary }
+[Open AI Assistant](https://nursescheduling.org/ai-assistant){ .md-button .md-button--primary }
 
 !!! warning "Experimental"
     AI answers may be incorrect. Verify them against the Schedule Spec and source materials before use.
@@ -216,17 +216,17 @@ that turn's edits and keeps your current Schedule Spec.
 ## Real scenario example
 
 For the anonymized 87-person ward example, load
-`large-ward-with-87-people-2025-11.yaml`, then open **Experimental AI**. Confirm
+`large-ward-with-87-people-2025-11.yaml`, then open **AI Assistant**. Confirm
 that the snapshot shows 87 people and 30 dates before asking a question.
 
-![Experimental AI chat with the 87-person Schedule Spec loaded](../assets/images/user-guide/21-real-experimental-ai.png)
+![AI Assistant chat with the 87-person Schedule Spec loaded](../assets/images/user-guide/21-real-ai-assistant.png)
 
 The blue development-version banner appears only in non-release builds.
 
 ## Ask about a Schedule Spec {#ask-about-a-schedule}
 
 1. Finish editing or load the intended Schedule Spec.
-2. Open **Experimental AI**.
+2. Open **AI Assistant**.
 3. Confirm the displayed people and date counts. On phones, open **Chat details
    and settings** to show them.
 4. If **Attach files** is available, optionally select files and confirm the

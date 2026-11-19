@@ -106,7 +106,7 @@ async function openChat(page: Page, backend: ExportBackend, options: { saved?: b
   backend.saved = options.saved ?? true;
   backend.error = options.error ?? null;
   await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
-  await page.goto('/experimental-ai');
+  await page.goto('/ai-assistant');
   await page.getByRole('textbox', { name: '詢問目前的排班設定' }).fill('Export the saved chat.');
   await page.getByRole('button', { name: '傳送', exact: true }).click();
   await expect(page.getByText('The server has the complete chat archive.')).toBeVisible();

@@ -53,6 +53,8 @@ class Case:
 
     path: Path
     steps: tuple[Step, ...]
+    attempts: int = 1
+    required_passes: int = 1
 
 
 def load_yaml(text: str) -> Any:
@@ -148,16 +150,21 @@ def _step(number: int, raw: Any, fixtures: Path) -> Step:
     elif kind == "assistant":
         if (
             not isinstance(value, dict)
-            or set(value) - {"contains_any", "case_sensitive", "judge", "count", "judge_context"}
-            or not {"contains_any", "judge"}.intersection(value)
+            or set(value)
+            - {"contains_any", "contains_all", "case_sensitive", "judge", "count", "judge_context", "opencc"}
+            or not {"contains_any", "contains_all", "judge"}.intersection(value)
         ):
-            raise DefinitionError("assistant requires contains_any, judge, or both")
+            raise DefinitionError("assistant requires contains_any, contains_all, judge, or a combination")
         if "contains_any" in value:
             _strings(value["contains_any"], "contains_any")
-        elif "case_sensitive" in value:
-            raise DefinitionError("case_sensitive requires contains_any")
+        if "contains_all" in value:
+            _strings(value["contains_all"], "contains_all")
+        if "case_sensitive" in value and not {"contains_any", "contains_all"}.intersection(value):
+            raise DefinitionError("case_sensitive requires contains_any or contains_all")
         if "case_sensitive" in value and type(value["case_sensitive"]) is not bool:
             raise DefinitionError("case_sensitive must be a boolean")
+        if "opencc" in value and type(value["opencc"]) is not bool:
+            raise DefinitionError("assistant.opencc must be a boolean")
         if "judge" in value and (not isinstance(value["judge"], str) or not value["judge"].strip()):
             raise DefinitionError("assistant.judge must be a nonempty rubric string")
         if "judge_context" in value:
@@ -180,8 +187,19 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
     number = 0
     try:
         raw = load_yaml(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or set(raw) != {"steps"} or not isinstance(raw["steps"], list) or not raw["steps"]:
-            raise DefinitionError("testcase requires a nonempty steps list and no other top-level fields")
+        if (
+            not isinstance(raw, dict)
+            or set(raw) - {"steps", "attempts", "required_passes"}
+            or not isinstance(raw.get("steps"), list)
+            or not raw["steps"]
+        ):
+            raise DefinitionError("testcase requires a nonempty steps list and optional attempts and required_passes")
+        attempts = raw.get("attempts", 1)
+        required_passes = raw.get("required_passes", attempts)
+        if type(attempts) is not int or attempts < 1:
+            raise DefinitionError("attempts must be a positive integer")
+        if type(required_passes) is not int or not 1 <= required_passes <= attempts:
+            raise DefinitionError("required_passes must be a positive integer no greater than attempts")
         steps = []
         has_user = False
         configured = False
@@ -205,6 +223,6 @@ def load_case(path: Path, fixtures: Path = FIXTURES) -> Case:
             steps.append(step)
         if not has_user or steps[-1].kind in {"date", "yaml"}:
             raise DefinitionError("testcase must contain a user turn and cannot end with configuration")
-        return Case(path.resolve(), tuple(steps))
+        return Case(path.resolve(), tuple(steps), attempts, required_passes)
     except (DefinitionError, YAMLError, OSError) as error:
         raise DefinitionError(f"{path}: step {number}: {error}") from error

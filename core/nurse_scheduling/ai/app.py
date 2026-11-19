@@ -722,7 +722,7 @@ def create_app(
         archive = prepared_exports.take(session_id, request.query_params.get("download", ""))
         if archive is None:
             archive = await build_chat_archive(session_id, owner)
-        return ChatArchiveResponse(archive, f"schedule-ai-chat-{session_id}.zip")
+        return ChatArchiveResponse(archive, f"ai-assistant-{session_id}.zip")
 
     @app.get("/v1/sessions/{session_id}/events", dependencies=[Depends(require_auth), Depends(restore_session)])
     async def stream_session_events(

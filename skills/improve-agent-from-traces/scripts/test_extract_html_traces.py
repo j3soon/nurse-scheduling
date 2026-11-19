@@ -222,7 +222,7 @@ class ExtractHtmlTracesTests(unittest.TestCase):
             self.assertNotIn("Question.", output.getvalue())
 
     def test_unrelated_html_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "No Schedule AI Chat"):
+        with self.assertRaisesRegex(ValueError, "No AI Assistant"):
             extract_export("<html><p>Not an export.</p></html>")
 
 

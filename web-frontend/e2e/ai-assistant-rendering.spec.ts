@@ -405,7 +405,7 @@ test('persists many questions with one unchanged large Schedule Spec', async ({ 
       people: { items: [], groups: [], history: [] }, shiftTypes: { items: [], groups: [] },
       preferences: [], export: { formatting: [] },
     });
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     await replay(page, snapshot, backend);
     expect((snapshot.events.find(event => event.type === 'model_input')!.data.schedule_spec_yaml as string).length).toBeGreaterThan(100_000);
     const lastSavedAnswer = await page.evaluate(() => {
@@ -437,7 +437,7 @@ for (const variant of variants) test(`current Python export follows the live tra
   try {
     await page.clock.setFixedTime(snapshot.runs[0].started_at);
     await page.addInitScript(endpoint => localStorage.setItem('nurse-scheduling-ai-server', endpoint), backend.endpoint);
-    await page.goto('/experimental-ai');
+    await page.goto('/ai-assistant');
     for (const name of ['Show reasoning', 'Show tool activity', 'Show turn details', 'Show models']) {
       await page.getByRole('checkbox', { name, exact: true }).check();
     }

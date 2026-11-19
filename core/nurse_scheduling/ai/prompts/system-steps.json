@@ -6,7 +6,7 @@
       "current-chat-identity",
       "colleague-open-ai-chat"
     ],
-    "hypothesis": "Identifies the current chat as the Experimental AI chat instead of sending the user to another chat.",
+    "hypothesis": "Identifies the current chat as the AI Assistant chat instead of sending the user to another chat.",
     "sha256": "ae297fc7a5b24e76ffa88714c26e1e3adbe87be43bc6444b44ba6acf7a1c2c1e",
     "evidence": [
       {

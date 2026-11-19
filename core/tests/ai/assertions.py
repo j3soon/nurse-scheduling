@@ -25,6 +25,7 @@ from typing import Any
 
 from nurse_scheduling.ai.optimizer import OPTIMIZER_TOOL
 
+from .display_text import displayed_text
 from .schema import Step, load_yaml
 
 
@@ -69,12 +70,21 @@ def check_event(step: Step, events: list[dict], cursor: int) -> int:
                 event["kind"] == "tool" and event["name"] == step.value and _partial(step.options, event["arguments"])
             )
         else:
-            expected = step.value.get("contains_any")
+            expected_any = step.value.get("contains_any")
+            expected_all = step.value.get("contains_all")
             text = event.get("text", "")
-            if expected is not None and not step.value.get("case_sensitive", False):
-                text, expected = text.casefold(), [part.casefold() for part in expected]
+            if step.value.get("opencc"):
+                text = displayed_text(text)
+            if not step.value.get("case_sensitive", False):
+                text = text.casefold()
+                if expected_any is not None:
+                    expected_any = [part.casefold() for part in expected_any]
+                if expected_all is not None:
+                    expected_all = [part.casefold() for part in expected_all]
             matched = event["kind"] == "assistant" and (
-                any(part in text for part in expected) if expected is not None else bool(text.strip())
+                (expected_any is None or any(part in text for part in expected_any))
+                and (expected_all is None or all(part in text for part in expected_all))
+                and bool(text.strip())
             )
         if matched:
             return index + 1

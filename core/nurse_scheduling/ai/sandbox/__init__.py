@@ -1,4 +1,4 @@
-"""Provider-neutral disposable sandboxes for the experimental AI assistant."""
+"""Provider-neutral disposable sandboxes for the AI assistant."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

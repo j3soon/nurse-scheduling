@@ -1,4 +1,4 @@
-"""ASGI entry point for the experimental AI service."""
+"""ASGI entry point for the AI assistant service."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

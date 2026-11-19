@@ -37,7 +37,7 @@ describe('Footer', () => {
   });
 
   it('does not render on the AI chat page', () => {
-    mockUsePathname.mockReturnValue('/experimental-ai');
+    mockUsePathname.mockReturnValue('/ai-assistant');
     render(<Footer />);
 
     expect(screen.queryByRole('contentinfo')).not.toBeInTheDocument();

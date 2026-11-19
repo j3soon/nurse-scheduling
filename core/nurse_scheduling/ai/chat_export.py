@@ -818,7 +818,7 @@ def _compaction_summary_html(entry):
 
 def build_markdown_chat(messages, metadata):
     lines = [
-        "# Schedule AI Chat",
+        "# AI Assistant",
         "",
         "- Exported: " + _iso(metadata["exportedAt"]),
         "- Frontend version: " + metadata["frontendVersion"],

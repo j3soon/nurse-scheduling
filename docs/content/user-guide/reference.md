@@ -4,18 +4,19 @@
 
 | Screen | Use it for | Needed for a basic run |
 | --- | --- | --- |
-| [Home](../index.md) | Start or reset a Schedule Spec and view the app build | Once |
-| [Dates](dates.md) | Set the scheduling period and date groups | Yes |
-| [People](people.md) | Manage people and reusable groups | Yes |
-| [Shift Types](shift-types.md) | Manage working shifts and groups | Yes |
-| [Shift Type Requirements](shift-type-requirements.md) | Define staffing by shift, qualification, and date | Yes for a controlled result |
-| [Shift Requests](shift-requests.md) | Record preferred and avoided assignments | Optional |
-| [Shift Type Successions](shift-type-successions.md) | Encourage or forbid shift sequences | Optional |
-| [Shift Counts](shift-counts.md) | Set workload totals or bounds | Optional |
-| [Shift Affinities](shift-affinities.md) | Encourage or discourage working together | Optional |
-| [Export Layout](export-layout.md) | Format XLSX and add summary rows or columns | Optional |
-| [Save and Load](save-and-load.md) | Back up, restore, copy, or inspect YAML | Recommended |
-| [Optimize and Export](optimize-and-export.md) | Select a server and download the solved XLSX | Yes |
+| [Home (首頁)](../index.md) | Start or reset a Schedule Spec and view the app build | Once |
+| [Dates (日期)](dates.md) | Set the scheduling period and date groups | Yes |
+| [People (人員)](people.md) | Manage people and reusable groups | Yes |
+| [Shift Types (班別)](shift-types.md) | Manage working shifts and groups | Yes |
+| [Shift Type Requirements (班別需求)](shift-type-requirements.md) | Define staffing by shift, qualification, and date | Yes for a controlled result |
+| [Shift Requests (排班請求)](shift-requests.md) | Record preferred and avoided assignments | Optional |
+| [Shift Type Successions (班別接續)](shift-type-successions.md) | Encourage or forbid shift sequences | Optional |
+| [Shift Counts (班次計數)](shift-counts.md) | Set workload totals or bounds | Optional |
+| [Shift Affinities (同班偏好)](shift-affinities.md) | Encourage or discourage working together | Optional |
+| [Export Layout (匯出版面)](export-layout.md) | Format XLSX and add summary rows or columns | Optional |
+| [Save and Load (儲存與載入)](save-and-load.md) | Back up, restore, copy, or inspect YAML | Recommended |
+| [Optimize and Export (最佳化與匯出)](optimize-and-export.md) | Select a server and download the solved XLSX | Yes |
+| [AI Assistant (AI 助理)](ai-assistant.md) | Ask about or edit the current Schedule Spec in chat | Optional |
 
 ## Shared controls
 
@@ -42,7 +43,7 @@ tab bar always change the Schedule Spec.
 | `Ctrl+Z` or `Cmd+Z` | Undo |
 | `Ctrl+Y` or `Cmd+Y` | Redo |
 
-Tabs 10 and 11 are reached with the navigation bar or arrow keys.
+Tabs 10 through 12 are reached with the navigation bar or arrow keys.
 
 ## Weights
 

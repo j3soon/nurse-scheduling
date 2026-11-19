@@ -1,4 +1,4 @@
-# Shift Requests
+# Shift Requests (排班請求)
 
 [Open Shift Requests](https://nursescheduling.org/shift-requests){ .md-button .md-button--primary }
 

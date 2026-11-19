@@ -16,7 +16,7 @@ locally.
 
 ## 1. Start a Schedule Spec {#1-start-a-schedule}
 
-1. Open the [Nurse Scheduling app](https://nursescheduling.org/).
+1. Open the [Nurse Scheduling app](https://nursescheduling.org/) on **Home (首頁)**.
 2. Select **New Schedule Spec**.
 3. In the confirmation dialog, select **Create empty Schedule Spec**.
 
@@ -28,7 +28,7 @@ first when replacing useful work.
 
 ## 2. Choose the dates
 
-1. On **Dates**, select **Set Date Range**.
+1. On **Dates (日期)**, select **Set Date Range**.
 2. Enter the first and last scheduling dates.
 3. Keep **Import Taiwan holidays into date groups** enabled only when those
    groups match your workplace calendar.
@@ -41,8 +41,8 @@ The app creates one date item per day and common groups such as `ALL`,
 
 ## 3. Add one person and one shift
 
-1. On **People**, select **Add Person** and add one person, `P1`.
-2. On **Shift Types**, select **Add Shift Type** and add one working shift,
+1. On **People (人員)**, select **Add Person** and add one person, `P1`.
+2. On **Shift Types (班別)**, select **Add Shift Type** and add one working shift,
    `D`.
 3. For a real schedule, manage people and qualification groups on the
    [People](people.md) page. Keep workplace shifts and create groups such as
@@ -54,7 +54,7 @@ The `ALL` groups and `OFF` shift type are maintained automatically.
 
 ## 4. Add minimum staffing
 
-1. On **Shift Type Requirements**, select **Add Requirement**.
+1. On **Shift Type Requirements (班別需求)**, select **Add Requirement**.
 2. Select one shift type or shift-type group.
 3. Enter **Required Number of People**.
 4. Select the qualified people or a people group.
@@ -69,7 +69,7 @@ lists missing pairs that the solver may otherwise fill arbitrarily.
 
 ## 5. Add a request
 
-1. On **Shift Requests**, select **Quick Add Preference**.
+1. On **Shift Requests (排班請求)**, select **Quick Add Preference**.
 2. Choose shift `D` and enter weight `5`.
 3. Select a person and date cell. Drag across cells to apply the same request
    to several dates.
@@ -81,7 +81,7 @@ absolute values have higher priority.
 
 ## 6. Save a backup
 
-1. On **Save and Load**, select **Download**.
+1. On **Save and Load (儲存與載入)**, select **Download**.
 2. Keep the YAML file with the scheduling records for this period.
 3. To restore it later, select **Upload** and choose the same file.
 
@@ -92,7 +92,7 @@ format.
 
 ## 7. Optimize and download
 
-1. On **Optimize and Export**, confirm **Server: Online**.
+1. On **Optimize and Export (最佳化與匯出)**, confirm **Server: Online**.
 2. Leave **Prettify XLSX** and **Anonymize Schedule Spec** enabled for the first
    run.
 3. Keep the default timeout unless the schedule needs more solve time.

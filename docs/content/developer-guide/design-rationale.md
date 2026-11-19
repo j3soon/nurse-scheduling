@@ -20,7 +20,7 @@ system is therefore deliberately decoupled and lightweight.
 
 The current Schedule Spec is kept in the browser. The frontend sends
 Schedule Spec to backend services when the user explicitly invokes
-features such as optimization or the experimental AI chat. See the [privacy
+features such as optimization or the AI assistant. See the [privacy
 policy](https://github.com/j3soon/nurse-scheduling/blob/dev/PRIVACY.md) for the exact data-handling behavior.
 
 Both the frontend and the backend can be self-hosted. The optimization
@@ -82,7 +82,7 @@ subsequent monthly schedules are much easier to prepare, because most
 constraints and structure remain similar. The recurring maintenance barrier
 is much lower than the bootstrap barrier.
 
-Better documentation, GUI support, templates, and the experimental AI chat
+Better documentation, GUI support, templates, and the AI assistant
 are intended to reduce the bootstrap barrier, so that users do not need the
 main developer to create the initial Schedule Spec.
 
@@ -129,8 +129,8 @@ CP-SAT / other solver
 Schedule
 ```
 
-**The agentic AI chat.** The experimental AI chat is an agentic assistant.
-It can interact with the shell, run the optimizer, and inspect results.
+**The agentic AI assistant.** It can interact with the shell, run the optimizer,
+and inspect results.
 Because it keeps the YAML as the intermediate representation, the AI is
 useful on both sides of the YAML. It can modify the YAML, write scripts to
 handle a custom input format, or write scripts to produce a custom output
