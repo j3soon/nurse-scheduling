@@ -258,6 +258,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         downloaded = client.get(url, headers={"Authorization": ""})
         assert downloaded.status_code == 200
         assert downloaded.headers["content-type"] == "application/zip"
+        assert downloaded.headers["content-disposition"] == f'attachment; filename="ai-assistant-{session}.zip"'
         assert downloaded.headers["cache-control"] == "no-store"
         with create_chat_archive(postgres_history, session, owner=owner) as expected:
             assert downloaded.content == expected.read()

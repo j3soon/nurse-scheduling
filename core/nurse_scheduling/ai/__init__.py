@@ -1,4 +1,4 @@
-"""Experimental AI chat service."""
+"""AI assistant service."""
 
 # This file is part of Nurse Scheduling Project, see <https://github.com/j3soon/nurse-scheduling>.
 #

@@ -1,6 +1,6 @@
 {
   "_license": "SPDX-License-Identifier: AGPL-3.0-or-later; SPDX-FileCopyrightText: 2026 Johnson Sun",
-  "_comment": "This test is mostly AI generated. Frozen output regression checks. Live frontend parity is checked by experimental-ai-rendering.spec.ts.",
+  "_comment": "This test is mostly AI generated. Frozen output regression checks. Live frontend parity is checked by ai-assistant-rendering.spec.ts.",
   "cases": [
     {
       "id": "paragraphs",

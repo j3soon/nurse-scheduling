@@ -281,7 +281,7 @@ outside the bundled Compose deployment keeps its system persistence policy.
 
 ## AI Assistant
 
-The experimental chat answers questions about the Schedule Spec currently open in
+The AI assistant answers questions about the Schedule Spec currently open in
 the frontend. Arbitrary file attachments are copied into a disposable sandbox
 for inspection. The chat runs as a separate backend process and sends the
 Schedule Spec and model-visible inputs to an OpenAI-compatible

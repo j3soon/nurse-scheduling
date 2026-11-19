@@ -267,10 +267,10 @@ def test_ordered_events_and_case_matching():
 def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
     case = definition(
         tmp_path,
-        "steps: [{user: hi}, {assistant: {contains_all: [首頁, 排班請求, 實驗性 AI], case_sensitive: true}}]",
+        "steps: [{user: hi}, {assistant: {contains_all: [首頁, 排班請求, AI 助理], case_sensitive: true}}]",
     )
     assertion = case.steps[1]
-    assert check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 AI"}], 0) == 1
+    assert check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、AI 助理"}], 0) == 1
     with pytest.raises(AssertionError):
         check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求"}], 0)
     with pytest.raises(AssertionError):
@@ -278,12 +278,12 @@ def test_assistant_contains_all_requires_every_literal_in_one_reply(tmp_path):
             assertion,
             [
                 {"kind": "assistant", "text": "首頁、排班請求"},
-                {"kind": "assistant", "text": "實驗性 AI"},
+                {"kind": "assistant", "text": "AI 助理"},
             ],
             0,
         )
     with pytest.raises(AssertionError):
-        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、實驗性 ai"}], 0)
+        check_event(assertion, [{"kind": "assistant", "text": "首頁、排班請求、ai 助理"}], 0)
 
 
 @pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
@@ -846,9 +846,9 @@ def test_schedule_failure_is_attributed_to_preceding_turn(tmp_path, capsys):
 @pytest.mark.parametrize(
     ("reply", "passed"),
     [
-        ("You're already here in the Experimental AI chat.", True),
-        ("你已經在這裡了！這個對話窗就是 app 中的 Experimental AI 助手，不需要另外開啟。", True),
-        ("Open Experimental AI from the menu to reach the assistant.", False),
+        ("You're already here in the AI Assistant chat.", True),
+        ("你已經在這裡了！這個對話窗就是 app 中的 AI 助理，不需要另外開啟。", True),
+        ("Open AI Assistant from the menu to reach the assistant.", False),
     ],
     ids=["english", "traditional-chinese", "navigation-only"],
 )
@@ -1429,9 +1429,9 @@ def test_judge_point_count_reports_missing_points_in_transcript(tmp_path, count)
     ("reply", "judge_pass", "expected"),
     [
         ("You're already here.", True, True),
-        ("You already know the menu. Go to Experimental AI.", False, False),
+        ("You already know the menu. Go to AI Assistant.", False, False),
         ("You're speaking to the AI assistant right now.", True, False),
-        ("Go to Experimental AI.", False, False),
+        ("Go to AI Assistant.", False, False),
     ],
     ids=["both-pass", "term-only", "judge-only", "both-fail"],
 )

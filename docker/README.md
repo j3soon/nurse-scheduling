@@ -329,7 +329,7 @@ runtime image.
 The API derives one deployment ID from its container and server-launch
 identity and shares it across all Uvicorn workers. The one-shot public
 diagnostic is opt-in and does not start with the normal deployment command.
-The normal Compose startup also starts one experimental AI worker. When using
+The normal Compose startup also starts one AI assistant worker. When using
 E2B, this worker builds and publishes its sandbox template before it becomes
 ready. Configure the AI block in `.env` before running:
 

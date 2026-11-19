@@ -154,7 +154,7 @@ services upgrade together. Older AI APIs, sessions, histories, Python imports,
 and sandbox paths do not require compatibility. Keep database schema upgrades
 and current session recovery working.
 
-## Experimental AI
+## AI Assistant
 - AI test migration: follow the root `AGENTS.md` transition policy. Use only
   focused, human-reviewed cases in `tests/ai/` for new behavior checks.
   Default pytest discovery excludes legacy evaluation modules before import.
@@ -291,7 +291,7 @@ and current session recovery working.
   browser archives before starting native downloads. Bound pending disk files and
   close them after download, expiry, preparation failure, or service shutdown.
   Share transcript styles with the frontend. Compare fresh Python HTML against
-  the current live page with `experimental-ai-rendering.spec.ts` when changing
+  the current live page with `ai-assistant-rendering.spec.ts` when changing
   chat presentation or saved-event projection. Frozen export hashes alone do
   not establish frontend parity.
 - Retry temporary provider failures automatically inside the provider request,

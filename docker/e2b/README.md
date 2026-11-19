@@ -1,6 +1,6 @@
 # E2B Sandbox Template
 
-This directory defines the reusable E2B Cloud template for the experimental AI
+This directory defines the reusable E2B Cloud template for the AI
 assistant. Each assistant turn starts a fresh sandbox from the prebuilt
 template, hydrates `/workspace`, and destroys the sandbox after the turn.
 
