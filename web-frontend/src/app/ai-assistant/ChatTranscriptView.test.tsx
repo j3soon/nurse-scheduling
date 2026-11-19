@@ -145,7 +145,7 @@ it('keeps the newest messages in order across summaries and replaces the earlier
   for (const text of ['Second answer', 'Third question', 'Third answer', 'Fourth question', 'Fourth answer']) {
     expect(status(text)).not.toHaveTextContent('Compacted out of context.');
   }
-  const summaries = screen.getAllByText('User · Conversation summary').map(label => label.closest('article'));
+  const summaries = screen.getAllByText('User · Compaction summary').map(label => label.closest('article'));
   expect(summaries[0]).toHaveTextContent('Compacted out of context.');
   expect(summaries[1]).not.toHaveTextContent('Compacted out of context.');
 });
@@ -196,12 +196,12 @@ it.each([0, 4])('separates compaction notices, summary, and assistant activity w
   expect(screen.getByText('read').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('You requested context compaction.').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Conversation summarized').closest('article')).toHaveClass('mx-auto');
-  expect(screen.getByText('User · Conversation summary').closest('article')).toHaveClass('ml-auto');
+  expect(screen.getByText('User · Compaction summary').closest('article')).toHaveClass('ml-auto');
   expect(screen.getByText('Continued.').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('Applied to your Schedule Spec').closest('article')).toHaveClass('mx-auto');
   await user.click(screen.getByText('read'));
   expect(screen.getByText('Tool output').closest('article')).toHaveClass('mr-auto');
-  await user.click(screen.getByText('Conversation summary', { exact: true }));
+  await user.click(screen.getByText('Compaction summary', { exact: true }));
   expect(screen.getByText(/\[Conversation summary\]\s+Keep nights\./)).toBeVisible();
   expect(screen.getByText(keepMessages ? 'The latest 4 messages remain unchanged after the summary.'
     : 'The summary replaces all earlier conversation messages in model context.')).toBeVisible();
@@ -247,7 +247,7 @@ it('keeps manual compaction metadata on the notice before its summary', () => {
   expect(screen.getByText('test-model · high').closest('article')).toBe(notice);
   expect(screen.getByText(/^Turn details ·/).closest('article')).toBe(notice);
   expect(screen.getByText(/1\.5s/).closest('article')).toBe(notice);
-  expect(screen.getByText('User · Conversation summary').closest('article')).not.toBe(notice);
+  expect(screen.getByText('User · Compaction summary').closest('article')).not.toBe(notice);
   expect(message).toEqual(saved);
 });
 
@@ -257,7 +257,7 @@ it('keeps failed-summary details and context notices separate from the assistant
     { kind: 'response', text: 'Partial.' },
     { kind: 'notice', text: 'Sent in future model context: [App event] Workspace discarded.' },
   ] }]);
-  expect(screen.getByText('Discarded conversation summary').closest('article')).toHaveClass('mx-auto');
+  expect(screen.getByText('Discarded compaction summary').closest('article')).toHaveClass('mx-auto');
   expect(screen.getByText('Partial.').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('Failed.').closest('article')).toHaveClass('mr-auto');
   expect(screen.getByText('[App event] Workspace discarded.').closest('article')).toHaveClass('ml-auto');

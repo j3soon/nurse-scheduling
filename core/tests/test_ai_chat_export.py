@@ -228,7 +228,7 @@ def test_failed_steered_run_discards_summaries_on_all_replies(terminal, boundary
     assert latest["status"] == ("failed" if terminal == "error" else "stopped")
     for format in ("html", "markdown"):
         rendered = build_saved_chat_export(snapshot, format)
-        assert "Discarded conversation summary" in rendered
+        assert "Discarded compaction summary" in rendered
         assert "Omitted from future model context" in rendered
         assert "Summary used in future model context." not in rendered
 
@@ -263,7 +263,8 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
     assert (
         articles[1].startswith('message assistant app-notice"') and "You requested context compaction." in articles[1]
     )
-    assert articles[2].startswith('message user app"') and "User · Conversation summary" in articles[2]
+    assert articles[2].startswith('message user app"') and "User · Compaction summary" in articles[2]
+    assert '<summary class="collapsed-summary">Compaction summary</summary>' in articles[2]
     assert articles[3].startswith('message assistant"') and "Continued." in articles[3]
     assert articles[4].startswith('message user app"') and "[App event] Workspace discarded." in articles[4]
     markdown = build_markdown_chat(messages, metadata)
@@ -274,7 +275,7 @@ def test_export_separates_notices_and_summary_without_changing_saved_messages(ke
             else ("The summary replaces all earlier conversation messages in model context." in rendered)
         )
         assert rendered.count("You requested context compaction.") == 1
-        assert "User · Conversation summary" in rendered
+        assert "User · Compaction summary" in rendered
         assert "[No message text]" not in rendered
         assert ("Compacted out of context." not in rendered) if keep else ("Compacted out of context." in rendered)
     assert messages == original
@@ -390,7 +391,7 @@ def test_manual_compaction_keeps_metadata_on_notice_before_summary():
         assert detail in notice and detail not in summary
     markdown = build_markdown_chat(messages, metadata)
     for detail in ("Model: test-model", "Turn details", "Completed:", "Response time: 1.5s"):
-        assert markdown.index(detail) < markdown.index("## User · Conversation summary")
+        assert markdown.index(detail) < markdown.index("## User · Compaction summary")
     assert messages == original
 
 

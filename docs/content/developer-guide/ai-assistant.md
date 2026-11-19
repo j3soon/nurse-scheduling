@@ -157,6 +157,13 @@ flowchart TB
 current run entries. Session retention, model context selection, and event
 replay have separate limits.
 
+The [chat bubble convention](../user-guide/ai-assistant.md#read-chat-bubbles)
+applies to both the live transcript and chat exports. Bubble placement follows
+the role and purpose of each entry. Context selection is separate, so entries
+that a summary replaces can stay visible in the transcript. An app event can
+produce a centered notice and a separate right-aligned entry for the text
+supplied to the model.
+
 The browser receives an HTTP-only owner cookie and an unguessable session UUID.
 Active sessions expire after 30 days of inactivity by default. Sending or
 queueing a message or synchronizing a changed Schedule Spec renews that window. The browser can retain the conversation within its current

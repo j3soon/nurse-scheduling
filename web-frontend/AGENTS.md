@@ -93,7 +93,7 @@ reasoning, tool activity, model selections, and costs.
 Keep assistant output and tool activity, including tool results, left-aligned.
 Keep user, system, and app inputs to the model right-aligned with explicit role
 labels. Show the generated conversation summary on the right as
-`User · Conversation summary`. Keep display-only app events and notices in
+`User · Compaction summary`. Keep display-only app events and notices in
 separate centered bubbles. Compaction progress and outcomes are app notices.
 Classify notices by their context provenance, because some report text supplied
 to the model. A discarded summary belongs with app notices and must say that it

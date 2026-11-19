@@ -131,6 +131,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   hop before changing CORS or proxy configuration.
 
 ## Git
+- Never commit directly on `dev`. Before editing, check the current branch and
+  switch to a feature branch or create a worktree on one.
 - Commit validated implementation work as part of the task unless the user asks
   to leave it uncommitted. Inspection and planning requests do not authorize
   implementation changes.

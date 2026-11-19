@@ -171,7 +171,7 @@ export function formatResponseDuration(startedAt: number, completedAt: number): 
 
 export function activitySummary(entry: Exclude<ActivityEntry, { kind: 'response' }>, t: Translator = translator('en')): string {
   if (entry.kind === 'notice') return t("App notice");
-  if (entry.kind === 'compaction' && entry.invalidated) return t("Conversation summary discarded");
+  if (entry.kind === 'compaction' && entry.invalidated) return t("Compaction summary discarded");
   if (entry.kind === 'compaction') return ({
     running: t("Summarizing conversation"), completed: t("Conversation summarized"),
     failed: t("Summarization failed"), interrupted: t("Summarization interrupted"),

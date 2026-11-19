@@ -149,6 +149,25 @@ Keep your original files.
 
 ## See what the assistant did
 
+### Read chat bubbles
+
+- **Left** shows what the model previously said and what its tools did.
+  Completed replies and tool results can carry forward into later model
+  requests as conversation history. An incomplete reply is marked
+  **Incomplete response. Omitted from future model context.**
+- **Center** shows records for you to read, such as app notices and optimizer
+  status. The model does not receive these bubbles as chat messages. A centered
+  [Schedule Spec snapshot](#ask-about-a-schedule) shows the full YAML submitted
+  to the app. The model receives a separate summary of the Schedule Spec.
+- **Right** shows messages supplied as input to the model, including your
+  messages, system instructions, and app inputs. The label shows the role
+  used to send the message.
+
+On either side, **Compacted out of context** marks an earlier message that
+stays visible after a summary replaces it in model context.
+
+### Model and context controls
+
 Choose **Model** before the first message. It stays fixed for the conversation
 after the AI service accepts a message. A rejected message does not fix it.
 You can change **Reasoning** while an answer streams. The active turn keeps its
@@ -175,14 +194,13 @@ the summary when older conversation context is compacted.
 Use **Stop** to cancel it. Failed or cancelled compaction keeps the original
 context.
 
-When the conversation is summarized, expand **Conversation summary** in the
-right-aligned **User · Conversation summary** bubble to read the text supplied to
-the assistant. The app generates this summary using the user role. Its details
-explain which recent messages remain unchanged. Compaction status and other app
-notices that are not supplied to the assistant appear in separate centered
-bubbles. Assistant output and tool activity stay on the left. A discarded summary stays visible and is
-marked as omitted from future context. Earlier messages remain in the visible
-transcript even when the summary replaces them in model context.
+After compaction, the right-aligned **User · Compaction summary** bubble
+shows the summary that the app supplies to the model in place of older
+messages. **User** is the role the app uses to send the summary it generated.
+Expand **Compaction summary** to see the supplied text and which recent
+messages the model still receives in full. Compaction status appears in
+centered app notices. A discarded summary moves to the center and is marked
+**Omitted from future model context.**
 
 Small grey rows under an answer record how it was produced. They stay collapsed
 until you select one.

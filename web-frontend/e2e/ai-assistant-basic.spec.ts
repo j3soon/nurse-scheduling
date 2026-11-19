@@ -727,12 +727,12 @@ test('compacts context on demand and restores the summary after reload', async (
   await expect(page.getByText('Context ~3.1% used')).toBeVisible();
   await expect(page.getByText('Tokens: ~1,000 / 32,000')).toBeVisible();
   await expect(page.getByText('You requested context compaction.').locator('xpath=ancestor::article')).toHaveClass(/mx-auto/);
-  await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
+  await expect(page.getByText('User · Compaction summary', { exact: true }).locator('xpath=ancestor::article')).toHaveClass(/ml-auto/);
   const notice = page.getByText('Conversation summarized · pass 2 · 27 characters', { exact: true }).locator('xpath=ancestor::article');
   await expect(notice.getByText(/^Turn details ·/)).toBeVisible();
   await expect(notice.locator('time')).toBeVisible();
-  await expect(page.getByText('User · Conversation summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
-  await page.getByText('Conversation summary', { exact: true }).click();
+  await expect(page.getByText('User · Compaction summary', { exact: true }).locator('xpath=ancestor::article').locator('time')).toHaveCount(0);
+  await page.getByText('Compaction summary', { exact: true }).click();
   await expect(page.getByText('[Conversation summary]\nKeep the night constraints.', { exact: true })).toBeVisible();
   expect(captured.messageBodies).toHaveLength(1);
   await page.screenshot({ path: '../artifacts/manual-compaction.png', fullPage: true });
@@ -875,13 +875,13 @@ for (const trigger of ['user', 'optimizer'] as const) for (const terminal of ['e
     captured.publishEvent('response_end', { run_id: runId,
       stop_reason: terminal === 'error' ? 'error' : 'aborted', context_note: '[App event] The run workspace was discarded.' });
     captured.publishEvent(terminal, { run_id: runId, ...(terminal === 'error' ? { message: 'Validation failed.' } : {}) });
-    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Discarded compaction summary', { exact: true })).toBeVisible();
     await expect(page.getByText('Omitted from future model context.', { exact: true })).toBeVisible();
     await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
     await expect(page.getByText('Summary used in future model context.', { exact: true })).toBeHidden();
     await page.screenshot({ path: `../artifacts/discarded-summary-${trigger}-${terminal}.png`, fullPage: true });
     await page.reload();
-    await expect(page.getByText('Discarded conversation summary', { exact: true })).toBeVisible();
+    await expect(page.getByText('Discarded compaction summary', { exact: true })).toBeVisible();
     await expect(page.getByText('Earlier completed output.', { exact: true })).toBeVisible();
     await expect(page.getByText('Partial second reply.', { exact: true })).toBeVisible();
     if (trigger === 'optimizer') {
@@ -918,14 +918,14 @@ test('shows compaction status and the reduced context before an answer', async (
   captured.publishEvent('delta', { run_id: 'answer-1', text: 'The current constraints are preserved.' });
   captured.finishTurn();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
-  await page.getByText('Conversation summary', { exact: true }).click();
+  await page.getByText('Compaction summary', { exact: true }).click();
   await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
   await expect(page.getByText('The latest 4 messages remain unchanged after the summary.')).toBeVisible();
   await page.screenshot({ path: '../artifacts/compaction-completed.png', fullPage: true });
   // The browser copy of the chat keeps the summary entry, so a reload restores the chat.
   await page.reload();
   await expect(page.getByText('The current constraints are preserved.', { exact: true })).toBeVisible();
-  await page.getByText('Conversation summary', { exact: true }).click();
+  await page.getByText('Compaction summary', { exact: true }).click();
   await expect(page.getByText('[Conversation summary]\nKeep P1 off nights and confirm the next edit.', { exact: true })).toBeVisible();
 });
 

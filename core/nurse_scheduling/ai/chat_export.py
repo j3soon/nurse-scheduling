@@ -185,7 +185,7 @@ def _summary(entry):
         return "Schedule Spec edit"
     if kind == "compaction":
         if entry.get("invalidated"):
-            return "Conversation summary discarded"
+            return "Compaction summary discarded"
         label = {
             "running": "Summarizing conversation",
             "completed": "Conversation summarized",
@@ -559,9 +559,7 @@ def message_label(message):
         return "App notice"
     if message.get("presentation") == "summary":
         return (
-            "Discarded conversation summary"
-            if message["compaction"].get("invalidated")
-            else "User · Conversation summary"
+            "Discarded compaction summary" if message["compaction"].get("invalidated") else "User · Compaction summary"
         )
     if message["role"] != "user":
         return message["role"].capitalize()
@@ -953,7 +951,7 @@ def build_html_chat(messages, metadata):
             )
         elif compaction:
             timeline = (
-                '<details class="system-prompt"><summary class="collapsed-summary">Conversation summary</summary>'
+                '<details class="system-prompt"><summary class="collapsed-summary">Compaction summary</summary>'
                 + _compaction_summary_html(compaction)
                 + "</details>"
             )
