@@ -2,23 +2,32 @@
 # Ref: https://hub.docker.com/r/nvidia/cuopt/tags
 FROM nvidia/cuopt:26.8.0a-cuda13.3-py3.14
 
+ARG DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /app
 
 # Common Tools
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
-    git \
     gnupg \
     iputils-ping \
     jq \
     redis-server \
     redis-tools \
     ripgrep \
+    software-properties-common \
     unzip \
     vim \
     && rm -rf /var/lib/apt/lists/*
-RUN git config --system --add safe.directory /app
+# Git 2.48+ supports relative worktree paths across host and container mounts.
+RUN add-apt-repository -y ppa:git-core/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && dpkg --compare-versions "$(git --version | cut -d' ' -f3)" ge 2.48 \
+    && rm -rf /var/lib/apt/lists/*
+RUN git config --system --add safe.directory /app \
+    && git config --system --add safe.directory '/app/.worktrees/*'
 
 # Install GitHub CLI from its official apt repository.
 RUN mkdir -p -m 755 /etc/apt/keyrings \

@@ -11,7 +11,7 @@ command alone.
 
 Check `test -f /.dockerenv` and resolve repository paths with
 `git rev-parse --show-toplevel`. A dev container mounts the checkout at
-`/workspace`, and browser binaries and display availability differ from a
+`/app`, and browser binaries and display availability differ from a
 host checkout.
 
 For this repository's user guide screenshots, use the capture command that

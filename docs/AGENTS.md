@@ -3,7 +3,7 @@
 ## Paths
 
 - Resolve the repository root with `git rev-parse --show-toplevel`. A dev
-  container (`/.dockerenv` exists) mounts the checkout at `/workspace`, while
+  container (`/.dockerenv` exists) mounts the main clone at `/app`, while
   a host checkout uses the local clone path. Keep documented commands relative
   to the repository root where possible so they work in both environments.
 

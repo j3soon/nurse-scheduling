@@ -13,7 +13,7 @@ coverage the CI job is intended to enforce.
 
 Check `test -f /.dockerenv` and follow the root
 `AGENTS.md` environment rules. Setup commands, interpreters, and absolute
-paths differ between a dev container (`/workspace`) and a host checkout.
+paths differ between a dev container (`/app`) and a host checkout.
 
 Prefer authenticated `gh` for GitHub reads. It uses an existing `GH_TOKEN`
 automatically. Check `gh auth status >/dev/null 2>&1` and report only whether

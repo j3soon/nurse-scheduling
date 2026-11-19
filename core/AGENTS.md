@@ -4,9 +4,10 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 
 ## Setup And Commands
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
-section. In a dev container the checkout mounts at `/workspace/core`, and
-project packages are installed system-wide, so run `python`, `pytest`, and
-`ruff` directly. On a host checkout, run commands below from your local
+section. In a dev container the main clone mounts at `/app`. Resolve the
+current checkout with `git rev-parse --show-toplevel` and use its `core/`
+directory. Project packages are installed system-wide, so run `python`,
+`pytest`, and `ruff` directly. On a host checkout, run commands below from your local
 `core/` clone and create the virtual environment once with
 `uv venv --python 3.12 && source .venv/bin/activate`.
 - `uv pip install -r requirements-optional.txt`: the development install. See

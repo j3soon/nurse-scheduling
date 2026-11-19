@@ -151,6 +151,10 @@ For Linux only: to quickly set up all local environments (`core`, `web-frontend`
 
 For Docker-based development environment:
 
+Run the Docker commands from the main clone, where `.git` is a directory.
+Mount it at `/app` so `.worktrees/` and Git metadata stay in the same mount.
+Mounting only a linked worktree leaves its Git metadata outside the container.
+
 The development images include GitHub CLI. GitHub authentication is optional.
 For read-only GitHub access, create a short-lived
 [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new)
@@ -185,7 +189,7 @@ mkdir -p ~/docker/.config/antigravity
 # mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config
 docker run --rm -it --network=host \
   -e GH_TOKEN \
-  -v $(pwd):/app \
+  -v "$(git rev-parse --show-toplevel):/app" \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
   -v ~/docker/.claude.json:/root/.claude.json \
@@ -222,7 +226,7 @@ mkdir -p ~/docker/.config/antigravity
 # mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config
 docker run --rm -it --gpus all --network=host \
   -e GH_TOKEN \
-  -v $(pwd):/app \
+  -v "$(git rev-parse --show-toplevel):/app" \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
   -v ~/docker/.claude.json:/root/.claude.json \
@@ -255,7 +259,7 @@ mkdir -p ~/docker/.config/antigravity
 # mount project files and Codex/Claude Code/OpenCode/Pi/Antigravity CLI config, and forward X11 display
 docker run --rm -it --network=host \
   -e GH_TOKEN \
-  -v $(pwd):/app \
+  -v "$(git rev-parse --show-toplevel):/app" \
   -v ~/docker/.codex:/root/.codex \
   -v ~/docker/.claude:/root/.claude \
   -v ~/docker/.claude.json:/root/.claude.json \
@@ -272,6 +276,40 @@ docker run --rm -it --network=host \
 ```
 
 > May need to run `rm -rf .next` in `web-frontend` to clear the Next.js cache when switching between host and Docker environments.
+
+### Concurrent agent worktrees
+
+Use Git 2.48 or newer on the host and in the container. Both Ubuntu development
+images install Git through APT from `ppa:git-core/ppa`. The CPU image uses
+Ubuntu 24.04 and Python 3.12. Rebuild older images before using this workflow.
+
+From the main clone, create a branch and checkout for each agent:
+
+```sh
+./scripts/add_worktree.sh fix-api
+./scripts/add_worktree.sh fix-ui
+cd .worktrees/fix-api
+```
+
+The helper creates `agent/fix-api` in `.worktrees/fix-api` from the current
+`HEAD`. Pass another base as the second argument when needed. Relative Git
+paths keep these checkouts usable both on the host and under `/app`. This
+optional workflow enables Git's relative-worktree repository extension, so
+older Git clients cannot use the repository until they are upgraded.
+
+Use one agent per worktree. Install frontend dependencies inside each checkout
+with `bun install --frozen-lockfile`. Core packages are already installed in
+the dev container. Keep build output separate and use distinct ports for local
+servers. Load credentials from the main clone's ignored `docker/.env`.
+
+Review the agent's commits before integrating them. From the main clone:
+
+```sh
+git merge --no-ff agent/fix-api -m "Merge reviewed API fix"
+git worktree remove .worktrees/fix-api
+# Delete the branch only after its changes have been integrated.
+git branch -d agent/fix-api
+```
 
 ### Web Frontend
 

@@ -5,8 +5,9 @@ The app uses the Next.js App Router. Shared code lives under `src/components/`,
 
 ## Commands
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
-section. In a dev container the checkout mounts at `/workspace/web-frontend`
-and the toolchain comes preinstalled. On a host checkout, run from your
+section. In a dev container the main clone mounts at `/app`. Resolve the
+current checkout with `git rev-parse --show-toplevel` and use its
+`web-frontend/` directory. The toolchain comes preinstalled. On a host checkout, run from your
 local `web-frontend/` clone and run `bun install --frozen-lockfile` before
 the other commands.
 
