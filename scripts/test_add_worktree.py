@@ -23,11 +23,8 @@ class AgentWorktreeTests(unittest.TestCase):
         self.root = Path(self.temporary.name) / "host checkout"
         self.root.mkdir()
         self.git("init", "-q")
-        for field in ("user.name", "user.email"):
-            identity = subprocess.check_output(
-                ["git", "-C", str(ROOT), "config", field], text=True
-            ).strip()
-            self.git("config", field, identity)
+        self.git("config", "--local", "user.name", "Worktree Test")
+        self.git("config", "--local", "user.email", "worktree-test@example.invalid")
         (self.root / ".gitignore").write_text("/.worktrees/\n", encoding="utf-8")
         (self.root / "shared.txt").write_text("original\n", encoding="utf-8")
         self.git("add", ".")
