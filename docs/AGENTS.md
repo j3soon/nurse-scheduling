@@ -172,6 +172,8 @@
   Relative site links must stay inside the built documentation.
 - Move page paths, navigation entries, and inbound links together. Add permanent
   redirects for published paths and preserve existing heading IDs.
+  The AI Assistant rename deliberately retired `/docs/user-guide/experimental-ai/`
+  as an exception to this rule.
 - Git on Windows can check out symlinks as plain text. Enable symlink support
   or use Linux or WSL when building the documentation.
 
