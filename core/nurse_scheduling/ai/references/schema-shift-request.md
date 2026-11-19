@@ -10,7 +10,7 @@ Selector fidelity:
 - Every reference must resolve to an existing item, supported reserved selector, or available group.
 - Preserve exact selectors. Concrete IDs and group IDs are distinct. `N` and `Night` are different.
 - Keep reserved selectors such as `ALL` literal. Do not expand groups or reserved selectors.
-- A day-of-month selector such as the 1st is the quoted string `01` unless the user supplied a full date.
+- Use the shortest date ID for the range, such as `01` within one month. The browser normalizes equivalent spellings after applying the edit. For several days, list the dates or use a named date group.
 
 Path: preferences.shift request
 

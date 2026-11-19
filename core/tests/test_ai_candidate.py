@@ -84,6 +84,34 @@ def test_candidate_with_new_validation_problem_is_rejected():
     assert review.proposal is None
 
 
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_candidate_must_replace_a_legacy_date_range_expression(incomplete):
+    payload = base_schedule_payload()
+    payload["preferences"][1]["date"] = ["01~02"]
+    if incomplete:
+        payload["dates"]["range"] = {}
+    baseline = schedule_spec_yaml(payload)
+    payload["description"] = "Changed"
+
+    rejected = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert rejected.proposal is None
+    assert "preferences[1].date[0]" in rejected.outcome.text
+    assert "individual dates or a named date group" in rejected.outcome.text
+
+
+def test_candidate_can_replace_legacy_range_with_equivalent_concrete_date_spellings():
+    payload = base_schedule_payload()
+    payload["preferences"][1]["date"] = ["01~02"]
+    baseline = schedule_spec_yaml(payload)
+    payload["preferences"][1]["date"] = ["2026-01-01", "01-02"]
+
+    accepted = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert accepted.outcome.ok
+    assert accepted.proposal is not None
+
+
 def test_rebuilt_candidate_restores_only_the_required_rule():
     from nurse_scheduling.loader import _load_yaml
 

@@ -690,6 +690,7 @@ export const en = {
   "Replace": "Replace",
   "Replace people group IDs": "Replace people group IDs",
   "Replace people item IDs": "Replace people item IDs",
+  "Replace the date range expression at {value0} with individual dates or a named date group in Save and Load.": "Replace the date range expression at {value0} with individual dates or a named date group in Save and Load.",
   "Reported model: ": "Reported model: ",
   "Request beta access": "Request beta access",
   "Request Shape": "Request Shape",

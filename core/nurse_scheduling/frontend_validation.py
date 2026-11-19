@@ -21,7 +21,8 @@
 
 from typing import Any
 
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
+from pydantic_core import InitErrorDetails, PydanticCustomError
 from typing_extensions import Self
 
 from .loader import _load_yaml
@@ -34,6 +35,9 @@ from .models import (
     ShiftTypeRequirementsPreference,
     ShiftTypeSuccessionsPreference,
 )
+from .utils import DATE_RANGE_SELECTOR_PATTERN
+
+FRONTEND_DATE_RANGE_ERROR = "frontend_date_range_expression"
 
 
 def _require_string(value: Any, path: str) -> None:
@@ -129,11 +133,56 @@ class _FrontendScheduleSpec(ScheduleSpec):
         return self
 
 
+def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
+    # Check range expressions before backend validation so they also fail on
+    # an incomplete Schedule Spec that the AI can otherwise continue editing.
+    group_ids: set[str] = set()
+
+    def check(value: Any, path: tuple[str | int, ...]) -> None:
+        if isinstance(value, list):
+            for index, selector in enumerate(value):
+                check(selector, (*path, index))
+        elif isinstance(value, str) and value not in group_ids and DATE_RANGE_SELECTOR_PATTERN.match(value):
+            raise ValidationError.from_exception_data(
+                _FrontendScheduleSpec.__name__,
+                [
+                    InitErrorDetails(
+                        type=PydanticCustomError(
+                            FRONTEND_DATE_RANGE_ERROR,
+                            "Use individual dates or a named date group instead of a date range expression",
+                        ),
+                        loc=path,
+                        input=value,
+                    )
+                ],
+            )
+
+    dates = data.get("dates")
+    export = data.get("export")
+    sections = (
+        (("dates", "groups"), dates.get("groups") if isinstance(dates, dict) else None, ("members",)),
+        (("preferences",), data.get("preferences"), ("date", "countDates")),
+        (("export", "formatting"), export.get("formatting") if isinstance(export, dict) else None, ("dates",)),
+        (("export", "extraColumns"), export.get("extraColumns") if isinstance(export, dict) else None, ("countDates",)),
+    )
+    for path, entries, fields in sections:
+        if not isinstance(entries, list):
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            for field in fields:
+                check(entry.get(field), (*path, index, field))
+            if path == ("dates", "groups") and isinstance(group_id := entry.get("id"), str):
+                group_ids.add(group_id)
+    return _FrontendScheduleSpec.model_validate(data)
+
+
 def load_frontend_data(content: bytes) -> ScheduleSpec:
     """Parse YAML with backend Schedule Spec validation and the frontend subset policy."""
-    return _FrontendScheduleSpec.model_validate(_load_yaml(content, reject_aliases=True))
+    return _validate_frontend_payload(_load_yaml(content, reject_aliases=True))
 
 
 def validate_frontend_data(data: ScheduleSpec) -> ScheduleSpec:
     """Apply the frontend subset policy to an already validated Schedule Spec."""
-    return _FrontendScheduleSpec.model_validate(data.model_dump(mode="python"))
+    return _validate_frontend_payload(data.model_dump(mode="python"))

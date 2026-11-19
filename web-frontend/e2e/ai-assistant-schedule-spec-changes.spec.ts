@@ -28,7 +28,10 @@ dates:
     startDate: '2026-01-01'
     endDate: '2026-01-02'
   items: []
-  groups: []
+  groups:
+  - id: FIRST
+    description: ''
+    members: ['2026-01-01']
 people:
   items:
   - id: Proposed Nurse
@@ -233,6 +236,7 @@ test('sends the applied schedule to the session before the next question', async
   // The browser regenerates the applied schedule in its own format before the next question.
   await expect.poll(() => state.refreshed.length).toBe(1);
   expect(state.refreshed[0]).toContain('Proposed Nurse');
+  expect(state.refreshed[0]).toContain("members: ['01']");
 });
 
 test('overwrites browser Undo with a notice and preserves a later Undo across replay and reload', async ({ page }) => {

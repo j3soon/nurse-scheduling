@@ -8,3 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 When using Python to read or write Schedule Spec, use `ruamel.yaml` with `YAML(typ="safe")`.
 The app uses YAML 1.2. PyYAML uses YAML 1.1, which can change string selectors into booleans
 and emit strings as numbers. Do not emit YAML aliases.
+
+Use the shortest in-range date ID. The browser normalizes equivalent date
+spellings when applying the edit. For several days, list the individual dates
+or reference a named date group. The editor rejects expressions such as `01~03`.

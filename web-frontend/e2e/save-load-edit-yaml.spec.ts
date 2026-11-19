@@ -180,3 +180,34 @@ preferences:
   await expect(page.getByTitle('Click to update preferences for P1 on date 02')).toHaveText('D (+3)');
   await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toHaveText('D (+4)');
 });
+
+test('rejects an uploaded date range expression without replacing the current Schedule Spec', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedScheduleSpecState(page, {
+    apiVersion: 'alpha',
+    description: 'Schedule to keep',
+    dates: { range: {}, groups: [] },
+    people: { items: [], groups: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+  });
+  await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('Schedule to keep');
+
+  const dialog = page.waitForEvent('dialog', { predicate: value => value.type() === 'alert' });
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'unsupported.yaml',
+    mimeType: 'application/yaml',
+    buffer: Buffer.from(`
+apiVersion: alpha
+description: Rejected schedule
+dates:
+  range: {startDate: 2026-12-01, endDate: 2026-12-31}
+  groups: [{id: First, members: ['01~03']}]
+preferences: [{type: at most one shift per day}]
+`),
+  });
+
+  expect((await dialog).message()).toContain('dates.groups[0].members[0] uses a date range expression');
+  await expect(page.locator('pre')).toContainText('Schedule to keep');
+});

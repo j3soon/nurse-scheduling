@@ -80,10 +80,13 @@ that identifies the date within the inclusive Schedule Spec range.
    declared range and writes the generated IDs into the Schedule Spec before
    saving it. For a December-only range, `3`, `03`, `12-03`, and
    `2026-12-03` all refer to `03`. Convert YAML date values to strings
-   before writing browser storage.
+   before writing browser storage. The AI Assistant can use any valid
+   equivalent spelling. The browser returns the normalized YAML after
+   applying an AI edit.
 2. **Restore browser state.** Apply the same normalization separately to the
    current Schedule Spec and each Undo/Redo entry using that entry's range.
 3. **Change the range.** Compare the old and new ranges by calendar date.
+   Match the old and new IDs for each date using its ISO date as the key.
    Map references to retained dates to their new IDs, remove references to
    dates that leave the range, and remove rules whose required date list
    becomes empty. Regenerate the computed date items and automatic groups.
@@ -91,8 +94,12 @@ that identifies the date within the inclusive Schedule Spec range.
 Apply these rules to date-group members, preference `date` and `countDates`,
 export formatting `dates`, and export extra-column `countDates`. Keep each
 preference record and its weight. Groups and keywords such as `ALL` have
-their own IDs. Backend date range expressions such as `01~03` pass through as YAML
-because expanding them into individual dates can change workbook formatting.
+their own IDs. The frontend rejects date range expressions such as `01~03`
+on import and AI apply. Direct optimizer input supports those expressions.
+If browser history already contains one, the app keeps the saved YAML
+available for repair in Save and Load and blocks frontend optimization until
+the expression is replaced. Use a named date group to preserve group-level
+workbook formatting when replacing a multi-day expression.
 
 ### Backend Settings and Credentials
 

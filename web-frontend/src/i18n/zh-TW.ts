@@ -623,6 +623,7 @@ export const zhTW: Catalog = {
   "Replace": "取代",
   "Replace people group IDs": "取代人員群組 ID",
   "Replace people item IDs": "取代人員項目 ID",
+  "Replace the date range expression at {value0} with individual dates or a named date group in Save and Load.": "請在「儲存與載入」中將 {value0} 的日期範圍表示式替換為個別日期或具名日期群組。",
   "Reported model: ": "回報的模型：",
   "Request Shape": "請求形式",
   "Request Shape:": "請求形式：",

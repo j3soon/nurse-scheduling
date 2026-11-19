@@ -19,7 +19,7 @@ Selector fidelity:
 - Preserve an exact selector supplied by the user when validation accepts it. IDs such as `Person 3` and `P3` are different.
 - Keep reserved selectors such as `ALL` literal. Do not expand a group or reserved selector into its members.
 - Keep concrete IDs distinct from group IDs. For example, shift type `D` is not group `Day`.
-- Keep date selectors in the requested form. For example, `01`, `2025-11-01`, and a date-group ID are distinct.
+- Use the shortest date ID for the current range. The browser normalizes equivalent date spellings after applying an edit. Preserve named date-group selectors.
 - Quote a YAML string containing `: `, `#`, or another syntax-significant character.
 - Before renaming an item or group, confirm the new ID does not collide with any item or group ID in that section.
   If it does, explain the collision and leave the Schedule Spec unchanged.
@@ -86,7 +86,7 @@ Rules:
 - `endDate` must be on or after `startDate`.
 - Expanding means moving `startDate` earlier or `endDate` later. Before any expansion, ask whether to renew the Taiwan
   holiday groups and wait for an explicit answer. Do not edit the Schedule Spec in the question turn.
-- A date ID is `D` for a single-month range, `MM-DD` for a multi-month range within one year, and `YYYY-MM-DD` for a
+- A date ID is `DD` for a single-month range, `MM-DD` for a multi-month range within one year, and `YYYY-MM-DD` for a
   range crossing years. If a range change selects a different format, migrate every concrete date reference in date
   groups, preference `date` and `countDates` fields, and export date selectors to the new format.
 - If Taiwan holiday renewal is declined, preserve every existing date group and migrate only concrete member IDs as
@@ -94,7 +94,7 @@ Rules:
 - If Taiwan holiday renewal is accepted, read `/reference/taiwanHolidays.ts`. Its exported support bounds,
   `SPECIAL_DATE_INFO`, day-type logic, and group builder are the single authoritative source. Reproduce the builder's
   WORKDAY and FREEDAY output for the new range. Preserve other date groups while migrating their concrete members.
-- When shrinking the range, remove every now-out-of-range date in one coordinated file edit. Date selectors can occur in `dates.groups[].members`, preference `date` or `countDates`, export formatting `dates`, and export extra-column `countDates`. Search once with `rg` for all equivalent short, MM-DD, full-date, and range forms of the removed dates. Do not repeat that search by section or inspect unrelated preferences. Read containing blocks only where an entry may need deletion, then make the remaining replacements together. If an explicit preference or export rule loses its entire date scope, delete that entry instead of leaving an empty selector or omitting the selector, which could broaden its meaning.
+- When shrinking the range, remove every now-out-of-range date in one coordinated file edit. Date selectors can occur in `dates.groups[].members`, preference `date` or `countDates`, export formatting `dates`, and export extra-column `countDates`. Search once with `rg` for all equivalent day, month-day, and full-date forms of the removed dates. Do not repeat that search by section or inspect unrelated preferences. Read containing blocks only where an entry may need deletion, then make the remaining replacements together. If an explicit preference or export rule loses its entire date scope, delete that entry instead of leaving an empty selector or omitting the selector, which could broaden its meaning.
 
 Minimal frontend-compatible YAML:
 
@@ -118,12 +118,11 @@ Supported string selectors for one date or a set of dates.
 
 Fields:
 - concrete date: D within a single-month schedule, MM-DD within a single-year schedule, or YYYY-MM-DD
-- inclusive range: START~END using compatible concrete-date formats
 - reserved set: ALL, WEEKDAY, WEEKEND, or MONDAY through SUNDAY
 - named date-group ID
 
 Rules:
-- Every resolved concrete date must fall inside `dates.range`.
+- Every resolved concrete date must fall inside `dates.range`. Use individual dates or a named date group for several days. Raw expressions such as `01~03` are rejected.
 
 Related paths:
 - dates.range
@@ -142,7 +141,7 @@ Fields:
 
 Rules:
 - Date members must resolve inside `dates.range`.
-- Members may name concrete dates, inclusive date ranges, date keywords, weekdays, or groups defined earlier in the list.
+- Members may name concrete dates, date keywords, weekdays, or groups defined earlier in the list.
 - Group IDs must be unique. They cannot be reserved date keywords or weekdays, and cannot look like day-of-month, MM-DD, or YYYY-MM-DD dates. Reserved-name checks are case-insensitive.
 
 Minimal frontend-compatible YAML:

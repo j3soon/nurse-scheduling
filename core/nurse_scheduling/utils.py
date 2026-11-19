@@ -71,6 +71,9 @@ def _parse_single_date(date: str, date_range: "DateRange") -> datetime.date:
     raise InputValidationError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
 
+DATE_RANGE_SELECTOR_PATTERN = re.compile(r"^([\d-]+)~([\d-]+)$")
+
+
 def parse_dates(dates, map_did_d, date_range):
     startdate, enddate = date_range.startDate, date_range.endDate
     dates = map(str, ensure_list(dates))
@@ -79,7 +82,7 @@ def parse_dates(dates, map_did_d, date_range):
     for date_str in dates:
         if date_str in map_did_d:
             parsed_dates += [startdate + datetime.timedelta(days=i) for i in map_did_d[date_str]]
-        elif match := re.match(r"^([\d-]+)~([\d-]+)$", date_str):
+        elif match := DATE_RANGE_SELECTOR_PATTERN.match(date_str):
             range_start = _parse_single_date(match.group(1), date_range)
             range_end = _parse_single_date(match.group(2), date_range)
             parsed_dates += [

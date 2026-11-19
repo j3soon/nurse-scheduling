@@ -62,6 +62,48 @@ function mapDateReferences(state: ScheduleSpecState, mapId: (id: string) => stri
   };
 }
 
+// The optimizer resolves a named group before it parses a range expression.
+const DATE_RANGE_EXPRESSION = new RegExp(String.raw`^[\p{Decimal_Number}-]+~[\p{Decimal_Number}-]+\n?$`, 'u');
+
+export function findDateRangeExpressionPath(state: ScheduleSpecState): string | undefined {
+  const groupIds = new Set<string>();
+  const seenArrays = new WeakSet<unknown[]>();
+  const find = (value: unknown, path: string): string | undefined => {
+    if (Array.isArray(value) && !seenArrays.has(value)) {
+      seenArrays.add(value);
+      for (let index = 0; index < value.length; index++) {
+        const found = find(value[index], `${path}[${index}]`);
+        if (found) return found;
+      }
+    }
+    if (typeof value === 'string' && !groupIds.has(value) && DATE_RANGE_EXPRESSION.test(value)) return path;
+    return undefined;
+  };
+
+  for (const [index, group] of state.dates.groups.entries()) {
+    const found = find(group.members, `dates.groups[${index}].members`);
+    if (found) return found;
+    groupIds.add(String(group.id));
+  }
+  for (const [index, pref] of state.preferences.entries()) {
+    const found = 'date' in pref
+      ? find(pref.date, `preferences[${index}].date`)
+      : 'countDates' in pref ? find(pref.countDates, `preferences[${index}].countDates`) : undefined;
+    if (found) return found;
+  }
+  for (const [index, rule] of (state.export?.formatting ?? []).entries()) {
+    if ('dates' in rule) {
+      const found = find(rule.dates, `export.formatting[${index}].dates`);
+      if (found) return found;
+    }
+  }
+  for (const [index, column] of (state.export?.extraColumns ?? []).entries()) {
+    const found = find(column.countDates, `export.extraColumns[${index}].countDates`);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 export function normalizeDateReferences(state: ScheduleSpecState): ScheduleSpecState {
   const aliases = new Map<string, string>();
   for (const [isoDate, id] of dateIdsByIsoDate(state.dates.range)) {

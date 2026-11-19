@@ -4788,9 +4788,12 @@ describe('useScheduleSpec', () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 
     expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['03', '04~05'] }]);
+    expect(result.current.dateRangeExpressionPath).toBe('preferences[1].date[1]');
     act(() => result.current.undo());
+    expect(result.current.dateRangeExpressionPath).toBeUndefined();
     expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['02'] }]);
     act(() => result.current.redo());
+    expect(result.current.dateRangeExpressionPath).toBe('preferences[1].date[1]');
     expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['03', '04~05'] }]);
   });
 
