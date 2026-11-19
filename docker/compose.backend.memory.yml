@@ -169,7 +169,7 @@ services:
       retries: 30
 
   nginx:
-    image: nginx:1.29-alpine
+    image: nginx:1.31-alpine
     restart: unless-stopped
     networks:
       - tunnel
