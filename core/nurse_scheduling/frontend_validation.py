@@ -133,29 +133,25 @@ class _FrontendScheduleSpec(ScheduleSpec):
         return self
 
 
-def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
-    # Check range expressions before backend validation so they also fail on
-    # an incomplete Schedule Spec that the AI can otherwise continue editing.
+def _find_date_range_error(data: dict[str, Any]) -> InitErrorDetails | None:
+    """Find the first range expression in the raw payload, even if it is incomplete."""
     group_ids: set[str] = set()
 
-    def check(value: Any, path: tuple[str | int, ...]) -> None:
+    def find(value: Any, path: tuple[str | int, ...]) -> InitErrorDetails | None:
         if isinstance(value, list):
             for index, selector in enumerate(value):
-                check(selector, (*path, index))
+                if error := find(selector, (*path, index)):
+                    return error
         elif isinstance(value, str) and value not in group_ids and DATE_RANGE_SELECTOR_PATTERN.match(value):
-            raise ValidationError.from_exception_data(
-                _FrontendScheduleSpec.__name__,
-                [
-                    InitErrorDetails(
-                        type=PydanticCustomError(
-                            FRONTEND_DATE_RANGE_ERROR,
-                            "Use individual dates or a named date group instead of a date range expression",
-                        ),
-                        loc=path,
-                        input=value,
-                    )
-                ],
+            return InitErrorDetails(
+                type=PydanticCustomError(
+                    FRONTEND_DATE_RANGE_ERROR,
+                    "Use individual dates or a named date group instead of a date range expression",
+                ),
+                loc=path,
+                input=value,
             )
+        return None
 
     dates = data.get("dates")
     export = data.get("export")
@@ -172,10 +168,26 @@ def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
             if not isinstance(entry, dict):
                 continue
             for field in fields:
-                check(entry.get(field), (*path, index, field))
+                if error := find(entry.get(field), (*path, index, field)):
+                    return error
             if path == ("dates", "groups") and isinstance(group_id := entry.get("id"), str):
                 group_ids.add(group_id)
-    return _FrontendScheduleSpec.model_validate(data)
+    return None
+
+
+def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
+    range_error = _find_date_range_error(data)
+    try:
+        spec = _FrontendScheduleSpec.model_validate(data)
+    except ValidationError as error:
+        if range_error is None:
+            raise
+        # AI edits compare validation errors before and after a repair.
+        # Keep preexisting errors visible alongside the range expression.
+        raise ValidationError.from_exception_data(error.title, [range_error, *error.errors()]) from error
+    if range_error is not None:
+        raise ValidationError.from_exception_data(_FrontendScheduleSpec.__name__, [range_error])
+    return spec
 
 
 def load_frontend_data(content: bytes) -> ScheduleSpec:

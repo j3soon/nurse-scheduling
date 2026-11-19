@@ -27,6 +27,7 @@ import pytest
 from ruamel.yaml import YAML
 
 from nurse_scheduling.ai.candidate import review_schedule_spec_candidate
+from nurse_scheduling.ai.validation import MAX_VALIDATION_ISSUES
 
 from .ai_test_helper import SCHEDULE_BYTE_LIMIT, base_schedule_payload, schedule_spec_yaml
 
@@ -100,11 +101,36 @@ def test_candidate_must_replace_a_legacy_date_range_expression(incomplete):
     assert "individual dates or a named date group" in rejected.outcome.text
 
 
-def test_candidate_can_replace_legacy_range_with_equivalent_concrete_date_spellings():
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_candidate_can_replace_legacy_range_with_equivalent_concrete_date_spellings(incomplete):
     payload = base_schedule_payload()
     payload["preferences"][1]["date"] = ["01~02"]
+    if incomplete:
+        del payload["apiVersion"]
     baseline = schedule_spec_yaml(payload)
     payload["preferences"][1]["date"] = ["2026-01-01", "01-02"]
+
+    accepted = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert accepted.outcome.ok
+    assert accepted.proposal is not None
+    if incomplete:
+        assert "apiVersion: Field required" in accepted.outcome.text
+
+
+def test_range_error_preserves_the_ordinary_validation_issue_budget():
+    payload = base_schedule_payload()
+    payload["people"]["items"] = [{"id": []} for _ in range(MAX_VALIDATION_ISSUES)]
+    payload["preferences"][1]["date"] = ["01~02"]
+    baseline = schedule_spec_yaml(payload)
+    payload["description"] = "Changed"
+
+    rejected = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert not rejected.outcome.ok
+    assert "preferences[1].date[0]" in rejected.outcome.text
+
+    payload["preferences"][1]["date"] = ["01", "02"]
 
     accepted = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 

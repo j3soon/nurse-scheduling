@@ -124,7 +124,10 @@ def _is_empty_schedule_spec(data: dict) -> bool:
 
 def _invalid(issues: list[ScheduleSpecIssue]) -> ScheduleSpecValidationResult:
     """Bound the reported issues so one bad Schedule Spec cannot flood the prompt."""
-    kept = issues[:MAX_VALIDATION_ISSUES]
+    # The frontend validator reports at most one range error. Give it a
+    # separate slot so removing it does not expose a preexisting issue.
+    has_range_error = any(issue.code == FRONTEND_DATE_RANGE_ERROR for issue in issues)
+    kept = issues[: MAX_VALIDATION_ISSUES + int(has_range_error)]
     bounded = tuple(ScheduleSpecIssue(issue.location, _bounded_message(issue.message), issue.code) for issue in kept)
     return ScheduleSpecValidationResult(valid=False, issues=bounded, omitted_issues=len(issues) - len(kept))
 
