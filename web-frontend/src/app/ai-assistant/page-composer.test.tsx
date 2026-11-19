@@ -156,6 +156,37 @@ describe('AiAssistantPage', () => {
     }
   });
 
+  it.each(['Send', 'New chat'])('stops dictation and ignores late results after %s clears the draft', async action => {
+    const recognition = {
+      onresult: null as ((event: { results: { transcript: string }[][] }) => void) | null,
+      onend: null as (() => void) | null,
+      onerror: null,
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    vi.stubGlobal('SpeechRecognition', function MockSpeechRecognition() { return recognition; });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = userEvent.setup();
+    try {
+      render(<AiAssistantPage />);
+      const draft = screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
+      await user.type(draft, 'Please');
+      await user.click(await screen.findByRole('button', { name: 'Start dictation' }));
+      const result = recognition.onresult!;
+      act(() => result({ results: [[{ transcript: 'check the schedule' }]] }));
+      expect(draft).toHaveValue('Please check the schedule');
+
+      await user.click(screen.getByRole('button', { name: action, exact: true }));
+      await waitFor(() => expect(draft).toHaveValue(''));
+      expect(recognition.stop).toHaveBeenCalledOnce();
+      expect(screen.getByRole('button', { name: 'Start dictation' })).toBeInTheDocument();
+      act(() => result({ results: [[{ transcript: 'from the old draft' }]] }));
+      expect(draft).toHaveValue('');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reports a real dictation fault but stays quiet when nobody spoke', async () => {
     const recognition = {
       continuous: false,

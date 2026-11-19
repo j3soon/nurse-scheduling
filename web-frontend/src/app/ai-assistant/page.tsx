@@ -278,6 +278,13 @@ export default function AiAssistantPage() {
   const composerDragDepthRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const optimizationDownloadUrlRef = useRef<string | null>(null);
+  const discardDictation = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) return;
+    speechRecognitionRef.current = null;
+    recognition.stop();
+    setIsListening(false);
+  }, []);
   const reportRequestError = useCallback((requestError: unknown, fallback: string) => {
     if (isAuthenticationError(requestError)) {
       setAuthRequired(true);
@@ -320,6 +327,7 @@ export default function AiAssistantPage() {
         setShowScrollToBottom(false);
       }
       if (kind !== 'retry') {
+        discardDictation();
         setDraft('');
         draftInputRef.current?.focus({ preventScroll: true });
       }
@@ -446,13 +454,13 @@ export default function AiAssistantPage() {
   }, [aiEndpoint, isClientReady, setSessionRetentionSeconds]);
 
   useEffect(() => () => {
-      speechRecognitionRef.current?.stop();
+      discardDictation();
       selectedAttachmentsRef.current.forEach(attachment => {
         if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
       });
       if (optimizationDownloadUrlRef.current) URL.revokeObjectURL(optimizationDownloadUrlRef.current);
       chatExportFrameRef.current?.remove();
-  }, []);
+  }, [discardDictation]);
 
   useEffect(() => {
     selectedAttachmentsRef.current = selectedAttachments;
@@ -667,6 +675,7 @@ export default function AiAssistantPage() {
 
   const discardDraft = () => {
     if ((draft.trim() || selectedAttachments.length) && !window.confirm(t("Discard the draft and pending attachments?"))) return false;
+    discardDictation();
     selectedAttachments.forEach(attachment => {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     });
@@ -892,6 +901,7 @@ export default function AiAssistantPage() {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.onresult = event => {
+      if (speechRecognitionRef.current !== recognition) return;
       // Continuous recognition reports one entry per utterance, and browsers differ on
       // whether a transcript carries its own leading space.
       const transcript = Array.from({ length: event.results.length }, (_, index) => (
@@ -900,10 +910,12 @@ export default function AiAssistantPage() {
       setDraft(`${originalDraft}${originalDraft && transcript ? ' ' : ''}${transcript}`);
     };
     recognition.onend = () => {
-      if (speechRecognitionRef.current === recognition) speechRecognitionRef.current = null;
+      if (speechRecognitionRef.current !== recognition) return;
+      speechRecognitionRef.current = null;
       setIsListening(false);
     };
     recognition.onerror = event => {
+      if (speechRecognitionRef.current !== recognition) return;
       if (!BENIGN_SPEECH_ERRORS.has(event?.error ?? '')) {
         setError("Speech recognition stopped before it could transcribe audio.");
       }
