@@ -306,6 +306,17 @@ def test_opencc_matches_displayed_prose_and_preserves_literal_markdown(tmp_path,
         check_event(raw.steps[1], [{"kind": "assistant", "text": reply}], 0)
 
 
+@pytest.mark.parametrize(
+    ("markdown", "expected"),
+    [
+        ("> [来源](https://example.com) 人员引用\n\n人员正文", "来源 人员引用\n人員正文\n"),
+        ("> > 人员内层\n>\n> 人员外层\n\n人员正文", "人员内层\n人员外层\n人員正文\n"),
+    ],
+)
+def test_opencc_preserves_text_in_quotes_after_inner_markdown(markdown, expected):
+    assert displayed_text(markdown) == expected
+
+
 @pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
 def test_opencc_judge_sees_displayed_text_and_transcript_retains_raw(tmp_path, monkeypatch, default_encoding):
     monkeypatch.setattr(subprocess, "_text_encoding", lambda: default_encoding)
