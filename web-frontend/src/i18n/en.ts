@@ -331,6 +331,8 @@ export const en = {
   "Current People History": "Current People History",
   "Current Requirements": "Current Requirements",
   "Current Schedule Spec YAML": "Current Schedule Spec YAML",
+  "Schedule Spec description (optional)": "Schedule Spec description (optional)",
+  "Save description": "Save description",
   "Current Shift Affinities": "Current Shift Affinities",
   "Current Shift Counts": "Current Shift Counts",
   "Current Shift Requests": "Current Shift Requests",

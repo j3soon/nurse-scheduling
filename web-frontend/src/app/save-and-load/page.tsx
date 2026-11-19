@@ -131,11 +131,19 @@ export default function SaveAndLoadPage() {
   const { t } = useI18n();
   const {
     dateData,
+    descriptionData,
+    updateDescription,
     loadFromYaml,
     savedState: filteredState,
   } = useScheduleSpec();
 
   const [isEditing, setIsEditing] = useState(false);
+  const [descriptionEdit, setDescriptionEdit] = useState<{
+    base: typeof filteredState;
+    value: string;
+  } | null>(null);
+  const description = descriptionEdit?.base === filteredState ? descriptionEdit.value : descriptionData;
+  const hasDescriptionEdit = description !== descriptionData;
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -154,7 +162,7 @@ export default function SaveAndLoadPage() {
       }
     };
   }, []);
-  useTabSwitchWarning(isEditing);
+  useTabSwitchWarning(isEditing || hasDescriptionEdit);
 
   // Convert current state to YAML with custom flow style for leaf arrays
   const currentYaml = generateYamlFromState(filteredState);
@@ -441,6 +449,40 @@ export default function SaveAndLoadPage() {
           )}
         </div>
       </details>
+
+      {!isEditing && (
+        <form
+          className="mb-6 rounded-lg border border-gray-200 bg-white p-4"
+          onSubmit={event => {
+            event.preventDefault();
+            if (hasDescriptionEdit) {
+              updateDescription(description);
+              setDescriptionEdit(null);
+            }
+          }}
+        >
+          <label htmlFor="schedule-spec-description" className="block font-medium text-gray-800">
+            {t("Schedule Spec description (optional)")}
+          </label>
+          <textarea
+            id="schedule-spec-description"
+            value={description}
+            onChange={event => setDescriptionEdit({ base: filteredState, value: event.target.value })}
+            rows={3}
+            className="mt-2 block w-full rounded-md border border-gray-300 p-2 text-sm"
+          />
+          {hasDescriptionEdit && (
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={() => setDescriptionEdit(null)} className="rounded-md border border-gray-300 px-3 py-1 text-sm">
+                {t("Cancel")}
+              </button>
+              <button type="submit" className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700">
+                {t("Save description")}
+              </button>
+            </div>
+          )}
+        </form>
+      )}
 
       {/* YAML Display/Editor */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">

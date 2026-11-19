@@ -106,6 +106,10 @@ export function useScheduleSpecInternal() {
     });
   };
 
+  const updateDescription = (description: string) => {
+    updateState(state => ({ ...state, description }));
+  };
+
   // Base function to navigate to a specific history index
   const moveHistoryIndex = (delta: number) => {
     setHistoryState(prevHistoryState => {
@@ -997,6 +1001,7 @@ export function useScheduleSpecInternal() {
     updateDateRange,
     apiVersionData: historyState.state.apiVersion,
     descriptionData: historyState.state.description,
+    updateDescription,
     dateData: historyState.state.dates,
     peopleData: historyState.state.people,
     shiftTypeData: historyState.state.shiftTypes,

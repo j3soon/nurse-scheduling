@@ -301,6 +301,8 @@ export const zhTW: Catalog = {
   "Current People History": "目前的人員歷史紀錄",
   "Current Requirements": "目前的需求",
   "Current Schedule Spec YAML": "目前的排班設定 YAML",
+  "Schedule Spec description (optional)": "排班設定說明（選填）",
+  "Save description": "儲存說明",
   "Current Shift Affinities": "目前的同班偏好",
   "Current Shift Counts": "目前的班次計數",
   "Current Shift Requests": "目前的排班請求",

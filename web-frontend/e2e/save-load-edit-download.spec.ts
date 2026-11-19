@@ -19,6 +19,7 @@
 
 // This test is mostly AI generated.
 
+import yaml from 'js-yaml';
 import { expect, test } from './test';
 import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
@@ -66,4 +67,37 @@ test('download after editing YAML reflects the saved edited state', async ({ pag
   }
   expect(yamlText).toContain('Team Omega');
   expect(yamlText).not.toContain('Team Alpha');
+});
+
+test('editing the Schedule Spec description updates YAML and creates one Undo step', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'Original description',
+    dates: { range: {}, groups: [] },
+    people: { items: [], groups: [], history: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [{ type: 'at most one shift per day', description: 'Keep this rule note' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/save-and-load');
+  const description = page.getByLabel('Schedule Spec description (optional)');
+  const preview = page.locator('pre');
+  await expect(description).toHaveValue('Original description');
+  const revised = 'June roster\nIncludes the holiday weekend.';
+  await description.fill(revised);
+  await expect(preview).toContainText('Original description');
+  await page.getByRole('button', { name: 'Save description' }).click();
+  await expect(preview).toContainText('June roster');
+  expect(yaml.load(await preview.innerText())).toMatchObject({
+    description: revised,
+    preferences: [{ type: 'at most one shift per day', description: 'Keep this rule note' }],
+  });
+
+  await page.keyboard.press('Control+z');
+  await expect(description).toHaveValue('Original description');
+  await page.keyboard.press('Control+y');
+  await expect(description).toHaveValue(revised);
+  await page.reload();
+  await expect(description).toHaveValue(revised);
 });
