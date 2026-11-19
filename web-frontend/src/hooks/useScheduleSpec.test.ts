@@ -2236,7 +2236,7 @@ describe('useScheduleSpec', () => {
     });
   });
 
-  it('logs and skips sorting checks for invalid SHIFT_REQUEST person/shiftType shapes', async () => {
+  it('accepts SHIFT_REQUEST entries with multiple people or shift types', async () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
@@ -2273,9 +2273,13 @@ describe('useScheduleSpec', () => {
     await waitFor(() => {
       const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST);
       expect(requests).toHaveLength(2);
+      expect(requests).toEqual(expect.arrayContaining([
+        expect.objectContaining({ person: ['Person 1', 'Person 2'], shiftType: ['D'] }),
+        expect.objectContaining({ person: ['Person 1'], shiftType: ['D', 'N'] }),
+      ]));
     });
 
-    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('clears person history entries before a position when shiftTypeId is undefined', async () => {

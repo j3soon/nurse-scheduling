@@ -23,13 +23,13 @@
 import { useI18n } from '@/i18n/I18nProvider';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FiEdit2, FiAlertCircle, FiUpload, FiTrash2 } from 'react-icons/fi';
+import { FiEdit2, FiAlertCircle, FiUpload, FiTrash2, FiMessageSquare } from 'react-icons/fi';
 import UploadButton from '@/components/UploadButton';
 import PageDocumentationLink from '@/components/PageDocumentationLink';
 import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
-import ShiftPreferenceEditor from '@/components/ShiftPreferenceEditor';
+import ShiftPreferenceEditor, { type ShiftPreferenceEdit } from '@/components/ShiftPreferenceEditor';
 import ToggleButton from '@/components/ToggleButton';
 import { CheckboxList } from '@/components/CheckboxList';
 import { getWeightDisplayLabel, isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
@@ -38,6 +38,30 @@ import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { dateStrToDate } from '@/utils/dateParsing';
 import { DataType } from '@/types/scheduling';
 import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
+
+function addShiftRequest(
+  requests: ShiftRequestPreference[],
+  request: ShiftRequestPreference,
+  dateItemIds: Set<string>,
+) {
+  // Groups can overlap after expansion. Keep them separate so their weights can stack.
+  const index = request.person.length === 1 && request.shiftType.length === 1 &&
+    request.date.every(id => dateItemIds.has(id))
+    ? requests.findIndex(candidate =>
+      candidate.person.length === 1 && candidate.person[0] === request.person[0] &&
+      candidate.shiftType.length === 1 && candidate.shiftType[0] === request.shiftType[0] &&
+      candidate.weight === request.weight &&
+      (candidate.description || '') === (request.description || '') &&
+      candidate.date.every(id => dateItemIds.has(id) && !request.date.includes(id))
+    )
+    : -1;
+  if (index === -1) {
+    requests.push(request);
+  } else {
+    const candidate = requests[index];
+    requests[index] = { ...candidate, date: [...candidate.date, ...request.date] };
+  }
+}
 
 export default function ShiftRequestsPage() {
   const { t, locale } = useI18n();
@@ -54,6 +78,7 @@ export default function ShiftRequestsPage() {
 
   // Get shift request preferences from the flattened preferences
   const shiftRequestPreferences = getPreferencesByType<ShiftRequestPreference>(SHIFT_REQUEST);
+  const dateItemIds = new Set(dateData.items.map(date => date.id));
   const updateShiftRequestPreferences = (
     newPrefs: ShiftRequestPreference[],
     options?: { replaceLatestHistoryEntry?: boolean }
@@ -77,6 +102,10 @@ export default function ShiftRequestsPage() {
     personId: '',
     dateId: '',
   });
+  const [descriptionEdit, setDescriptionEdit] = useState<{
+    request: ShiftRequestPreference;
+    value: string;
+  } | null>(null);
 
   const [historyEditState, setHistoryEditState] = useState<{
     isOpen: boolean;
@@ -109,7 +138,10 @@ export default function ShiftRequestsPage() {
   const [quickAddHeight, setQuickAddHeight] = useState(0);
   const quickAddRef = useRef<HTMLDivElement>(null);
   const stickyQuickAddRef = useRef<HTMLDivElement>(null);
-  useTabSwitchWarning(editorState.isOpen || historyEditState.isOpen);
+  useTabSwitchWarning(
+    editorState.isOpen || historyEditState.isOpen ||
+    (descriptionEdit !== null && shiftRequestPreferences.includes(descriptionEdit.request))
+  );
   // TODO(perf): The multi-select drag feature is now lagging, unsure why.
 
   enum SelectedCellType {
@@ -883,6 +915,10 @@ export default function ShiftRequestsPage() {
     );
   };
 
+  const canEditInCell = (request: ShiftRequestPreference) =>
+    request.person.length === 1 && request.shiftType.length === 1 &&
+    (request.date.length === 1 || request.date.every(id => dateItemIds.has(id)));
+
   // Helper function to compute new shift preferences from delta updates.
   // Real date items are compacted together for readable YAML. Date groups stay as separate preferences
   // so overlapping targets like ALL, WEEKDAY, and WEEKEND can stack as separate weights.
@@ -891,7 +927,7 @@ export default function ShiftRequestsPage() {
     updates: {
       personId: string;
       dateId: string;
-      deltaPreferences: { shiftTypeId: string; weight: number }[];
+      deltaPreferences: ShiftPreferenceEdit[];
       clearFirst?: boolean; // If true, clear all existing preferences for this person-date first
     }[]
   ): ShiftRequestPreference[] => {
@@ -900,90 +936,54 @@ export default function ShiftRequestsPage() {
     // Process each update
     for (const update of updates) {
       const { personId, dateId, deltaPreferences, clearFirst = false } = update;
-      const dateItemIds = new Set(dateData.items.map(date => date.id));
-      const isDateItem = dateItemIds.has(dateId);
+      const matchesCell = (request: ShiftRequestPreference) =>
+        request.person[0] === personId && request.date.includes(dateId) && canEditInCell(request);
 
-      // Get current preferences for this person-date combination
-      const currentPersonDatePreferences = filteredPreferences.filter(
-        p => p.person[0] === personId && p.date.includes(dateId)
-      );
+      const updatedPreferences: ShiftPreferenceEdit[] = clearFirst
+        ? deltaPreferences.filter(pref => pref.weight !== 0)
+        : filteredPreferences.filter(matchesCell).map(pref => ({
+          shiftTypeId: pref.shiftType[0],
+          weight: pref.weight,
+          description: pref.description,
+        }));
 
-      // Convert to the format expected for processing
-      let updatedPreferences = currentPersonDatePreferences.map(pref => ({
-        shiftTypeId: pref.shiftType[0],
-        weight: pref.weight
-      }));
-
-      // Clear all existing preferences first if requested
-      if (clearFirst) {
-        updatedPreferences = [];
-      }
-
-      // Apply delta changes
-      for (const delta of deltaPreferences) {
-        const existingIndex = updatedPreferences.findIndex(pref => pref.shiftTypeId === delta.shiftTypeId);
-
-        if (existingIndex >= 0) {
-          // Update existing preference
-          if (delta.weight === 0) {
-            // Remove preference if weight is 0
-            updatedPreferences.splice(existingIndex, 1);
+      if (!clearFirst) {
+        for (const delta of deltaPreferences) {
+          const index = updatedPreferences.findIndex(pref => pref.shiftTypeId === delta.shiftTypeId);
+          if (index === -1) {
+            if (delta.weight !== 0) updatedPreferences.push(delta);
+          } else if (delta.weight === 0) {
+            updatedPreferences.splice(index, 1);
           } else {
-            updatedPreferences[existingIndex].weight = delta.weight;
-          }
-        } else {
-          // Add new preference (only if weight is not 0)
-          if (delta.weight !== 0) {
-            updatedPreferences.push({
-              shiftTypeId: delta.shiftTypeId,
-              weight: delta.weight
-            });
+            updatedPreferences[index] = { ...updatedPreferences[index], weight: delta.weight };
           }
         }
       }
 
-      // Remove the date ID from all existing preferences for this person
       filteredPreferences = filteredPreferences.map(pref => {
-        if (pref.person[0] === personId) {
-          return {
-            ...pref,
-            date: pref.date.filter(id => id !== dateId),
-          };
-        }
-        return pref;
-      });
+        return matchesCell(pref) ? { ...pref, date: pref.date.filter(id => id !== dateId) } : pref;
+      }).filter(pref => pref.date.length > 0);
 
-      // Add back the updated preferences
       for (const preference of updatedPreferences) {
-        const existingPreference = isDateItem ? filteredPreferences.find(
-          p => p.person[0] === personId &&
-            p.shiftType[0] === preference.shiftTypeId &&
-            p.weight === preference.weight &&
-            p.date.every(id => dateItemIds.has(id))
-        ) : undefined;
-        if (existingPreference) {
-          existingPreference.date.push(dateId);
-          continue;
-        }
-        filteredPreferences.push({
+        addShiftRequest(filteredPreferences, {
           type: SHIFT_REQUEST,
           person: [personId],
           date: [dateId],
           shiftType: [preference.shiftTypeId],
           weight: preference.weight,
-        });
+          ...(preference.description ? { description: preference.description } : {}),
+        }, dateItemIds);
       }
     }
 
-    // Remove preferences with empty date
-    return filteredPreferences.filter(p => p.date.length > 0);
+    return filteredPreferences;
   };
 
   // Helper function to update shift preferences for a person-date combination
   const updateShiftPreferences = (
     personId: string,
     dateId: string,
-    deltaPreferences: { shiftTypeId: string; weight: number }[],
+    deltaPreferences: ShiftPreferenceEdit[],
     options?: { replaceLatestHistoryEntry?: boolean; clearFirst?: boolean }
   ) => {
     // Use delta preferences with clearFirst to replicate full replacement behavior
@@ -1069,9 +1069,21 @@ export default function ShiftRequestsPage() {
     });
   };
 
-  const handleSavePreferences = (preferences: { shiftTypeId: string; weight: number }[]) => {
+  const handleSavePreferences = (preferences: ShiftPreferenceEdit[]) => {
     updateShiftPreferences(editorState.personId, editorState.dateId, preferences);
   };
+
+  const saveRequestDescription = (request: ShiftRequestPreference, value: string) => {
+    if (value !== (request.description ?? '')) {
+      const requests = shiftRequestPreferences.filter(pref => pref !== request);
+      addShiftRequest(requests, { ...request, description: value || undefined }, dateItemIds);
+      updateShiftRequestPreferences(requests);
+    }
+    setDescriptionEdit(null);
+  };
+
+  const editorRequests = editorState.isOpen ? getShiftPreferences(editorState.personId, editorState.dateId) : [];
+  const editableRequests = editorRequests.filter(canEditInCell);
 
   const handleDraggedCell = (
     selectedCellType: SelectedCellType,
@@ -1841,6 +1853,11 @@ export default function ShiftRequestsPage() {
                                     return (
                                       <div key={index} className="text-xs font-semibold leading-tight px-0.5 whitespace-nowrap">
                                         {pref.shiftType} ({getWeightDisplayLabel(pref.weight)})
+                                        {pref.description && (
+                                          <span className="ml-0.5 inline-block" title={pref.description}>
+                                            <FiMessageSquare role="img" aria-label={t("Request description")} className="h-3 w-3" />
+                                          </span>
+                                        )}
                                       </div>
                                     );
                                   })}
@@ -1866,7 +1883,6 @@ export default function ShiftRequestsPage() {
           <div className="mt-6 bg-blue-50 shadow-md rounded-lg overflow-hidden border border-blue-200">
             <div className="px-6 py-4 border-b border-blue-200 bg-blue-100">
               <h3 className="text-lg font-semibold text-blue-800">{t("Current Shift Requests")}</h3>
-              <p className="text-sm text-blue-600 mt-1">{t("Auto-computed from the preference matrix above")}</p>
             </div>
 
             {shiftRequestPreferences.length === 0 ? (
@@ -1880,13 +1896,13 @@ export default function ShiftRequestsPage() {
                   const shiftType = getAllShiftTypes().find(st => st.id === preference.shiftType[0]);
 
                   return (
-                    <div key={index} className="px-6 py-5 bg-blue-50">
+                    <article key={index} className="px-6 py-5 bg-blue-50">
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm text-blue-600">
                             <div>
                               <span className="font-medium">{t("Person:")}</span>{' '}
-                              <span className="text-blue-900">{preference.person}</span>
+                              <span className="text-blue-900">{preference.person.join(', ')}</span>
                               {person?.description && (
                                 <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                               )}
@@ -1899,7 +1915,7 @@ export default function ShiftRequestsPage() {
                             </div>
                             <div>
                               <span className="font-medium">{t("Shift Type:")}</span>{' '}
-                              <span className="text-blue-900">{preference.shiftType}</span>
+                              <span className="text-blue-900">{preference.shiftType.join(', ')}</span>
                               {shiftType?.description && (
                                 <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
                               )}
@@ -1914,9 +1930,46 @@ export default function ShiftRequestsPage() {
                               </div>
                             </div>
                           </div>
+                          {descriptionEdit?.request === preference ? (
+                            <form className="mt-3" onSubmit={event => {
+                              event.preventDefault();
+                              saveRequestDescription(preference, descriptionEdit.value);
+                            }}>
+                              <label className="block text-sm font-medium text-blue-900">
+                                {t("Request description for all listed dates")}
+                                <textarea
+                                  value={descriptionEdit.value}
+                                  onChange={event => setDescriptionEdit({ request: preference, value: event.target.value })}
+                                  rows={2}
+                                  className="mt-1 block w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
+                                />
+                              </label>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button type="button" onClick={() => setDescriptionEdit(null)} className="rounded-md border border-gray-300 px-3 py-1 text-sm">
+                                  {t("Cancel")}
+                                </button>
+                                <button type="submit" className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700">
+                                  {t("Save description")}
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              {preference.description && (
+                                <p className="mt-3 whitespace-pre-wrap break-words text-sm text-blue-900">{preference.description}</p>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => setDescriptionEdit({ request: preference, value: preference.description ?? '' })}
+                                className="mt-2 text-sm font-medium text-blue-700 underline hover:text-blue-900"
+                              >
+                                {t("Edit description")}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
-                    </div>
+                    </article>
                   );
                 })}
               </div>
@@ -2013,7 +2066,10 @@ export default function ShiftRequestsPage() {
         personId={editorState.personId}
         dateId={editorState.dateId}
         shiftTypes={getAllShiftTypes()}
-        initialPreferences={getShiftPreferences(editorState.personId, editorState.dateId).map(p => ({ shiftTypeId: p.shiftType[0], weight: p.weight }))}
+        initialPreferences={editableRequests.map(p => ({
+          shiftTypeId: p.shiftType[0], weight: p.weight, description: p.description,
+        }))}
+        hasOtherRequests={editableRequests.length !== editorRequests.length}
       />
 
       {/* History Editor Modal */}

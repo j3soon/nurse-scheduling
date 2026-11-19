@@ -23,6 +23,15 @@ from the previous month's team. Some penalties increase from November 4.
 - Positive weights prefer a shift. Negative weights avoid it.
 - Green cells are positive, red are negative, and yellow contain both.
 
+To add an optional description for one date, open its matrix cell, enter a
+description for the active request, and select **Save Preferences**. If the
+request covers several dates, changing one description keeps the original
+description on the other dates. Use **Edit description** under **Current Shift
+Requests** to change the description for all dates listed on an entry. Separate
+requests for overlapping date groups keep their own descriptions and weights.
+Use the list to edit descriptions on imported entries that target multiple people
+or shift types, or that combine date groups with other dates.
+
 Use finite weights for normal priorities. A `+∞` request should normally target
 one concrete shift. On a multi-member group that does not cover every working
 shift, it requires every member shift simultaneously and usually conflicts
