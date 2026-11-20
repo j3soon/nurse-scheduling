@@ -436,6 +436,8 @@ for (const clearPending of [false, true]) {
     await expect(history.getByRole('button', { name: /^Keep this chat/ })).toBeVisible();
     await expect.poll(async () => (await snapshot())?.historyPending).toBe(false);
     await history.getByRole('button', { name: 'Remove chat: Keep this chat.' }).click();
+    // Removing a chat waits for the history lock before it commits.
+    await expect(history.getByText('No recent chats.')).toBeVisible();
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
     expect(await snapshot()).toBeNull();
     await page.reload();
