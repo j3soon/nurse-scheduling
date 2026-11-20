@@ -427,6 +427,18 @@ export const applyReferencesForIdChange = (
   let nextState = applyPeopleHistoryForIdChange(state, dataType, oldId, newId);
   nextState = applyPreferencesForIdChange(nextState, dataType, oldId, newId);
   nextState = applyExportLayoutForIdChange(nextState, dataType, oldId, newId);
+  if (dataType === DataType.DATES && oldId !== newId) {
+    nextState = {
+      ...nextState,
+      dates: {
+        ...nextState.dates,
+        groups: nextState.dates.groups.map(group => ({
+          ...group,
+          members: renameReferenceIds(group.members, oldId, newId) as string[],
+        })),
+      },
+    };
+  }
   return nextState;
 };
 

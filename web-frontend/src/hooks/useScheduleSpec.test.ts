@@ -4811,7 +4811,10 @@ describe('useScheduleSpec', () => {
       dates: {
         ...state.dates,
         range: { startDate: '2026-11-01', endDate: '2026-11-03' },
-        groups: [{ id: groupId, members: ['2026-11-03'], description: '' }],
+        groups: [
+          { id: groupId, members: ['2026-11-03'], description: '' },
+          { id: 'Dependent', members: [groupId], description: '' },
+        ],
       },
       preferences: [...state.preferences, { ...request, date: [groupId] }],
       export: { formatting: [{ type: 'column', dates: [groupId] }] },
@@ -4825,9 +4828,11 @@ describe('useScheduleSpec', () => {
     });
     expect(result.current.dateData.range.endDate).toEqual(new Date('2026-11-03'));
     expect(result.current.dateData.groups.find(group => group.id === groupId)?.members).toEqual(['03']);
+    expect(result.current.dateData.groups.find(group => group.id === 'Dependent')?.members).toEqual([groupId]);
     expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: [groupId] }]);
 
     act(() => result.current.updateGroup(DataType.DATES, result.current.dateData, groupId, 'Special Days'));
+    expect(result.current.dateData.groups.find(group => group.id === 'Dependent')?.members).toEqual(['Special Days']);
     act(() => result.current.updateDateRange(expandedRange));
 
     expect(result.current.dateData.range).toEqual(expandedRange);
