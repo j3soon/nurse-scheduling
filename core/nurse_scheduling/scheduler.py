@@ -139,6 +139,8 @@ def schedule(
     should_stop: Callable[[], bool] | None = None,
     model_build_stats_callback: Callable[[ModelBuildStats], None] | None = None,
     forced_solution: Mapping[tuple[int, int, int], int] | None = None,
+    *,
+    legacy_date_range_group_ids: bool = False,
 ) -> ScheduleResult:
     progress_started_at = time.monotonic()
     _emit_phase_progress(
@@ -148,7 +150,7 @@ def schedule(
         progress_started_at,
     )
     logger.info("Loading scenario from file content...")
-    scenario = load_schedule_spec(file_content)
+    scenario = load_schedule_spec(file_content, legacy_date_range_group_ids=legacy_date_range_group_ids)
 
     _emit_phase_progress(progress_callback, "parsing_data", "Parsing Schedule Spec", progress_started_at)
     logger.info("Extracting scenario data...")

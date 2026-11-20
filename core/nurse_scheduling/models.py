@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationInfo, field_validator, model_validator
 from typing_extensions import Self
 
 from . import utils
@@ -503,7 +503,7 @@ class ScheduleSpec(BaseModel):
     export: ExportConfig = Field(default_factory=ExportConfig)
 
     @model_validator(mode="after")
-    def validate_model(self) -> Self:
+    def validate_model(self, info: ValidationInfo) -> Self:
         # Validate preferences
         required_prefs = {AT_MOST_ONE_SHIFT_PER_DAY}
         found_prefs = {pref.type for pref in self.preferences}
@@ -565,6 +565,7 @@ class ScheduleSpec(BaseModel):
         if self.dates.items:
             raise ValueError("dates.items is not allowed since it is automatically generated from dates.range")
         date_reserved_ids = {k.upper() for k in MAP_WEEKDAY_TO_STR} | {k.upper() for k in MAP_DATE_KEYWORD_TO_FILTER}
+        legacy_range_group_ids = isinstance(info.context, dict) and info.context.get("legacy_date_range_group_ids")
         date_group_ids = set()
         for group in self.dates.groups:
             if group.id in date_group_ids:
@@ -573,7 +574,9 @@ class ScheduleSpec(BaseModel):
                 raise ValueError(
                     f"Date group ID {group.id!r} cannot be one of the reserved values: {date_reserved_ids}"
                 )
-            if utils.is_date_selector_shape(group.id):
+            if utils.is_date_selector_shape(group.id) and not (
+                legacy_range_group_ids and utils.DATE_RANGE_SELECTOR_PATTERN.match(group.id)
+            ):
                 raise ValueError(f"Date group ID {group.id!r} cannot look like a date or date range expression")
             date_group_ids.add(group.id)
 

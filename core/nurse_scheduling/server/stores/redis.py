@@ -849,6 +849,7 @@ class RedisJobStore:
                 "prettify": job.request.prettify,
                 "timeout_seconds": job.request.timeout_seconds,
                 "client_key": job.request.client_key,
+                "legacy_date_range_group_ids": job.request.legacy_date_range_group_ids,
             },
             "created_at": job.created_at.isoformat(),
             "revision": job.revision,
@@ -891,6 +892,8 @@ class RedisJobStore:
                 prettify=request.get("prettify"),
                 timeout_seconds=request["timeout_seconds"],
                 client_key=request.get("client_key"),
+                # Earlier deployments accepted ASCII range group IDs on both routes.
+                legacy_date_range_group_ids=request.get("legacy_date_range_group_ids", True),
             ),
             created_at=datetime.fromisoformat(data["created_at"]),
             revision=data["revision"],

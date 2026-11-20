@@ -37,6 +37,10 @@ job routes, response fields, and workbook downloads remain available. The
 release sends no bearer token, so it requires a deployment that permits those
 requests under its authentication policy.
 
+The tagged submission route preserves ASCII date range expressions such as
+`3~4` as group IDs when they were defined in the submitted Schedule Spec.
+The current API reserves those forms for date selectors.
+
 Record the optimizer contract when tagging a frontend release. Test its original
 request and response formats against the current backend. Do not rename the
 legacy fixtures together with the implementation.

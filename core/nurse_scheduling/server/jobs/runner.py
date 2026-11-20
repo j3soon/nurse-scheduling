@@ -86,6 +86,7 @@ class OptimizationRunner:
                 solver=job.request.solver,
                 progress_callback=publish_progress,
                 should_stop=should_stop,
+                legacy_date_range_group_ids=job.request.legacy_date_range_group_ids,
             )
         except (YAMLError, ValidationError, InputValidationError, ScheduleSpecTooComplexError) as error:
             # The submitted scenario is unusable, so report a client input

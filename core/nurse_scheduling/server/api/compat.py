@@ -21,7 +21,7 @@
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 
-from .optimize import create_job
+from .optimize import submit_job
 
 router = APIRouter()
 
@@ -36,5 +36,7 @@ async def create_legacy_job(
     timeout: int | None = Form(None),
     solver: str | None = Form(None),
 ):
-    """Forward old form names to the current submission handler."""
-    return await create_job(request, response, file, yaml_content, prettify, timeout, solver)
+    """Accept the tagged frontend's form fields and legacy date group IDs."""
+    return await submit_job(
+        request, response, file, yaml_content, prettify, timeout, solver, legacy_date_range_group_ids=True
+    )

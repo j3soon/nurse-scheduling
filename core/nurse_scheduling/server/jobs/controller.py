@@ -105,6 +105,7 @@ class JobController:
         input_bytes: bytes,
         auth_credential_id: str | None = None,
         client_address: str | None = None,
+        legacy_date_range_group_ids: bool = False,
     ) -> Job:
         """Create and enqueue a job with its submitted input.
 
@@ -130,6 +131,7 @@ class JobController:
                     prettify=prettify,
                     timeout_seconds=timeout_seconds,
                     client_key=client_key,
+                    legacy_date_range_group_ids=legacy_date_range_group_ids,
                 ),
                 created_at=now,
             )
