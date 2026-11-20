@@ -72,7 +72,7 @@ export function dateReferenceIssueMessage(issue: DateReferenceIssue, t: Translat
     case 'non-ascii-digits':
       return t("Use ASCII digits (0-9) for the date at {value0}.", { value0: issue.path });
     case 'range-expression':
-      return `${issue.path} uses a date range expression. Use individual dates or a named date group.`;
+      return t("{value0} uses a date range expression. Use individual dates or a named date group.", { value0: issue.path });
   }
 }
 

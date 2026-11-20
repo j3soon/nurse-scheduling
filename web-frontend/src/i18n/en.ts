@@ -691,6 +691,7 @@ export const en = {
   "Replace people group IDs": "Replace people group IDs",
   "Replace people item IDs": "Replace people item IDs",
   "Replace the date range expression at {value0} with individual dates or a named date group in Save and Load.": "Replace the date range expression at {value0} with individual dates or a named date group in Save and Load.",
+  "{value0} uses a date range expression. Use individual dates or a named date group.": "{value0} uses a date range expression. Use individual dates or a named date group.",
   "Use ASCII digits (0-9) for the date at {value0}.": "Use ASCII digits (0-9) for the date at {value0}.",
   "Rename the date group at {value0} so its ID does not look like a date or date range expression.": "Rename the date group at {value0} so its ID does not look like a date or date range expression.",
   "A date group ID cannot look like a date or date range expression.": "A date group ID cannot look like a date or date range expression.",
