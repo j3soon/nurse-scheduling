@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pydantic import ValidationError
 from ruamel.yaml.error import YAMLError
 
-from ..frontend_validation import FRONTEND_DATE_RANGE_ERROR, load_frontend_data
+from ..frontend_validation import FRONTEND_DATE_REFERENCE_ERROR, load_frontend_data
 from ..loader import _load_yaml
 
 # The assistant is reachable only from the web frontend, so it validates the
@@ -124,10 +124,10 @@ def _is_empty_schedule_spec(data: dict) -> bool:
 
 def _invalid(issues: list[ScheduleSpecIssue]) -> ScheduleSpecValidationResult:
     """Bound the reported issues so one bad Schedule Spec cannot flood the prompt."""
-    # The frontend validator reports at most one range error. Give it a
+    # The frontend validator reports at most one date reference error. Give it a
     # separate slot so removing it does not expose a preexisting issue.
-    has_range_error = any(issue.code == FRONTEND_DATE_RANGE_ERROR for issue in issues)
-    kept = issues[: MAX_VALIDATION_ISSUES + int(has_range_error)]
+    has_date_error = any(issue.code == FRONTEND_DATE_REFERENCE_ERROR for issue in issues)
+    kept = issues[: MAX_VALIDATION_ISSUES + int(has_date_error)]
     bounded = tuple(ScheduleSpecIssue(issue.location, _bounded_message(issue.message), issue.code) for issue in kept)
     return ScheduleSpecValidationResult(valid=False, issues=bounded, omitted_issues=len(issues) - len(kept))
 
@@ -152,7 +152,7 @@ def new_schedule_spec_issues(
     return tuple(
         issue
         for issue in after.issues
-        if issue.code == FRONTEND_DATE_RANGE_ERROR or (issue.location, issue.message) not in existing
+        if issue.code == FRONTEND_DATE_REFERENCE_ERROR or (issue.location, issue.message) not in existing
     )
 
 

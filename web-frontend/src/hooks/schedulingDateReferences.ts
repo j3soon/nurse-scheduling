@@ -20,7 +20,8 @@
 // This code is mostly AI generated.
 
 import { DataType, type DateRange } from '@/types/scheduling';
-import { getDateIdForRange } from '@/utils/calendar';
+import type { Translator } from '@/i18n/messages';
+import { DATE_RANGE_EXPRESSION, getDateIdForRange, hasNonAsciiDateDigits, isDateSelectorShape } from '@/utils/calendar';
 import { mapReferenceIdTree } from '@/utils/referenceIds';
 import type { ScheduleSpecState } from './scheduleSpecState';
 import { applyReferencesForIdDeletion } from './schedulingReferenceUpdates';
@@ -62,13 +63,22 @@ function mapDateReferences(state: ScheduleSpecState, mapId: (id: string) => stri
   };
 }
 
-// The optimizer resolves a named group before it parses a range expression.
-const DATE_RANGE_EXPRESSION = new RegExp(String.raw`^[\p{Decimal_Number}-]+~[\p{Decimal_Number}-]+\n?$`, 'u');
+export type DateReferenceIssue = { path: string; kind: 'range-expression' | 'non-ascii-digits' | 'group-id' };
 
-export function findDateRangeExpressionPath(state: ScheduleSpecState): string | undefined {
-  const groupIds = new Set<string>();
+export function dateReferenceIssueMessage(issue: DateReferenceIssue, t: Translator): string {
+  switch (issue.kind) {
+    case 'group-id':
+      return t("Rename the date group at {value0} so its ID does not look like a date or date range expression.", { value0: issue.path });
+    case 'non-ascii-digits':
+      return t("Use ASCII digits (0-9) for the date at {value0}.", { value0: issue.path });
+    case 'range-expression':
+      return `${issue.path} uses a date range expression. Use individual dates or a named date group.`;
+  }
+}
+
+export function findDateReferenceIssue(state: ScheduleSpecState): DateReferenceIssue | undefined {
   const seenArrays = new WeakSet<unknown[]>();
-  const find = (value: unknown, path: string): string | undefined => {
+  const find = (value: unknown, path: string): DateReferenceIssue | undefined => {
     if (Array.isArray(value) && !seenArrays.has(value)) {
       seenArrays.add(value);
       for (let index = 0; index < value.length; index++) {
@@ -76,14 +86,18 @@ export function findDateRangeExpressionPath(state: ScheduleSpecState): string | 
         if (found) return found;
       }
     }
-    if (typeof value === 'string' && !groupIds.has(value) && DATE_RANGE_EXPRESSION.test(value)) return path;
+    if (hasNonAsciiDateDigits(value)) return { path, kind: 'non-ascii-digits' };
+    if (typeof value === 'string' && DATE_RANGE_EXPRESSION.test(value)) return { path, kind: 'range-expression' };
     return undefined;
   };
 
   for (const [index, group] of state.dates.groups.entries()) {
+    const id: unknown = group.id;
+    if (id instanceof Date || isDateSelectorShape(String(id))) {
+      return { path: `dates.groups[${index}].id`, kind: 'group-id' };
+    }
     const found = find(group.members, `dates.groups[${index}].members`);
     if (found) return found;
-    groupIds.add(String(group.id));
   }
   for (const [index, pref] of state.preferences.entries()) {
     const found = 'date' in pref
@@ -116,9 +130,13 @@ export function normalizeDateReferences(state: ScheduleSpecState): ScheduleSpecS
       aliases.set(String(Number(id)), id);
     }
   }
-  // Preserve references to imported groups with date-shaped IDs so users can
-  // rename the groups in the browser.
-  for (const group of state.dates.groups) aliases.delete(group.id);
+  // Preserve IDs from older browser drafts so users can rename their groups.
+  const groupIds = new Set(state.dates.groups.map(group => group.id));
+  const getAlias = (id: string) => {
+    if (groupIds.has(id)) return id;
+    const alias = aliases.get(id.endsWith('\n') ? id.slice(0, -1) : id);
+    return alias !== undefined && !groupIds.has(alias) ? alias : undefined;
+  };
 
   return mapDateReferences(state, id => {
     const input: unknown = id;
@@ -126,10 +144,22 @@ export function normalizeDateReferences(state: ScheduleSpecState): ScheduleSpecS
     // browser storage copies their enumerable fields into an empty object.
     if (input instanceof Date && Number.isFinite(input.getTime())) {
       const isoDate = input.toISOString().split('T')[0];
-      return aliases.get(isoDate) ?? isoDate;
+      return getAlias(isoDate) ?? isoDate;
     }
-    return aliases.get(typeof input === 'number' ? String(input) : id) ?? id;
+    if (typeof input === 'number') return getAlias(String(input)) ?? id;
+    return typeof input === 'string' ? (getAlias(input) ?? input) : id;
   });
+}
+
+export function findDateGroupIdCollision(state: ScheduleSpecState, range: DateRange): string | undefined {
+  const groupIds = new Set(state.dates.groups.map(group => group.id).filter(isDateSelectorShape));
+  if (groupIds.size === 0) return undefined;
+  for (const dateRange of [state.dates.range, range]) {
+    for (const id of dateIdsByIsoDate(dateRange).values()) {
+      if (groupIds.has(id)) return id;
+    }
+  }
+  return undefined;
 }
 
 export function remapDateReferences(state: ScheduleSpecState, range: DateRange): ScheduleSpecState {

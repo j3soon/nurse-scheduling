@@ -138,6 +138,22 @@ def test_range_error_preserves_the_ordinary_validation_issue_budget():
     assert accepted.proposal is not None
 
 
+@pytest.mark.parametrize(("selector", "message"), [("０１", "Use ASCII digits"), ("3~4", "Date group IDs cannot look")])
+def test_candidate_must_repair_invalid_legacy_date_references(selector, message):
+    payload = base_schedule_payload()
+    if selector == "3~4":
+        payload["dates"]["groups"][0]["id"] = selector
+    payload["preferences"][1]["date"] = [selector]
+    baseline = schedule_spec_yaml(payload)
+    payload["description"] = "Changed"
+
+    rejected = review_schedule_spec_candidate(baseline, schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
+
+    assert not rejected.outcome.ok
+    assert rejected.proposal is None
+    assert message in rejected.outcome.text
+
+
 def test_rebuilt_candidate_restores_only_the_required_rule():
     from nurse_scheduling.loader import _load_yaml
 

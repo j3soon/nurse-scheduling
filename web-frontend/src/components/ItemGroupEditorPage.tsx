@@ -29,6 +29,7 @@ import PageDocumentationLink from '@/components/PageDocumentationLink';
 import ToggleButton from '@/components/ToggleButton';
 import { useItemTableColumns, useGroupTableColumns } from '@/components/TableColumns';
 import { isReservedKeyword } from '@/utils/keywords';
+import { isDateSelectorShape } from '@/utils/calendar';
 import { ERROR_SHOULD_NOT_HAPPEN } from '@/constants/errors';
 import { Mode } from '@/constants/modes';
 import { Item, Group, DataType } from '@/types/scheduling';
@@ -141,6 +142,9 @@ export default function ItemGroupEditorPage({
            groups.some(group => group.id === id && group.id !== currentId);
   };
 
+  const isDateShapedGroupId = (id: string, isItem: boolean) =>
+    dataType === DataType.DATES && !isItem && isDateSelectorShape(id);
+
   const saveDraft = () => {
     const trimmedId = draft.id.trim();
     const trimmedDescription = draft.description.trim();
@@ -151,6 +155,11 @@ export default function ItemGroupEditorPage({
 
     if (isReservedKeyword(dataType, trimmedId)) {
       setError(t("\"{value0}\" is a reserved keyword and cannot be used as an ID", { value0: trimmedId }));
+      return;
+    }
+
+    if (isDateShapedGroupId(trimmedId, draft.isItem)) {
+      setError(t("A date group ID cannot look like a date or date range expression."));
       return;
     }
 
@@ -462,6 +471,11 @@ export default function ItemGroupEditorPage({
 
       if (isReservedKeyword(dataType, value)) {
         setError(t("\"{value0}\" is a reserved keyword and cannot be used as an ID", { value0: value }));
+        return;
+      }
+
+      if (isDateShapedGroupId(value, isItem)) {
+        setError(t("A date group ID cannot look like a date or date range expression."));
         return;
       }
 

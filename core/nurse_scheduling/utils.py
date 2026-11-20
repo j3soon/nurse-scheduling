@@ -51,27 +51,37 @@ def add_objective(ctx, weight, expression):
         ctx.objective += weight * expression
 
 
+_DAY_DATE_PATTERN = r"^\d{1,2}$"
+_MONTH_DAY_DATE_PATTERN = r"^(\d{2})-(\d{2})$"
+_ISO_DATE_PATTERN = r"^(\d{4})-(\d{2})-(\d{2})$"
+_DATE_RANGE_PATTERN = r"^([\d-]+)~([\d-]+)$"
+DATE_RANGE_SELECTOR_PATTERN = re.compile(_DATE_RANGE_PATTERN, re.ASCII)
+
+
+def is_date_selector_shape(value: str) -> bool:
+    """Reserve date-shaped names, including spellings with non-ASCII digits."""
+    patterns = (_DAY_DATE_PATTERN, _MONTH_DAY_DATE_PATTERN, _ISO_DATE_PATTERN, _DATE_RANGE_PATTERN)
+    return any(re.match(pattern, value) for pattern in patterns)
+
+
 def _parse_single_date(date: str, date_range: "DateRange") -> datetime.date:
     startdate, enddate = date_range.startDate, date_range.endDate
     error_details = f"- Start date: {startdate}\n- End date: {enddate}\n"
-    if match := re.match(r"^\d{1,2}$", date):
+    if match := re.match(_DAY_DATE_PATTERN, date, re.ASCII):
         if startdate.year != enddate.year or startdate.month != enddate.month:
             raise InputValidationError(
                 f"Pure day format (D) is not allowed when start date and end date are not in the same month.\n{error_details}"
             )
         return datetime.date(startdate.year, startdate.month, int(match.group(0)))
-    elif match := re.match(r"^(\d{2})-(\d{2})$", date):
+    elif match := re.match(_MONTH_DAY_DATE_PATTERN, date, re.ASCII):
         if startdate.year != enddate.year:
             raise InputValidationError(
                 f"Pure month-day format (MM-DD) is not allowed when start date and end date are not in the same year.\n{error_details}"
             )
         return datetime.date(startdate.year, *map(int, match.groups()))
-    elif match := re.match(r"^(\d{4})-(\d{2})-(\d{2})$", date):
+    elif match := re.match(_ISO_DATE_PATTERN, date, re.ASCII):
         return datetime.date(*map(int, match.groups()))
     raise InputValidationError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
-
-
-DATE_RANGE_SELECTOR_PATTERN = re.compile(r"^([\d-]+)~([\d-]+)$")
 
 
 def parse_dates(dates, map_did_d, date_range):

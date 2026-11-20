@@ -19,6 +19,7 @@
 
 # This code is mostly AI generated.
 
+from datetime import date
 from typing import Any
 
 from pydantic import ValidationError, model_validator
@@ -35,9 +36,9 @@ from .models import (
     ShiftTypeRequirementsPreference,
     ShiftTypeSuccessionsPreference,
 )
-from .utils import DATE_RANGE_SELECTOR_PATTERN
+from .utils import DATE_RANGE_SELECTOR_PATTERN, is_date_selector_shape
 
-FRONTEND_DATE_RANGE_ERROR = "frontend_date_range_expression"
+FRONTEND_DATE_REFERENCE_ERROR = "frontend_date_reference"
 
 
 def _require_string(value: Any, path: str) -> None:
@@ -133,28 +134,39 @@ class _FrontendScheduleSpec(ScheduleSpec):
         return self
 
 
-def _find_date_range_error(data: dict[str, Any]) -> InitErrorDetails | None:
-    """Find the first range expression in the raw payload, even if it is incomplete."""
-    group_ids: set[str] = set()
+def _find_date_reference_error(data: dict[str, Any]) -> InitErrorDetails | None:
+    """Find the first unsupported date reference, even in an incomplete payload."""
+
+    def issue(value: Any, path: tuple[str | int, ...], message: str) -> InitErrorDetails:
+        return InitErrorDetails(
+            type=PydanticCustomError(FRONTEND_DATE_REFERENCE_ERROR, message),
+            loc=path,
+            input=value,
+        )
 
     def find(value: Any, path: tuple[str | int, ...]) -> InitErrorDetails | None:
         if isinstance(value, list):
             for index, selector in enumerate(value):
                 if error := find(selector, (*path, index)):
                     return error
-        elif isinstance(value, str) and value not in group_ids and DATE_RANGE_SELECTOR_PATTERN.match(value):
-            return InitErrorDetails(
-                type=PydanticCustomError(
-                    FRONTEND_DATE_RANGE_ERROR,
-                    "Use individual dates or a named date group instead of a date range expression",
-                ),
-                loc=path,
-                input=value,
-            )
+        elif isinstance(value, str):
+            if not value.isascii() and is_date_selector_shape(value):
+                return issue(value, path, "Use ASCII digits (0-9) in dates")
+            if DATE_RANGE_SELECTOR_PATTERN.match(value):
+                return issue(
+                    value, path, "Use individual dates or a named date group instead of a date range expression"
+                )
         return None
 
     dates = data.get("dates")
     export = data.get("export")
+    bounds = dates.get("range") if isinstance(dates, dict) else None
+    if isinstance(bounds, dict):
+        for field in ("startDate", "endDate"):
+            value = bounds.get(field)
+            if isinstance(value, str) and not value.isascii() and is_date_selector_shape(value):
+                return issue(value, ("dates", "range", field), "Use ASCII digits (0-9) in dates")
+
     sections = (
         (("dates", "groups"), dates.get("groups") if isinstance(dates, dict) else None, ("members",)),
         (("preferences",), data.get("preferences"), ("date", "countDates")),
@@ -167,26 +179,32 @@ def _find_date_range_error(data: dict[str, Any]) -> InitErrorDetails | None:
         for index, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 continue
+            if path == ("dates", "groups"):
+                group_id = entry.get("id")
+                if isinstance(group_id, (str, int, date)) and is_date_selector_shape(str(group_id)):
+                    return issue(
+                        group_id,
+                        (*path, index, "id"),
+                        "Date group IDs cannot look like dates or date range expressions",
+                    )
             for field in fields:
                 if error := find(entry.get(field), (*path, index, field)):
                     return error
-            if path == ("dates", "groups") and isinstance(group_id := entry.get("id"), str):
-                group_ids.add(group_id)
     return None
 
 
 def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
-    range_error = _find_date_range_error(data)
+    date_error = _find_date_reference_error(data)
     try:
         spec = _FrontendScheduleSpec.model_validate(data)
     except ValidationError as error:
-        if range_error is None:
+        if date_error is None:
             raise
         # AI edits compare validation errors before and after a repair.
-        # Keep preexisting errors visible alongside the range expression.
-        raise ValidationError.from_exception_data(error.title, [range_error, *error.errors()]) from error
-    if range_error is not None:
-        raise ValidationError.from_exception_data(_FrontendScheduleSpec.__name__, [range_error])
+        # Keep preexisting errors visible alongside the date reference error.
+        raise ValidationError.from_exception_data(error.title, [date_error, *error.errors()]) from error
+    if date_error is not None:
+        raise ValidationError.from_exception_data(_FrontendScheduleSpec.__name__, [date_error])
     return spec
 
 

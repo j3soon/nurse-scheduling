@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -174,10 +175,15 @@ def test_date_range_expressions_are_backend_only(change, path):
     assert error.value.errors()[0]["loc"] == path
 
 
-def test_frontend_accepts_a_reference_to_an_existing_date_group_with_a_range_like_id():
+@pytest.mark.parametrize("group_id", ["3~4", "2026-01-01"])
+def test_frontend_rejects_date_shaped_group_id_before_compiling_its_references(group_id):
     payload = _base_payload()
-    payload["dates"]["groups"][0]["id"] = "01~02"
-    payload["dates"]["groups"].append({"id": "COPY", "description": "", "members": ["01~02"]})
-    payload["preferences"][1]["date"] = ["COPY"]
+    payload["dates"]["groups"][0]["id"] = group_id
+    payload["preferences"][1]["date"] = [group_id]
 
-    assert validate_frontend_data(_model(payload)).compiled_schedule_spec.preferences[1].dates == (0,)
+    with pytest.raises(
+        ValidationError, match="Date group IDs cannot look like dates or date range expressions"
+    ) as error:
+        load_frontend_data(json.dumps(payload).encode())
+
+    assert error.value.errors()[0]["loc"] == ("dates", "groups", 0, "id")

@@ -38,7 +38,8 @@ then select it in new or edited staffing and preference rules.
 
 1. Select **Add Group**.
 2. Enter a descriptive ID, such as `odd` for odd-numbered dates or `After 4`
-   for dates on or after a cutoff.
+   for dates on or after a cutoff. IDs such as `03`, `2026-12-03`, and
+   `3~4` are reserved for date syntax.
 3. Select the member dates. Drag across dates for repeated selection.
 4. Select **Add**.
 

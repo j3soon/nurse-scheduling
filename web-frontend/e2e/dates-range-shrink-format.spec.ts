@@ -52,3 +52,44 @@ test('shrinking a month-spanning range preserves requests for retained dates', a
   await expect(page.getByTitle('Click to update preferences for P1 on date 31')).toHaveText('D (+3)');
   await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toHaveCount(0);
 });
+
+test('requires renaming a legacy group before its ID collides with a generated date', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedScheduleSpecState(page, {
+    apiVersion: 'alpha',
+    description: '',
+    dates: {
+      range: { startDate: '2026-11-01', endDate: '2026-11-03' },
+      groups: [{ id: '2026-11-02', description: '', members: ['03'] }],
+    },
+    people: { items: [], groups: [], history: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/dates');
+  await page.getByRole('button', { name: 'Set Date Range', exact: true }).click();
+  await page.locator('#endDate').fill('2027-01-01');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('Rename date group 2026-11-02 before changing the range.')).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByText('Duration: 3 days')).toBeVisible();
+
+  const groupRow = page.getByRole('row')
+    .filter({ has: page.getByRole('button', { name: 'Edit', exact: true }) })
+    .filter({ has: page.getByTitle('2026-11-02', { exact: true }) });
+  await groupRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  const id = page.getByPlaceholder('Enter group ID', { exact: true });
+  await id.fill('3~4');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('A date group ID cannot look like a date or date range expression.')).toBeVisible();
+  await id.fill('Special days');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByTitle('Special days', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Set Date Range', exact: true }).click();
+  await page.locator('#endDate').fill('2027-01-01');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('Duration: 62 days')).toBeVisible();
+});

@@ -139,12 +139,16 @@ export default function DatePage() {
 
   const handleSave = () => {
     if (validateForm()) {
-      updateDateRange({
+      const collision = updateDateRange({
         startDate: draft.startDate,
         endDate: draft.endDate,
       }, {
         importTaiwanHolidays: shouldImportTaiwanHolidays && isTaiwanHolidayImportSupported,
       });
+      if (collision) {
+        setErrors({ dateRange: t("Rename date group {value0} before changing the range. Its ID conflicts with a date.", { value0: collision }) });
+        return;
+      }
       setMode(Mode.NORMAL);
     }
   };
@@ -375,6 +379,7 @@ export default function DatePage() {
           />
         </section>
 
+        {errors.dateRange && <p role="alert" className="text-sm text-red-700 lg:col-span-2">{errors.dateRange}</p>}
         {/* Action Buttons */}
         <div className="flex justify-end gap-3 border-t border-gray-200 pt-4 lg:col-span-2">
           <button

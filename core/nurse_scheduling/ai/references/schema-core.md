@@ -122,7 +122,7 @@ Fields:
 - named date-group ID
 
 Rules:
-- Every resolved concrete date must fall inside `dates.range`. Use individual dates or a named date group for several days. Raw expressions such as `01~03` are rejected.
+- Use ASCII digits (0-9) in dates. Every resolved concrete date must fall inside `dates.range`. Use individual dates or a named date group for several days. Raw expressions such as `01~03` are rejected.
 
 Related paths:
 - dates.range
@@ -142,7 +142,7 @@ Fields:
 Rules:
 - Date members must resolve inside `dates.range`.
 - Members may name concrete dates, date keywords, weekdays, or groups defined earlier in the list.
-- Group IDs must be unique. They cannot be reserved date keywords or weekdays, and cannot look like day-of-month, MM-DD, or YYYY-MM-DD dates. Reserved-name checks are case-insensitive.
+- Group IDs must be unique. They cannot be reserved date keywords or weekdays. They cannot look like a day-of-month, MM-DD, or YYYY-MM-DD date or a date range expression such as `3~4`. Reserved-name checks are case-insensitive.
 
 Minimal frontend-compatible YAML:
 
