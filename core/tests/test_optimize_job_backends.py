@@ -146,7 +146,7 @@ def _controller(
     )
 
 
-def _create(controller, input_name="input.yaml", client_address=None, *, legacy_date_range_group_ids=False):
+def _create(controller, input_name="input.yaml", client_address=None):
     return controller.create_job(
         input_name=input_name,
         client_id="client",
@@ -155,7 +155,6 @@ def _create(controller, input_name="input.yaml", client_address=None, *, legacy_
         timeout_seconds=60,
         input_bytes=b"apiVersion: alpha\n",
         client_address=client_address,
-        legacy_date_range_group_ids=legacy_date_range_group_ids,
     )
 
 
@@ -325,7 +324,7 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
         "job_store_id": "store-test",
     }
     controller = _controller(store, runtime_identity=runtime_identity)
-    created = _create(controller, legacy_date_range_group_ids=True)
+    created = _create(controller)
     assert created.state == JobState.QUEUED
     assert created.queue_position == 1
     assert controller.get_input(created.id) == b"apiVersion: alpha\n"
@@ -334,7 +333,6 @@ def test_store_round_trips_lifecycle_input_events_and_artifact(store):
     assert claimed is not None
     assert claimed.state == JobState.RUNNING
     assert claimed.worker_id == "worker"
-    assert claimed.request.legacy_date_range_group_ids
 
     controller.record_event(claimed.id, "job.phase_changed", {"message": "Solving"}, lease=lease)
     artifact = StoredArtifact("input.xlsx", "application/test", b"xlsx")
@@ -849,17 +847,14 @@ def test_redis_processes_sharing_a_store_derive_the_same_client_key(fake_redis_s
     assert first.client_key("203.0.113.1") != first.client_key("203.0.113.2")
 
 
-def test_redis_store_reads_jobs_saved_before_optional_request_fields(fake_redis_store_factory):
+def test_redis_store_reads_jobs_saved_before_client_keys(fake_redis_store_factory):
     store = fake_redis_store_factory()
     job = _create(_controller(store), client_address="203.0.113.1")
     saved = json.loads(store._redis.get(store._job_key(job.id)))
     del saved["request"]["client_key"]
-    del saved["request"]["legacy_date_range_group_ids"]
     store._redis.set(store._job_key(job.id), json.dumps(saved))
 
-    request = store.get(job.id).request
-    assert request.client_key is None
-    assert request.legacy_date_range_group_ids
+    assert store.get(job.id).request.client_key is None
 
 
 def test_store_claims_each_job_at_most_once_under_concurrency(store):

@@ -202,21 +202,6 @@ async def create_job(
     solver: str | None = Form(None, description="Solver value returned by GET /optimize/options"),
 ):
     """Validate an optimization request and enqueue a durable job."""
-    return await submit_job(request, response, schedule_spec_file, schedule_spec_yaml, prettify, timeout, solver)
-
-
-async def submit_job(
-    request: Request,
-    response: Response,
-    schedule_spec_file: UploadFile | None,
-    schedule_spec_yaml: str | None,
-    prettify: bool | None,
-    timeout: int | None,
-    solver: str | None,
-    *,
-    legacy_date_range_group_ids: bool = False,
-):
-    """Submit a job for the current or tagged optimizer route."""
     settings = _settings(request)
     content, input_name = await _read_input(schedule_spec_file, schedule_spec_yaml, settings.max_yaml_bytes)
     try:
@@ -260,7 +245,6 @@ async def submit_job(
         input_bytes=content,
         auth_credential_id=request.state.auth_credential_id,
         client_address=_limited_client_address(request),
-        legacy_date_range_group_ids=legacy_date_range_group_ids,
     )
     # This project's own data is plain and always parses, so neither shape comes from it.
     # The job is queued by now, so reporting must not be able to fail the response for it.

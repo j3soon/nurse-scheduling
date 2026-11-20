@@ -139,12 +139,11 @@ def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any
     return data
 
 
-def load_schedule_spec(content: bytes, *, legacy_date_range_group_ids: bool = False) -> ScheduleSpec:
+def load_schedule_spec(content: bytes) -> ScheduleSpec:
     """Load nurse Schedule Spec from YAML bytes content.
 
     Args:
         content: File content as bytes
-        legacy_date_range_group_ids: Accept range-shaped group IDs from the tagged optimizer route.
 
     Returns:
         ScheduleSpec: The validated Schedule Spec
@@ -153,4 +152,4 @@ def load_schedule_spec(content: bytes, *, legacy_date_range_group_ids: bool = Fa
         ScheduleSpecTooComplexError: If the data expands to more nodes than are processed.
     """
     data = _load_yaml(content)
-    return ScheduleSpec.model_validate(data, context={"legacy_date_range_group_ids": legacy_date_range_group_ids})
+    return ScheduleSpec.model_validate(data)

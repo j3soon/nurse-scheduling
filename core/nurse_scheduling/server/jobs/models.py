@@ -63,8 +63,6 @@ class JobRequest:
     """Maximum duration supplied to the scheduling engine."""
     client_key: str | None = None
     """Salted digest of an unauthenticated submitter's address, which bounds its active jobs."""
-    legacy_date_range_group_ids: bool = False
-    """Whether this job accepts legacy ASCII date range group IDs."""
 
 
 @dataclass(frozen=True)
