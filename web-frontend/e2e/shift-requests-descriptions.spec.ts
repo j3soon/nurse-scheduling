@@ -54,11 +54,17 @@ test('keeps the grid at the same scroll position after saving or canceling the d
   await page.goto('/shift-requests');
   const cell = page.getByTitle('Click to update preferences for P20 on date 02', { exact: true });
   await cell.evaluate(element => element.scrollIntoView({ block: 'center' }));
-  const startScroll = await page.evaluate(() => window.scrollY);
-  expect(startScroll).toBeGreaterThan(0);
-
   for (const action of ['Save Preferences', 'Cancel']) {
+    // Playwright can scroll while positioning the click. Read the page position
+    // from the click event before React opens the dialog.
+    await cell.evaluate(element => {
+      element.addEventListener('click', () => {
+        element.setAttribute('data-scroll-at-click', String(window.scrollY));
+      }, { once: true });
+    });
     await cell.click();
+    const startScroll = Number(await cell.getAttribute('data-scroll-at-click'));
+    expect(startScroll).toBeGreaterThan(0);
     const dialog = page.getByRole('dialog', { name: 'Shift Preference Matrix' });
     await expect(dialog).toBeVisible();
     expect(await page.evaluate(() => window.scrollY)).toBe(startScroll);
