@@ -1199,21 +1199,24 @@ def test_schedule_month_prints_on_one_a4_page_wide(month_workbook):
         ],
         check=False,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=45,
     )
     pdf = month_workbook.with_suffix(".pdf")
     assert rendered.returncode == 0 and pdf.is_file(), rendered.stderr
-    metadata = subprocess.check_output(["pdfinfo", str(pdf)], text=True, timeout=10)
+    metadata = subprocess.check_output(["pdfinfo", "-enc", "UTF-8", str(pdf)], encoding="utf-8", timeout=10)
     assert re.search(r"^Pages:\s+1$", metadata, re.MULTILINE)
     assert re.search(r"^Page size:.*\(A4\)", metadata, re.MULTILINE)
-    page = subprocess.check_output(["pdftotext", "-layout", str(pdf), "-"], text=True, timeout=10)
+    page = subprocess.check_output(
+        ["pdftotext", "-enc", "UTF-8", "-layout", str(pdf), "-"], encoding="utf-8", timeout=10
+    )
     assert "林小華楊" in page
     assert "D,D,D,D,D" in page
     assert re.search(r"\b1\s+2\s+3.*\b30\s+31\b", page)
     # Require every annotation fragment to stay in the first date column. The
     # second date also contains an assignment, so overflow would overlap it.
-    box = subprocess.check_output(["pdftotext", "-bbox", str(pdf), "-"], text=True, timeout=10)
+    box = subprocess.check_output(["pdftotext", "-enc", "UTF-8", "-bbox", str(pdf), "-"], encoding="utf-8", timeout=10)
     words = ElementTree.fromstring(box).findall(".//{*}word")
     first = next(word for word in words if word.text == "1")
     second = next(word for word in words if word.text == "2")
