@@ -21,7 +21,7 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { FiX, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
 import { getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
@@ -58,8 +58,32 @@ export default function ShiftPreferenceEditor({
   hasOtherRequests,
 }: ShiftPreferenceEditorProps) {
   const { t } = useI18n();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [draftPreferences, setDraftPreferences] = useState<ShiftPreferenceDraft[] | null>(null);
   const preferences = draftPreferences ?? initialPreferences;
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+
+    const root = document.documentElement;
+    const { overflow, scrollbarGutter } = root.style;
+    const { scrollX, scrollY } = window;
+    const previousFocus = document.activeElement;
+    root.style.scrollbarGutter = 'stable';
+    root.style.overflow = 'hidden';
+    dialogRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      root.style.overflow = overflow;
+      root.style.scrollbarGutter = scrollbarGutter;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+      if (window.scrollX !== scrollX || window.scrollY !== scrollY) {
+        window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+      }
+    };
+  }, [isOpen]);
 
   const handleWeightChange = (shiftTypeId: string, index: number, weight: number | string) => {
     setDraftPreferences(prev => {
@@ -134,7 +158,7 @@ export default function ShiftPreferenceEditor({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div role="dialog" aria-modal="true" aria-labelledby="shift-preference-matrix-title" className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="shift-preference-matrix-title" className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <div>
@@ -153,7 +177,7 @@ export default function ShiftPreferenceEditor({
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto max-h-[calc(90vh-200px)]">
+        <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-200px)]">
           <div className="p-6">
             {/* Info Box */}
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">

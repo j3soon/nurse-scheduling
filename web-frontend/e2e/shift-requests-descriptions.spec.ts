@@ -39,6 +39,41 @@ const scheduleSpec = {
   export: { formatting: [] },
 };
 
+test('keeps the grid at the same scroll position after saving or canceling the dialog', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    ...scheduleSpec,
+    people: {
+      ...scheduleSpec.people,
+      items: Array.from({ length: 40 }, (_, index) => ({ id: `P${index + 1}`, description: '', history: [] })),
+    },
+    preferences: [
+      { type: 'shift request', person: ['P20'], date: ['02'], shiftType: ['D'], weight: 2 },
+    ],
+  });
+
+  await page.goto('/shift-requests');
+  const cell = page.getByTitle('Click to update preferences for P20 on date 02', { exact: true });
+  await cell.evaluate(element => element.scrollIntoView({ block: 'center' }));
+  const startScroll = await page.evaluate(() => window.scrollY);
+  expect(startScroll).toBeGreaterThan(0);
+
+  for (const action of ['Save Preferences', 'Cancel']) {
+    await cell.click();
+    const dialog = page.getByRole('dialog', { name: 'Shift Preference Matrix' });
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => window.scrollY)).toBe(startScroll);
+    await dialog.getByLabel('Request description for D').fill('Keep the grid here');
+    await page.mouse.move(12, 150);
+    await page.mouse.wheel(0, 300);
+    // Wait for the browser to apply the wheel's default scrolling behavior.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await page.evaluate(() => window.scrollY)).toBe(startScroll);
+    await dialog.getByRole('button', { name: action, exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(await page.evaluate(() => window.scrollY)).toBe(startScroll);
+  }
+});
+
 test('edits one date of a people-group request and compacts it again when descriptions match', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await seedScheduleSpecState(page, {
