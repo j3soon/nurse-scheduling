@@ -175,15 +175,17 @@ def _build_custom_export_style_info(
                         rule.fontColor,
                     )
             else:
+                solver = ctx.solver
+                assert solver is not None
                 actual_target_shift_types = {
                     s for s in target_shift_types if s == constants.OFF_sid or 0 <= s < ctx.n_shift_types
                 }
                 for d in target_dates:
                     for p in target_people:
                         assigned_shift_types = [
-                            s for s in range(ctx.n_shift_types) if ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+                            s for s in range(ctx.n_shift_types) if solver.get_value(ctx.shifts[(d, s, p)]) == 1
                         ]
-                        if ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
+                        if solver.get_value(ctx.offs[(d, p)]) == 1:
                             assigned_shift_types.append(constants.OFF_sid)
                         if not any(s in actual_target_shift_types for s in assigned_shift_types):
                             continue
@@ -215,28 +217,30 @@ def _build_custom_export_style_info(
 
 
 def _count_extra_column_for_person(ctx: Context, p: int, count_dates, count_shift_types, coefficients) -> int:
+    solver = ctx.solver
+    assert solver is not None
     count = 0
     for d in count_dates:
-        if constants.OFF_sid in count_shift_types and ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
+        if constants.OFF_sid in count_shift_types and solver.get_value(ctx.offs[(d, p)]) == 1:
             count += coefficients[constants.OFF_sid]
             continue
         count += sum(
             coefficients[s]
             for s in count_shift_types
-            if 0 <= s < ctx.n_shift_types and ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1
+            if 0 <= s < ctx.n_shift_types and solver.get_value(ctx.shifts[(d, s, p)]) == 1
         )
     return count
 
 
 def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_types) -> int:
+    solver = ctx.solver
+    assert solver is not None
     count = 0
     for p in count_people:
-        if constants.OFF_sid in count_shift_types and ctx.solver.get_value(ctx.offs[(d, p)]) == 1:
+        if constants.OFF_sid in count_shift_types and solver.get_value(ctx.offs[(d, p)]) == 1:
             count += 1
             continue
-        if any(
-            0 <= s < ctx.n_shift_types and ctx.solver.get_value(ctx.shifts[(d, s, p)]) == 1 for s in count_shift_types
-        ):
+        if any(0 <= s < ctx.n_shift_types and solver.get_value(ctx.shifts[(d, s, p)]) == 1 for s in count_shift_types):
             count += 1
     return count
 
@@ -289,10 +293,14 @@ def _export_preference_condition_matches(ctx: Context, condition, pref, *, reque
     )
 
 
-def _is_shift_request_satisfied(ctx: Context, pref, *, d: int, p: int, shift_types: tuple[int, ...]) -> bool:
+def _is_shift_request_satisfied(
+    ctx: Context, pref: models.ShiftRequestPreference, *, d: int, p: int, shift_types: tuple[int, ...]
+) -> bool:
     """Return whether a cell-level shift request is satisfied by the solved schedule."""
+    solver = ctx.solver
+    assert solver is not None
     requested_state_is_assigned = any(
-        ctx.solver.get_value(ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)]) == 1
+        solver.get_value(ctx.offs[(d, p)] if s == constants.OFF_sid else ctx.shifts[(d, s, p)]) == 1
         for s in shift_types
     )
     return requested_state_is_assigned if pref.weight > 0 else not requested_state_is_assigned
@@ -309,6 +317,7 @@ def _iter_matching_cell_preferences(
     for pref, compiled_pref in zip(ctx.scenario.preferences, ctx.compiled_schedule_spec.preferences, strict=True):
         if not isinstance(compiled_pref, models.CompiledShiftRequest):
             continue
+        assert isinstance(pref, models.ShiftRequestPreference)
         if pref.weight == 0:
             continue
 
@@ -442,6 +451,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     # Set cell values based on solver results
     solver = ctx.solver
+    assert solver is not None
 
     for d in range(ctx.n_days):
         for p in range(ctx.n_people):
