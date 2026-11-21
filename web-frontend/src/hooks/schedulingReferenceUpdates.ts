@@ -21,6 +21,7 @@ import { DataType, ShiftAffinityPreference, ShiftCountPreference, ShiftRequestPr
 import { truncateHistoryAfterUnusable } from '@/utils/personHistory';
 import { filterReferenceIdTree, mapReferenceIdTree, ReferenceIdTree } from '@/utils/referenceIds';
 import { ScheduleSpecState } from './scheduleSpecState';
+import { usesOnlyExportDefaults } from './schedulingExportConfig';
 
 const renameReferenceIds = (ids: ReferenceIdTree, oldId: string, newId: string): ReferenceIdTree =>
   mapReferenceIdTree(ids, id => id === oldId ? newId : id);
@@ -301,15 +302,15 @@ export const applyExportLayoutForIdDeletion = (
   const deletedIdsSet = new Set(deletedIds);
   const filterIds = (ids: string[]) => ids.filter(id => !deletedIdsSet.has(id));
 
-  if (!state.export) {
+  if (!state.export || usesOnlyExportDefaults(state.export)) {
     return state;
   }
 
-  return {
+  const updatedState = {
     ...state,
     export: {
       ...state.export,
-      formatting: state.export?.formatting
+      formatting: state.export.formatting
         ?.map(rule => {
           if (dataType === DataType.PEOPLE && 'people' in rule) {
             return { ...rule, people: filterIds(rule.people) };
@@ -328,7 +329,7 @@ export const applyExportLayoutForIdDeletion = (
           if ('shiftTypes' in rule && rule.shiftTypes.length === 0) return false;
           return true;
         }),
-      extraColumns: state.export?.extraColumns
+      extraColumns: state.export.extraColumns
         ?.map(rule => {
           if (rule.type === 'defaults') return rule;
           if (dataType === DataType.DATES) {
@@ -346,7 +347,7 @@ export const applyExportLayoutForIdDeletion = (
           return rule;
         })
         .filter(rule => rule.type === 'defaults' || (rule.countDates.length > 0 && rule.countShiftTypes.length > 0)),
-      extraRows: state.export?.extraRows
+      extraRows: state.export.extraRows
         ?.map(rule => {
           if (rule.type === 'defaults') return rule;
           if (dataType === DataType.PEOPLE) {
@@ -360,6 +361,7 @@ export const applyExportLayoutForIdDeletion = (
         .filter(rule => rule.type === 'defaults' || (rule.countPeople.length > 0 && rule.countShiftTypes.length > 0))
     }
   };
+  return usesOnlyExportDefaults(updatedState.export) ? { ...updatedState, export: undefined } : updatedState;
 };
 
 export const applyExportLayoutForIdChange = (

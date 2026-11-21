@@ -2801,6 +2801,34 @@ describe('useScheduleSpec', () => {
     expect(reloaded.current.savedState.export?.extraColumns).toEqual(layout.extraColumns);
   });
 
+  it.each([
+    { section: 'default extra columns', keepEmptyColumns: false },
+    { section: 'empty extra columns', keepEmptyColumns: true },
+  ])('saves the layout after deleting the last custom rule with $section', ({ keepEmptyColumns }) => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const defaults = { type: 'defaults' } as const;
+    const custom = { type: 'row' as const, people: ['P1'], backgroundColor: '#ffffff' };
+    const layout = {
+      formatting: [defaults, custom],
+      extraColumns: keepEmptyColumns ? [] : [defaults],
+      extraRows: [defaults],
+    };
+    act(() => result.current.loadFromYaml({
+      people: { items: [{ id: 'P1', description: '' }] },
+      export: layout,
+    }));
+
+    act(() => result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1'));
+    const expectedLayout = keepEmptyColumns ? { ...layout, formatting: [defaults] } : undefined;
+    expect(result.current.savedState.export).toEqual(expectedLayout);
+    expect(loadStateFromStorage().state.export).toEqual(expectedLayout);
+
+    act(() => result.current.undo());
+    expect(result.current.savedState.export).toEqual(layout);
+    act(() => result.current.redo());
+    expect(result.current.savedState.export).toEqual(expectedLayout);
+  });
+
   it('rejects an invalid Defaults import without replacing the current Schedule Spec', () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const saved = result.current.savedState;
