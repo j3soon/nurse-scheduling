@@ -83,6 +83,7 @@ interface DraftRule {
 interface EditingTarget {
   kind: RuleKind;
   index: number;
+  rule: ExportFormatting | ExportExtraColumn | ExportExtraRow;
 }
 
 interface ExportLayoutErrors {
@@ -198,6 +199,9 @@ export default function ExportFormattingPage() {
   const formattingRules = effectiveExportData.formatting || [];
   const extraColumns = effectiveExportData.extraColumns || [];
   const extraRows = effectiveExportData.extraRows || [];
+  const entriesByKind = { style: formattingRules, 'extra column': extraColumns, 'extra row': extraRows };
+  const editingTargetChanged = editingTarget !== null
+    && entriesByKind[editingTarget.kind][editingTarget.index] !== editingTarget.rule;
 
   const clearAllExportLayoutEntries = () => {
     if (confirm(t("Are you sure you want to clear ALL export layout entries?"))) {
@@ -401,7 +405,7 @@ export default function ExportFormattingPage() {
     setErrors(weightRange !== undefined && !hasValidWeightRange
       ? { weightRangeMin: t("Weight Range must contain exactly two values") }
       : {});
-    setEditingTarget({ kind: 'style', index });
+    setEditingTarget({ kind: 'style', index, rule });
     setIsFormVisible(true);
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -424,7 +428,7 @@ export default function ExportFormattingPage() {
       countDates: rule.countDates,
       rightBorderColor: rule.rightBorderColor || '',
     });
-    setEditingTarget({ kind: 'extra column', index });
+    setEditingTarget({ kind: 'extra column', index, rule });
     setIsFormVisible(true);
     setErrors({});
     saveScrollPosition();
@@ -443,7 +447,7 @@ export default function ExportFormattingPage() {
       countPeople: rule.countPeople,
       bottomBorderColor: rule.bottomBorderColor || '',
     });
-    setEditingTarget({ kind: 'extra row', index });
+    setEditingTarget({ kind: 'extra row', index, rule });
     setIsFormVisible(true);
     setErrors({});
     saveScrollPosition();
@@ -798,6 +802,7 @@ export default function ExportFormattingPage() {
   };
 
   const handleSave = () => {
+    if (editingTargetChanged) return;
     const wasEditing = editingTarget !== null;
     const didSave = draft.kind === 'style'
       ? saveStyleRule()
@@ -1203,6 +1208,11 @@ export default function ExportFormattingPage() {
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
               {editingTarget !== null ? t("Edit Export Rule") : t("Add Export Rule")}
             </h2>
+            {editingTargetChanged && (
+              <p role="alert" className="mb-4 text-sm text-red-700">
+                {t("The export layout changed while you were editing. Cancel and reopen the rule to edit it.")}
+              </p>
+            )}
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">{t("Description")}</label>
@@ -1376,7 +1386,8 @@ export default function ExportFormattingPage() {
                     {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
-                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    disabled={editingTargetChanged}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     {editingTarget !== null ? t("Update") : t("Add")}
                   </button>

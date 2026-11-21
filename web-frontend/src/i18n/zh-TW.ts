@@ -789,6 +789,7 @@ export const zhTW: Catalog = {
   "The example Schedule Spec could not be loaded.": "無法載入範例排班設定。",
   "The generated files could not be downloaded.": "無法下載產生的檔案。",
   "The latest {value0} messages remain unchanged after the summary.": "摘要後，最近 {value0} 則訊息會保持不變。",
+  "The export layout changed while you were editing. Cancel and reopen the rule to edit it.": "編輯期間匯出版面已變更。請取消並重新開啟規則再編輯。",
   "The loaded file does not contain app version information. It may have been created with an older version of the application. Current app version: {value0}": "載入的檔案未包含應用程式版本資訊，可能由舊版應用程式建立。目前的應用程式版本：{value0}",
   "The optimizer could not be cancelled.": "無法取消最佳化。",
   "The optimizer could not finish early.": "無法提早完成最佳化。",

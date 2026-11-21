@@ -59,11 +59,24 @@ test('custom rules and Defaults keep their order in saved and optimizer YAML', a
   await defaults.dragTo(custom, { targetPosition: { x: 30, y: targetY } });
   await expect(page.locator('[draggable="true"]').first()).toContainText('Background: #00ff00');
 
+  await custom.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByPlaceholder('Optional note for this export rule').fill('Draft after reorder');
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.locator('[draggable="true"]').first()).toContainText('Defaults');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('[draggable="true"]').first()).toContainText('Defaults');
+  const update = page.getByRole('button', { name: 'Update', exact: true });
+  await expect(update).toBeDisabled();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('The export layout changed while you were editing.');
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(update).toBeEnabled();
+  await update.click();
+
   await page.goto('/save-and-load');
   const saved = yaml.load(await page.locator('pre').innerText()) as { export: unknown };
   expect(saved.export).toEqual({
     formatting: [
-      expect.objectContaining({ type: 'cell', backgroundColor: '#00ff00' }),
+      expect.objectContaining({ type: 'cell', backgroundColor: '#00ff00', description: 'Draft after reorder' }),
       { type: 'defaults' },
     ],
     extraColumns: [{ type: 'defaults' }],

@@ -863,6 +863,7 @@ export const en = {
   "The example Schedule Spec could not be loaded.": "The example Schedule Spec could not be loaded.",
   "The generated files could not be downloaded.": "The generated files could not be downloaded.",
   "The latest {value0} messages remain unchanged after the summary.": "The latest {value0} messages remain unchanged after the summary.",
+  "The export layout changed while you were editing. Cancel and reopen the rule to edit it.": "The export layout changed while you were editing. Cancel and reopen the rule to edit it.",
   "The loaded file does not contain app version information. It may have been created with an older version of the application. Current app version: {value0}": "The loaded file does not contain app version information. It may have been created with an older version of the application. Current app version: {value0}",
   "The optimizer could not be cancelled.": "The optimizer could not be cancelled.",
   "The optimizer could not finish early.": "The optimizer could not finish early.",
