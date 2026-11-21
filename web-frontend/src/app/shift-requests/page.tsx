@@ -1899,6 +1899,20 @@ export default function ShiftRequestsPage() {
                         <div>
                           <span className="font-medium">{t("Person:")}</span>{' '}
                           <span className="text-blue-900">{preference.person.join(', ')}</span>
+                          <InlineEdit
+                            value={preference.description ?? ''}
+                            isEditing={descriptionEdit === preference}
+                            onSave={value => saveRequestDescription(preference, value)}
+                            onCancel={() => setDescriptionEdit(null)}
+                            onDoubleClick={() => setDescriptionEdit(preference)}
+                            className="mt-1 w-fit max-w-full break-words whitespace-pre-wrap rounded text-xs text-gray-600 hover:text-gray-900"
+                            emptyClassName="italic text-gray-500"
+                            editClassName="mt-1 block w-full max-w-2xl bg-white text-xs text-gray-800"
+                            emptyText={t("Add description...")}
+                            placeholder={t("Enter description...")}
+                            ariaLabel={t("Request description for all listed dates")}
+                            multiline
+                          />
                           {person?.description && (
                             <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                           )}
@@ -1926,20 +1940,6 @@ export default function ShiftRequestsPage() {
                           </div>
                         </div>
                       </div>
-                      <InlineEdit
-                        value={preference.description ?? ''}
-                        isEditing={descriptionEdit === preference}
-                        onSave={value => saveRequestDescription(preference, value)}
-                        onCancel={() => setDescriptionEdit(null)}
-                        onDoubleClick={() => setDescriptionEdit(preference)}
-                        className="mt-1 w-fit max-w-full break-words whitespace-pre-wrap rounded text-sm text-gray-600 hover:text-gray-900"
-                        emptyClassName="italic text-gray-500"
-                        editClassName="mt-1 block w-full max-w-2xl bg-white text-sm text-gray-800"
-                        emptyText={t("Add description...")}
-                        placeholder={t("Enter description...")}
-                        ariaLabel={t("Request description for all listed dates")}
-                        multiline
-                      />
                     </article>
                   );
                 })}
