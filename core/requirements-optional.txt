@@ -17,3 +17,4 @@ pytest
 pytest-cov
 fakeredis
 ruff
+ty==0.0.107

@@ -20,3 +20,16 @@ extend-select = ["B904", "B905"]
 [tool.ruff.lint.extend-per-file-ignores]
 # Remove this exception with the legacy AI evaluation suite.
 "tests/ai_eval/**" = ["B905"]
+
+[tool.ty.src]
+include = [
+    "nurse_scheduling/constants.py",
+    "nurse_scheduling/context.py",
+    "nurse_scheduling/errors.py",
+    "nurse_scheduling/export_defaults.py",
+    "nurse_scheduling/frontend_validation.py",
+    "nurse_scheduling/loader.py",
+    "nurse_scheduling/models.py",
+    "nurse_scheduling/solver_interface.py",
+    "nurse_scheduling/utils.py",
+]

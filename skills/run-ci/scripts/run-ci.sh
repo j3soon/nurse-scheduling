@@ -25,6 +25,7 @@ set -x
   cd "$repo_root/core"
   ruff format --check nurse_scheduling tests
   ruff check nurse_scheduling tests
+  ty check --python "$(command -v python)"
   pytest \
     -q --tb=short --disable-warnings --maxfail=1 \
     --cov=nurse_scheduling \

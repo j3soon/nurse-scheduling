@@ -19,7 +19,7 @@
 
 import datetime
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Literal
@@ -610,14 +610,19 @@ class ScheduleSpec(BaseModel):
         return self._compiled_schedule_spec
 
 
-def _build_reference_index(item_ids, groups, reserved, reference_name):
+def _build_reference_index(
+    item_ids: Iterable[int | str],
+    groups: Sequence[PeopleGroup | ShiftTypeGroup],
+    reserved: Mapping[str, tuple[int, ...]],
+    reference_name: str,
+) -> dict[str, tuple[int, ...]]:
     """Expand ordered item and group IDs into concrete index tuples.
 
     Item IDs map directly to their indices. The caller seeds reserved
     selectors such as ALL and OFF. Groups can reference items or earlier
     groups, and each group is flattened and deduplicated.
     """
-    reference_map = {str(item_id): (index,) for index, item_id in enumerate(item_ids)}
+    reference_map: dict[str, tuple[int, ...]] = {str(item_id): (index,) for index, item_id in enumerate(item_ids)}
     reference_map.update(reserved)
     for group in groups:
         expanded = set()
@@ -629,7 +634,7 @@ def _build_reference_index(item_ids, groups, reserved, reference_name):
     return reference_map
 
 
-def _build_date_index(data: ScheduleSpec):
+def _build_date_index(data: ScheduleSpec) -> tuple[tuple[datetime.date, ...], dict[str, tuple[int, ...]]]:
     """Generate dates and expand every supported date selector.
 
     Concrete YYYY-MM-DD values map to date indices. Keywords and weekdays are
@@ -639,7 +644,7 @@ def _build_date_index(data: ScheduleSpec):
     date_range = data.dates.range
     n_days = (date_range.endDate - date_range.startDate).days + 1
     dates = tuple(date_range.startDate + datetime.timedelta(days=index) for index in range(n_days))
-    date_map = {str(date): (index,) for index, date in enumerate(dates)}
+    date_map: dict[str, tuple[int, ...]] = {str(date): (index,) for index, date in enumerate(dates)}
     for keyword, predicate in MAP_DATE_KEYWORD_TO_FILTER.items():
         date_map[keyword] = tuple(index for index, date in enumerate(dates) if predicate(date))
     for weekday_index, keyword in enumerate(MAP_WEEKDAY_TO_STR):

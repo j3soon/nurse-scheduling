@@ -106,6 +106,7 @@ if [[ "$affected_list" == true ]]; then
   echo "lint: scripts/check_terminology.sh"
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
+  echo 'types: ty check --python "$(command -v python)"'
   if [[ "$run_full_suite" == true ]]; then
     echo "tests: primary core suite (CP-SAT and CBC)"
   elif ((${#test_paths[@]} > 0)); then
@@ -120,6 +121,7 @@ fi
 cd "$CORE_DIR"
 ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests
+ty check --python "$(command -v python)"
 
 required_solvers=()
 if [[ "$run_full_suite" != true ]]; then
