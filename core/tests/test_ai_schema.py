@@ -105,6 +105,7 @@ MODEL_TOPIC_COVERAGE = {
     models.ShiftCountPreference: ("preferences.shift count",),
     models.ShiftAffinityPreference: ("preferences.shift affinity",),
     models.ExportConfig: ("export",),
+    models.ExportDefaults: ("export.defaults",),
     models.BaseExportFormattingRule: ("export.formatting",),
     models.ExportPersonFormattingRule: ("export.formatting", "export.formatting.row"),
     models.ExportDateFormattingRule: ("export.formatting", "export.formatting.column"),
@@ -157,6 +158,7 @@ BACKEND_FIELD_REQUIREMENTS = {
         "optional": ("description", "weight"),
     },
     "export": {"optional": ("formatting", "extraColumns", "extraRows")},
+    "export.defaults": {"required": ("type",)},
     "export.formatting": {
         "optional": ("description", "backgroundColor", "bottomBorderColor", "rightBorderColor", "fontColor")
     },

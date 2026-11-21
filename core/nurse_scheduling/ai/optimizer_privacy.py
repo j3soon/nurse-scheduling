@@ -53,84 +53,6 @@ class OptimizerResultError(ValueError):
     """The returned workbook cannot be safely restored."""
 
 
-def _default_export_config(payload: dict) -> dict:
-    """Generate the automatic frontend layout only for the outbound workbook."""
-    date_groups = {group["id"] for group in payload.get("dates", {}).get("groups", [])}
-    selector = {"people": ["ALL"], "dates": ["ALL"], "shiftTypes": ["ALL", "OFF"]}
-    preference = {
-        "types": ["shift request"],
-        "requestShape": ["person-item-to-date-item"],
-        "weightRange": [-float("inf"), float("inf")],
-    }
-    formatting = [
-        {"type": "cell", "appendText": " [{shortShiftType}]", **selector, "when": {"preference": preference}},
-        {
-            "type": "cell",
-            "fontColor": "#c00000",
-            "note": {"text": "Weight of unmet single-style request: {totalAbsWeight}"},
-            **selector,
-            "when": {"preference": {**preference, "satisfied": False}},
-        },
-        {"type": "history header", "backgroundColor": "#fefce8"},
-        {"type": "history", "people": ["ALL"], "backgroundColor": "#fefce8"},
-        {"type": "column", "dates": ["SATURDAY", "SUNDAY"], "backgroundColor": "#dbeafe"},
-        {"type": "column", "dates": ["SATURDAY"], "rightBorderColor": "#9ca3af"},
-    ]
-    if "FREEDAY" in date_groups:
-        formatting.append({"type": "column", "dates": ["FREEDAY"], "backgroundColor": "#dcfce7"})
-    columns = [
-        {
-            "type": "count",
-            "header": "OFF (Total)",
-            "countShiftTypes": ["OFF"],
-            "countDates": ["ALL"],
-            "rightBorderColor": "#000000",
-        }
-    ]
-    holiday_columns = [
-        {"type": "count", "header": f"OFF ({group})", "countShiftTypes": ["OFF"], "countDates": [group]}
-        for group in ("WORKDAY", "FREEDAY")
-        if group in date_groups
-    ]
-    if holiday_columns:
-        holiday_columns[-1]["rightBorderColor"] = "#000000"
-    columns.extend(holiday_columns)
-    columns.extend(
-        [
-            {"type": "count", "header": "OFF (Weekday)", "countShiftTypes": ["OFF"], "countDates": ["WEEKDAY"]},
-            {
-                "type": "count",
-                "header": "OFF (Weekend)",
-                "countShiftTypes": ["OFF"],
-                "countDates": ["WEEKEND"],
-                "rightBorderColor": "#000000",
-            },
-        ]
-    )
-    rows = []
-    shift_types = payload.get("shiftTypes", {})
-    items = shift_types.get("items", [])
-    for index, entry in enumerate([*items, *shift_types.get("groups", [])]):
-        column = {
-            "type": "count",
-            "header": f"{entry['id']} Count",
-            "countShiftTypes": [entry["id"]],
-            "countDates": ["ALL"],
-        }
-        row = {
-            "type": "count",
-            "header": f"{entry['id']} Count",
-            "countShiftTypes": [entry["id"]],
-            "countPeople": ["ALL"],
-        }
-        if index == len(items) - 1:
-            column["rightBorderColor"] = "#000000"
-            row["bottomBorderColor"] = "#000000"
-        columns.append(column)
-        rows.append(row)
-    return {"formatting": formatting, "extraColumns": columns, "extraRows": rows}
-
-
 def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, str], people_count: int) -> bytes:
     """Restore first-sheet person IDs before either sandbox inspection or browser download."""
     if not DEFUSEDXML:
@@ -202,8 +124,6 @@ def prepare_optimizer_spec(schedule_spec_yaml: str, max_schedule_bytes: int) -> 
     if not validation.valid:
         raise ValueError(validation.render())
     payload = _load_yaml(schedule_spec_yaml.encode("utf-8"))
-    if "export" not in payload:
-        payload["export"] = _default_export_config(payload)
     people = payload["people"]
     items = people["items"]
     # Optional sections are absent from a valid Schedule Spec that never declares them.
@@ -243,7 +163,8 @@ def prepare_optimizer_spec(schedule_spec_yaml: str, max_schedule_bytes: int) -> 
         if "people" in rule:
             rule["people"] = _map_references(rule["people"], anonymized_id_by_original_id)
     for rule in export.get("extraRows", []):
-        rule["countPeople"] = _map_references(rule["countPeople"], anonymized_id_by_original_id)
+        if "countPeople" in rule:
+            rule["countPeople"] = _map_references(rule["countPeople"], anonymized_id_by_original_id)
 
     output = BytesIO()
     yaml = YAML(typ="safe")

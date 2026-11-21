@@ -103,11 +103,17 @@ describe('ExportLayoutPage extra column coefficients', () => {
     duplicateExportExtraRow.mockReset();
   });
 
-  it('shows the experimental export layout warning', () => {
-    renderExportLayoutPage();
+  it('shows Defaults as a single entry without edit or duplicate actions', () => {
+    renderExportLayoutPage({
+      formatting: [{ type: 'defaults' }],
+      extraColumns: [{ type: 'defaults' }],
+      extraRows: [{ type: 'defaults' }],
+    });
 
-    expect(screen.getByText(/This page is experimental\. Saving any entry pins the layout/)).toBeInTheDocument();
-    expect(screen.getByText(/Use Clear All and Regenerate to restore auto-updates\./)).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Defaults', exact: true })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: 'Edit', exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Duplicate', exact: true })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Delete', exact: true })).toHaveLength(3);
   });
 
   it('saves only non-default coefficients on an extra column', async () => {

@@ -67,7 +67,7 @@ test('shows the custom export layout indicator on the navigation tab only when a
   const indicator = page.getByTestId('custom-export-layout-indicator');
   await expect(indicator).toBeVisible();
   await expect(indicator.locator('..')).toContainText('9. Export Layout');
-  await expect(indicator.locator('..')).toHaveAttribute('title', /Clear All and Regenerate/);
+  await expect(indicator.locator('..')).toHaveAttribute('title', 'Custom export layout');
 
   await page.goto('/shift-types');
   await expect(page.getByTestId('custom-export-layout-indicator')).toBeVisible();

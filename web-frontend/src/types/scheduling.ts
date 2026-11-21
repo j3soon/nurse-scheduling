@@ -106,10 +106,15 @@ export interface ExportExtraRow {
   countPeople: string[];
 }
 
+export interface ExportDefaults {
+  type: 'defaults';
+  description?: never;
+}
+
 export interface ExportConfig {
-  formatting?: ExportFormatting[];
-  extraColumns?: ExportExtraColumn[];
-  extraRows?: ExportExtraRow[];
+  formatting?: (ExportFormatting | ExportDefaults)[];
+  extraColumns?: (ExportExtraColumn | ExportDefaults)[];
+  extraRows?: (ExportExtraRow | ExportDefaults)[];
 }
 
 export interface Item {

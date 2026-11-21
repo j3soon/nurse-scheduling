@@ -330,6 +330,7 @@ export const applyExportLayoutForIdDeletion = (
         }),
       extraColumns: state.export?.extraColumns
         ?.map(rule => {
+          if (rule.type === 'defaults') return rule;
           if (dataType === DataType.DATES) {
             return { ...rule, countDates: filterIds(rule.countDates) };
           }
@@ -344,9 +345,10 @@ export const applyExportLayoutForIdDeletion = (
           }
           return rule;
         })
-        .filter(rule => rule.countDates.length > 0 && rule.countShiftTypes.length > 0),
+        .filter(rule => rule.type === 'defaults' || (rule.countDates.length > 0 && rule.countShiftTypes.length > 0)),
       extraRows: state.export?.extraRows
         ?.map(rule => {
+          if (rule.type === 'defaults') return rule;
           if (dataType === DataType.PEOPLE) {
             return { ...rule, countPeople: filterIds(rule.countPeople) };
           }
@@ -355,7 +357,7 @@ export const applyExportLayoutForIdDeletion = (
           }
           return rule;
         })
-        .filter(rule => rule.countPeople.length > 0 && rule.countShiftTypes.length > 0)
+        .filter(rule => rule.type === 'defaults' || (rule.countPeople.length > 0 && rule.countShiftTypes.length > 0))
     }
   };
 };
@@ -390,6 +392,7 @@ export const applyExportLayoutForIdChange = (
         return rule;
       }),
       extraColumns: state.export.extraColumns?.map(rule => {
+        if (rule.type === 'defaults') return rule;
         if (dataType === DataType.DATES) {
           return { ...rule, countDates: renameIds(rule.countDates) };
         }
@@ -406,6 +409,7 @@ export const applyExportLayoutForIdChange = (
         return rule;
       }),
       extraRows: state.export.extraRows?.map(rule => {
+        if (rule.type === 'defaults') return rule;
         if (dataType === DataType.PEOPLE) {
           return { ...rule, countPeople: renameIds(rule.countPeople) };
         }

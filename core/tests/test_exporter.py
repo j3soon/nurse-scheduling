@@ -38,7 +38,6 @@ from openpyxl import load_workbook
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import exporter, schedule
-from nurse_scheduling.ai.optimizer_privacy import _default_export_config
 
 
 @pytest.mark.parametrize(
@@ -726,7 +725,6 @@ preferences:
   - {{type: shift type requirement, shiftType: {second_shift}, requiredNumPeople: 0}}
   - {{type: shift request, person: n1, date: ["01", "02"], shiftType: "OFF", weight: 5}}
 """)
-    payload["export"] = _default_export_config(payload)
     df, _, _, _, info = schedule(yaml.safe_dump(payload).encode(), prettify=True)
     output = BytesIO()
     exporter.export_to_excel(df, output, info)
@@ -738,6 +736,61 @@ preferences:
     assert sheet["C3"].hyperlink is None
     assert workbook["Notes"]["C2"].value == "Weight of unmet single-style request: 5"
     assert workbook["Notes"].max_row == 2
+
+
+def test_export_defaults_expand_in_place_after_schedule_spec_entities_change():
+    payload = yaml.safe_load("""
+apiVersion: alpha
+dates:
+  range: {startDate: 2025-01-04, endDate: 2025-01-05}
+people:
+  items: [{id: n1}]
+shiftTypes:
+  items: [{id: D}]
+preferences:
+  - {type: at most one shift per day}
+  - {type: shift type requirement, shiftType: ALL, requiredNumPeople: 0}
+export:
+  formatting:
+    - {type: defaults}
+    - {type: column, dates: [SATURDAY], backgroundColor: "#ede9fe"}
+  extraColumns:
+    - {type: count, header: Custom off total, countShiftTypes: ["OFF"], countDates: [ALL]}
+    - {type: defaults}
+  extraRows:
+    - {type: defaults}
+    - {type: count, header: People off, countShiftTypes: ["OFF"], countPeople: [ALL]}
+""")
+    first = schedule(yaml.safe_dump(payload).encode(), prettify=True)
+    assert list(first.dataframe.data.iloc[1, -2:]) == ["OFF (Weekend)", "D Count"]
+    assert list(first.dataframe.data.iloc[-2:, 0]) == ["D Count", "People off"]
+
+    payload["people"]["items"].append({"id": "n2"})
+    payload["shiftTypes"] = {"items": [{"id": "N"}], "groups": [{"id": "WORK", "members": ["N"]}]}
+    payload["dates"]["groups"] = [{"id": "FREEDAY", "members": ["2025-01-05"]}]
+    second = schedule(yaml.safe_dump(payload).encode(), prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(second.dataframe, output, second.cell_export_info)
+    workbook = load_workbook(output)
+    sheet = workbook.worksheets[0]
+
+    assert [cell.value for cell in sheet[2]][-7:] == [
+        "Custom off total",
+        "OFF (Total)",
+        "OFF (FREEDAY)",
+        "OFF (Weekday)",
+        "OFF (Weekend)",
+        "N Count",
+        "WORK Count",
+    ]
+    assert [sheet.cell(row, 1).value for row in range(sheet.max_row - 2, sheet.max_row + 1)] == [
+        "N Count",
+        "WORK Count",
+        "People off",
+    ]
+    assert sheet.cell(sheet.max_row, 2).value == 2
+    assert sheet["B3"].fill.fgColor.rgb == "FFEDE9FE"
+    assert sheet["C3"].fill.fgColor.rgb == "FFDCFCE7"
 
 
 def test_prettify_off_annotations_and_workday_freeday_headers():
@@ -987,27 +1040,16 @@ export:
 
 
 def test_build_custom_export_style_info_ignores_out_of_bounds_targets():
-    ctx = SimpleNamespace(
-        scenario=SimpleNamespace(
-            export=SimpleNamespace(
-                formatting=[
-                    SimpleNamespace(
-                        type="row",
-                        people=["n1"],
-                        backgroundColor="#22c55e",
-                        bottomBorderColor=None,
-                        rightBorderColor=None,
-                        fontColor=None,
-                    )
-                ]
-            )
-        ),
-        compiled_schedule_spec=SimpleNamespace(
-            export=SimpleNamespace(
-                formatting=[SimpleNamespace(people=(0,), dates=(), shift_types=())],
-            )
-        ),
+    row_rule = SimpleNamespace(
+        type="row",
+        people=["n1"],
+        backgroundColor="#22c55e",
+        bottomBorderColor=None,
+        rightBorderColor=None,
+        fontColor=None,
     )
+    compiled_rule = SimpleNamespace(rule=row_rule, people=(0,), dates=(), shift_types=())
+    ctx = SimpleNamespace(compiled_schedule_spec=SimpleNamespace(export=SimpleNamespace(formatting=[compiled_rule])))
 
     # n_rows=0 forces set_style to hit out-of-bounds guard and skip writes.
     style_map = exporter._build_custom_export_style_info(
@@ -1043,11 +1085,12 @@ def test_dataframe_generation_supports_multiple_assigned_shift_types():
         ),
         people=SimpleNamespace(items=[SimpleNamespace(id="n1", history=None)]),
         preferences=[],
-        export=None,
     )
     ctx = SimpleNamespace(
         scenario=scenario,
-        compiled_schedule_spec=SimpleNamespace(dates=(date,)),
+        compiled_schedule_spec=SimpleNamespace(
+            dates=(date,), export=SimpleNamespace(formatting=(), extra_columns=(), extra_rows=())
+        ),
         n_days=1,
         n_shift_types=2,
         n_people=1,
@@ -1062,7 +1105,7 @@ def test_dataframe_generation_supports_multiple_assigned_shift_types():
     assert info["styles"] == {}
 
 
-def test_prettify_styling_does_not_add_default_freeday_or_weekend_colors():
+def test_explicit_empty_layout_disables_default_freeday_and_weekend_colors():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -1091,14 +1134,12 @@ preferences:
     date: ["2025-01-03"]
     shiftType: [OFF]
     weight: -5
+export: {}
 """
-    styled_df, _solution, _score, _status, _cell_export_info = schedule(yaml_content, prettify=True)
-    html = styled_df.to_html()
-    assert "text-align: center" in html
-    assert "background-color: #fefce8" not in html
-    assert "#dcfce7" not in html
-    assert "#dbeafe" not in html
-    assert "#9ca3af" not in html
+    styled_df, _solution, _score, _status, info = schedule(yaml_content, prettify=True)
+    assert "text-align: center" in styled_df.to_html()
+    assert info["styles"] == {}
+    assert not any(str(value).startswith("OFF (") for value in styled_df.data.iloc[1])
 
 
 @pytest.fixture
@@ -1118,18 +1159,28 @@ preferences:
   - {type: shift request, person: 林小華楊, date: "01", shiftType: "OFF", weight: 5}
   - {type: shift request, person: 林小華楊, date: "02", shiftType: D, weight: 123456789012}
 """)
-    payload["export"] = _default_export_config(payload)
-    payload["export"]["extraRows"][0]["header"] = "A long summary label below the roster"
-    payload["export"]["formatting"].append(
-        {
-            "type": "cell",
-            "people": ["ALL"],
-            "dates": ["01"],
-            "shiftTypes": ["OFF"],
-            "appendText": " REVIEW",
-            "when": {"preference": {"types": ["shift request"], "satisfied": False}},
-        },
-    )
+    payload["export"] = {
+        "extraColumns": [{"type": "defaults"}],
+        "extraRows": [
+            {
+                "type": "count",
+                "header": "A long summary label below the roster",
+                "countShiftTypes": ["D"],
+                "countPeople": ["ALL"],
+            }
+        ],
+        "formatting": [
+            {"type": "defaults"},
+            {
+                "type": "cell",
+                "people": ["ALL"],
+                "dates": ["01"],
+                "shiftTypes": ["OFF"],
+                "appendText": " REVIEW",
+                "when": {"preference": {"types": ["shift request"], "satisfied": False}},
+            },
+        ],
+    }
     result = schedule(yaml.safe_dump(payload, allow_unicode=True).encode(), prettify=True)
     path = tmp_path / "month.xlsx"
     with path.open("wb") as output:

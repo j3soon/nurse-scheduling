@@ -358,6 +358,9 @@ test.describe('page guides', () => {
     for (const [route, file] of pages) {
       await page.goto(route);
       await expect(page.locator('main h1, main h2').first()).toBeVisible();
+      if (route === '/export-layout') {
+        await expect(page.getByRole('heading', { name: 'Defaults', exact: true })).toHaveCount(3);
+      }
       if (route === '/optimize-and-export') {
         await expect(page.getByRole('button', { name: 'Optimize and Download', exact: true })).toBeEnabled();
         await pinServerLatency(page);
