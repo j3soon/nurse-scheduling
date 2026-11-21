@@ -219,6 +219,36 @@ test('quick add preserves descriptions and separate weights on an already reques
   await expect(sameDate).toHaveCount(1);
 });
 
+test('Quick Add with zero weight removes every matching request on the selected date', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    ...scheduleSpec,
+    preferences: [
+      { type: 'shift request', person: ['P1'], date: ['01', '02'], shiftType: ['D'], weight: 2, description: 'Shared note' },
+      { type: 'shift request', person: ['P1'], date: ['02'], shiftType: ['D'], weight: 3, description: 'Second note' },
+      { type: 'shift request', person: ['P1'], date: ['02'], shiftType: ['N'], weight: 4, description: 'Night note' },
+    ],
+  });
+
+  await page.goto('/shift-requests');
+  await expect(page.getByText('Second note', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Quick Add Preference' }).click();
+  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
+  await page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)').fill('0');
+  const cell = page.getByTitle('Click or drag to update preferences for P1 on date 02');
+  await cell.click();
+
+  const requests = page.getByRole('article');
+  await expect(requests.filter({ hasText: 'Shared note' })).toContainText('Date: 01');
+  await expect(requests.filter({ hasText: 'Second note' })).toHaveCount(0);
+  await expect(requests.filter({ hasText: 'Night note' })).toContainText('Date: 02');
+  await expect(cell.getByText(/^D /)).toHaveCount(0);
+
+  await page.getByRole('heading', { name: 'Shift Requests', exact: true }).click();
+  await page.keyboard.press('Control+z');
+  await expect(requests.filter({ hasText: 'Shared note' })).toContainText('Date: 01, 02');
+  await expect(requests.filter({ hasText: 'Second note' })).toContainText('Date: 02');
+});
+
 test('saves the inline description before applying Quick Add in the grid', async ({ page }) => {
   await seedScheduleSpecState(page, {
     ...scheduleSpec,

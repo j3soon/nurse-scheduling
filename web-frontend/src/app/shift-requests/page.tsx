@@ -943,7 +943,7 @@ export default function ShiftRequestsPage() {
       const matchesCell = (request: ShiftRequestPreference) =>
         request.person[0] === personId && request.date.includes(dateId) && canEditInCell(request);
 
-      const updatedPreferences: ShiftPreferenceEdit[] = clearFirst
+      let updatedPreferences: ShiftPreferenceEdit[] = clearFirst
         ? deltaPreferences.filter(pref => pref.weight !== 0)
         : filteredPreferences.filter(matchesCell).map(pref => ({
           shiftTypeId: pref.shiftType[0],
@@ -953,11 +953,13 @@ export default function ShiftRequestsPage() {
 
       if (!clearFirst) {
         for (const delta of deltaPreferences) {
+          if (delta.weight === 0) {
+            updatedPreferences = updatedPreferences.filter(pref => pref.shiftTypeId !== delta.shiftTypeId);
+            continue;
+          }
           const index = updatedPreferences.findIndex(pref => pref.shiftTypeId === delta.shiftTypeId);
           if (index === -1) {
-            if (delta.weight !== 0) updatedPreferences.push(delta);
-          } else if (delta.weight === 0) {
-            updatedPreferences.splice(index, 1);
+            updatedPreferences.push(delta);
           } else {
             updatedPreferences[index] = { ...updatedPreferences[index], weight: delta.weight };
           }
