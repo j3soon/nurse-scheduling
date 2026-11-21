@@ -30,6 +30,7 @@ import { DOCUMENTATION_URLS } from '@/constants/urls';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
 import { ShiftRequestPreference, SHIFT_REQUEST, Item } from '@/types/scheduling';
 import ShiftPreferenceEditor, { type ShiftPreferenceEdit } from '@/components/ShiftPreferenceEditor';
+import { InlineEdit } from '@/components/InlineEdit';
 import ToggleButton from '@/components/ToggleButton';
 import { CheckboxList } from '@/components/CheckboxList';
 import { getWeightDisplayLabel, isValidWeightValue, parseWeightValue } from '@/utils/numberParsing';
@@ -102,10 +103,7 @@ export default function ShiftRequestsPage() {
     personId: '',
     dateId: '',
   });
-  const [descriptionEdit, setDescriptionEdit] = useState<{
-    request: ShiftRequestPreference;
-    value: string;
-  } | null>(null);
+  const [descriptionEdit, setDescriptionEdit] = useState<ShiftRequestPreference | null>(null);
 
   const [historyEditState, setHistoryEditState] = useState<{
     isOpen: boolean;
@@ -140,7 +138,7 @@ export default function ShiftRequestsPage() {
   const stickyQuickAddRef = useRef<HTMLDivElement>(null);
   useTabSwitchWarning(
     editorState.isOpen || historyEditState.isOpen ||
-    (descriptionEdit !== null && shiftRequestPreferences.includes(descriptionEdit.request))
+    (descriptionEdit !== null && shiftRequestPreferences.includes(descriptionEdit))
   );
   // TODO(perf): The multi-select drag feature is now lagging, unsure why.
 
@@ -1896,79 +1894,52 @@ export default function ShiftRequestsPage() {
                   const shiftType = getAllShiftTypes().find(st => st.id === preference.shiftType[0]);
 
                   return (
-                    <article key={index} className="px-6 py-5 bg-blue-50">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-3 text-sm text-blue-600">
-                            <div>
-                              <span className="font-medium">{t("Person:")}</span>{' '}
-                              <span className="text-blue-900">{preference.person.join(', ')}</span>
-                              {person?.description && (
-                                <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
-                              )}
-                            </div>
-                            <div>
-                              <span className="font-medium">{t("Date:")}</span>{' '}
-                              <span className="text-blue-900">
-                                {preference.date.join(', ')}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="font-medium">{t("Shift Type:")}</span>{' '}
-                              <span className="text-blue-900">{preference.shiftType.join(', ')}</span>
-                              {shiftType?.description && (
-                                <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
-                              )}
-                            </div>
-                            <div>
-                              <span className="font-medium">{t("Weight:")}</span>{' '}
-                              <span className={`font-medium ${preference.weight > 0 ? 'text-green-600' : preference.weight < 0 ? 'text-red-600' : 'text-blue-900'}`}>
-                                {preference.weight > 0 ? '+' : ''}{preference.weight}
-                              </span>
-                              <div className="text-xs text-blue-500 mt-1">
-                                {preference.weight > 0 ? t("Wants this shift") : preference.weight < 0 ? t("Wants to avoid") : t("Neutral")}
-                              </div>
-                            </div>
-                          </div>
-                          {descriptionEdit?.request === preference ? (
-                            <form className="mt-3" onSubmit={event => {
-                              event.preventDefault();
-                              saveRequestDescription(preference, descriptionEdit.value);
-                            }}>
-                              <label className="block text-sm font-medium text-blue-900">
-                                {t("Request description for all listed dates")}
-                                <textarea
-                                  value={descriptionEdit.value}
-                                  onChange={event => setDescriptionEdit({ request: preference, value: event.target.value })}
-                                  rows={2}
-                                  className="mt-1 block w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
-                                />
-                              </label>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                <button type="button" onClick={() => setDescriptionEdit(null)} className="rounded-md border border-gray-300 px-3 py-1 text-sm">
-                                  {t("Cancel")}
-                                </button>
-                                <button type="submit" className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700">
-                                  {t("Save description")}
-                                </button>
-                              </div>
-                            </form>
-                          ) : (
-                            <>
-                              {preference.description && (
-                                <p className="mt-3 whitespace-pre-wrap break-words text-sm text-blue-900">{preference.description}</p>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => setDescriptionEdit({ request: preference, value: preference.description ?? '' })}
-                                className="mt-2 text-sm font-medium text-blue-700 underline hover:text-blue-900"
-                              >
-                                {t("Edit description")}
-                              </button>
-                            </>
+                    <article key={index} className="min-w-0 bg-blue-50 px-4 py-2.5 sm:px-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-6 gap-y-1 text-sm text-blue-600">
+                        <div>
+                          <span className="font-medium">{t("Person:")}</span>{' '}
+                          <span className="text-blue-900">{preference.person.join(', ')}</span>
+                          {person?.description && (
+                            <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>
                           )}
                         </div>
+                        <div>
+                          <span className="font-medium">{t("Date:")}</span>{' '}
+                          <span className="text-blue-900">
+                            {preference.date.join(', ')}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium">{t("Shift Type:")}</span>{' '}
+                          <span className="text-blue-900">{preference.shiftType.join(', ')}</span>
+                          {shiftType?.description && (
+                            <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{shiftType.description}</div>
+                          )}
+                        </div>
+                        <div>
+                          <span className="font-medium">{t("Weight:")}</span>{' '}
+                          <span className={`font-medium ${preference.weight > 0 ? 'text-green-600' : preference.weight < 0 ? 'text-red-600' : 'text-blue-900'}`}>
+                            {preference.weight > 0 ? '+' : ''}{preference.weight}
+                          </span>
+                          <div className="text-xs text-blue-500 mt-1">
+                            {preference.weight > 0 ? t("Wants this shift") : preference.weight < 0 ? t("Wants to avoid") : t("Neutral")}
+                          </div>
+                        </div>
                       </div>
+                      <InlineEdit
+                        value={preference.description ?? ''}
+                        isEditing={descriptionEdit === preference}
+                        onSave={value => saveRequestDescription(preference, value)}
+                        onCancel={() => setDescriptionEdit(null)}
+                        onDoubleClick={() => setDescriptionEdit(preference)}
+                        className="mt-1 w-fit max-w-full break-words whitespace-pre-wrap rounded text-sm text-gray-600 hover:text-gray-900"
+                        emptyClassName="italic text-gray-500"
+                        editClassName="mt-1 block w-full max-w-2xl bg-white text-sm text-gray-800"
+                        emptyText={t("Add description...")}
+                        placeholder={t("Enter description...")}
+                        ariaLabel={t("Request description for all listed dates")}
+                        multiline
+                      />
                     </article>
                   );
                 })}

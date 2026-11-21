@@ -109,9 +109,11 @@ test('edits one date of a people-group request and compacts it again when descri
   await page.keyboard.press('Control+y');
   await expect(dayTwo).toBeVisible();
 
-  await dayTwo.getByRole('button', { name: 'Edit description' }).click();
-  await dayTwo.getByLabel('Request description for all listed dates').fill('Shared note');
-  await dayTwo.getByRole('button', { name: 'Save description' }).click();
+  await dayTwo.getByRole('button', { name: 'Request description for all listed dates' }).dblclick();
+  const singleDateDescription = dayTwo.getByRole('textbox', { name: 'Request description for all listed dates' });
+  await expect(singleDateDescription).toHaveValue('Appointment\na');
+  await singleDateDescription.fill('Shared note');
+  await singleDateDescription.press('Enter');
   await expect(shared).toContainText('Date: 01, 02, 03');
 
   await page.goto('/save-and-load');
@@ -137,14 +139,22 @@ test('edits descriptions on imported selectors without combining overlapping req
 
   await page.goto('/shift-requests');
   const imported = page.getByRole('article').filter({ hasText: 'P1, P2' });
-  await imported.getByRole('button', { name: 'Edit description' }).click();
-  await imported.getByLabel('Request description for all listed dates').fill('Combined staffing request');
-  await imported.getByRole('button', { name: 'Save description' }).click();
+  await imported.getByRole('button', { name: 'Request description for all listed dates' }).press('Enter');
+  const importedDescription = imported.getByRole('textbox', { name: 'Request description for all listed dates' });
+  await importedDescription.fill('Canceled edit');
+  await importedDescription.press('Escape');
+  await expect(imported).toContainText('Imported request');
+  await imported.getByText('Imported request', { exact: true }).dblclick();
+  await importedDescription.fill('Combined staffing request');
+  await importedDescription.press('Shift+Enter');
+  await importedDescription.pressSequentially('On both dates');
+  await importedDescription.blur();
 
   const weekend = page.getByRole('article').filter({ hasText: 'Date: WEEKEND' });
-  await weekend.getByRole('button', { name: 'Edit description' }).click();
-  await weekend.getByLabel('Request description for all listed dates').fill('All dates');
-  await weekend.getByRole('button', { name: 'Save description' }).click();
+  await weekend.getByText('Weekend dates', { exact: true }).dblclick();
+  const weekendDescription = weekend.getByRole('textbox', { name: 'Request description for all listed dates' });
+  await weekendDescription.fill('All dates');
+  await weekendDescription.press('Enter');
   await expect(page.getByRole('article').filter({ hasText: 'All dates' })).toHaveCount(2);
 
   await page.goto('/save-and-load');
@@ -153,7 +163,7 @@ test('edits descriptions on imported selectors without combining overlapping req
   const { preferences } = yaml.load(await preview.innerText()) as { preferences: unknown[] };
   expect(preferences).toHaveLength(3);
   expect(preferences).toEqual(expect.arrayContaining([
-    expect.objectContaining({ person: ['P1', 'P2'], date: ['01', '02'], shiftType: ['D', 'N'], weight: 1, description: 'Combined staffing request' }),
+    expect.objectContaining({ person: ['P1', 'P2'], date: ['01', '02'], shiftType: ['D', 'N'], weight: 1, description: 'Combined staffing request\nOn both dates' }),
     expect.objectContaining({ person: ['P1'], date: ['ALL'], shiftType: ['D'], weight: 2, description: 'All dates' }),
     expect.objectContaining({ person: ['P1'], date: ['WEEKEND'], shiftType: ['D'], weight: 2, description: 'All dates' }),
   ]));
@@ -180,9 +190,10 @@ test('quick add preserves descriptions and separate weights on an already reques
   await expect(sameDate.filter({ hasText: 'Shared note' })).toContainText('Weight: +3');
   const secondRequest = sameDate.filter({ hasText: 'Second note' });
   await expect(secondRequest).toContainText('Weight: +3');
-  await secondRequest.getByRole('button', { name: 'Edit description' }).click();
-  await secondRequest.getByLabel('Request description for all listed dates').fill('Shared note');
-  await sameDate.getByRole('button', { name: 'Save description' }).click();
+  await secondRequest.getByText('Second note', { exact: true }).dblclick();
+  const secondDescription = sameDate.getByRole('textbox', { name: 'Request description for all listed dates' });
+  await secondDescription.fill('Shared note');
+  await secondDescription.press('Enter');
   await expect(sameDate.filter({ hasText: 'Shared note' })).toHaveCount(2);
 
   await page.getByRole('heading', { name: 'Shift Requests', exact: true }).click();
@@ -193,4 +204,25 @@ test('quick add preserves descriptions and separate weights on an already reques
   await expect(shared).toContainText('Date: 01, 02');
   await expect(shared).toContainText('Weight: +2');
   await expect(sameDate).toHaveCount(1);
+});
+
+test.describe('request descriptions on a phone', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test('opens an empty description with one tap', async ({ page }) => {
+    await seedScheduleSpecState(page, {
+      ...scheduleSpec,
+      preferences: [
+        { type: 'shift request', person: ['P1'], date: ['01', '03'], shiftType: ['D'], weight: 2 },
+      ],
+    });
+    await page.goto('/shift-requests');
+    const request = page.getByRole('article');
+    await request.getByText('Add description...', { exact: true }).tap();
+    const description = request.getByRole('textbox', { name: 'Request description for all listed dates' });
+    await expect(description).toBeFocused();
+    await description.fill('Both dates');
+    await request.getByText('01, 03', { exact: true }).tap();
+    await expect(request.getByText('Both dates', { exact: true })).toBeVisible();
+  });
 });

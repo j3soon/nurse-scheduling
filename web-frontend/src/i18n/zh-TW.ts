@@ -303,7 +303,6 @@ export const zhTW: Catalog = {
   "Current Schedule Spec YAML": "目前的排班設定 YAML",
   "Schedule Spec description (optional)": "排班設定說明（選填）",
   "Save description": "儲存說明",
-  "Edit description": "編輯說明",
   "Request description": "請求說明",
   "Request description (optional)": "請求說明（選填）",
   "Request description for {value0}": "{value0} 的請求說明",

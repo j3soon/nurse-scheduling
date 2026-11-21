@@ -333,7 +333,6 @@ export const en = {
   "Current Schedule Spec YAML": "Current Schedule Spec YAML",
   "Schedule Spec description (optional)": "Schedule Spec description (optional)",
   "Save description": "Save description",
-  "Edit description": "Edit description",
   "Request description": "Request description",
   "Request description (optional)": "Request description (optional)",
   "Request description for {value0}": "Request description for {value0}",
