@@ -37,6 +37,10 @@ job routes, response fields, and workbook downloads remain available. The
 release sends no bearer token, so it requires a deployment that permits those
 requests under its authentication policy.
 
+Both optimizer routes require ASCII digits in dates and reject date-shaped
+group IDs such as `3~4`. When repairing an older Schedule Spec, use ASCII
+digits for dates and rename any date-shaped groups along with their references.
+
 Record the optimizer contract when tagging a frontend release. Test its original
 request and response formats against the current backend. Do not rename the
 legacy fixtures together with the implementation.

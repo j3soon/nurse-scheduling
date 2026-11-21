@@ -64,6 +64,49 @@ older tab to the old key are ignored. These checks reduce migration races.
 AI conversation snapshots and chat history can be discarded after an update.
 They are excluded from the [browser migration guarantee](compatibility.md).
 
+#### Date IDs and references
+
+The frontend generates one ID for each concrete date. Use the shortest format
+that identifies the date within the inclusive Schedule Spec range.
+
+| Range | Date ID for December 3, 2026 |
+| --- | --- |
+| Within one calendar month | `03` (`DD`) |
+| Across months in one calendar year | `12-03` (`MM-DD`) |
+| Across calendar years | `2026-12-03` (`YYYY-MM-DD`) |
+
+1. **Load YAML.** Uploads, YAML editor saves, and AI-applied edits all call
+   `loadFromYaml`. It resolves equivalent concrete date selectors against the
+   declared range and writes the generated IDs into the Schedule Spec before
+   saving it. For a December-only range, `3`, `03`, `12-03`, and
+   `2026-12-03` all refer to `03`. Convert YAML date values to strings
+   before writing browser storage. Normalize an optional trailing newline
+   on concrete date selectors. Use ASCII digits (`0` through `9`) in dates.
+   The AI Assistant can use any valid equivalent spelling.
+   The browser returns the normalized YAML after
+   applying an AI edit.
+2. **Restore browser state.** Apply the same normalization separately to the
+   current Schedule Spec and each Undo/Redo entry using that entry's range.
+3. **Change the range.** Compare the old and new ranges by calendar date.
+   Match the old and new IDs for each date using its ISO date as the key.
+   Map references to retained dates to their new IDs, remove references to
+   dates that leave the range, and remove rules whose required date list
+   becomes empty. Regenerate the computed date items and automatic groups.
+
+Apply these rules to date-group members, preference `date` and `countDates`,
+export formatting `dates`, and export extra-column `countDates`. Keep each
+preference record and its weight. Groups and keywords such as `ALL` have
+their own IDs. Date group IDs cannot have the shape of a date or a date range
+expression, such as `2026-12-03` or `3~4`. The frontend rejects date range
+expressions on import and AI apply. Direct optimizer input supports them
+as selectors. The frontend and optimizer both reject non-ASCII digits in dates.
+
+The frontend keeps older browser drafts available for repair and blocks
+optimization while these date errors are present. Rename an existing group
+before a range edit would make its ID collide with a concrete date.
+Use a named date group to preserve group-level workbook formatting when
+replacing a multi-day expression.
+
 ### Backend Settings and Credentials
 
 [Optimize and Export][optimize-page] saves backend settings with the frontend

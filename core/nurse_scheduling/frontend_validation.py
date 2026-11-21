@@ -19,9 +19,11 @@
 
 # This code is mostly AI generated.
 
+from datetime import date
 from typing import Any
 
-from pydantic import model_validator
+from pydantic import ValidationError, model_validator
+from pydantic_core import InitErrorDetails, PydanticCustomError
 from typing_extensions import Self
 
 from .loader import _load_yaml
@@ -34,6 +36,9 @@ from .models import (
     ShiftTypeRequirementsPreference,
     ShiftTypeSuccessionsPreference,
 )
+from .utils import DATE_RANGE_SELECTOR_PATTERN, is_date_selector_shape
+
+FRONTEND_DATE_REFERENCE_ERROR = "frontend_date_reference"
 
 
 def _require_string(value: Any, path: str) -> None:
@@ -129,11 +134,85 @@ class _FrontendScheduleSpec(ScheduleSpec):
         return self
 
 
+def _find_date_reference_error(data: dict[str, Any]) -> InitErrorDetails | None:
+    """Find the first unsupported date reference, even in an incomplete payload."""
+
+    def issue(value: Any, path: tuple[str | int, ...], message: str) -> InitErrorDetails:
+        return InitErrorDetails(
+            type=PydanticCustomError(FRONTEND_DATE_REFERENCE_ERROR, message),
+            loc=path,
+            input=value,
+        )
+
+    def find(value: Any, path: tuple[str | int, ...]) -> InitErrorDetails | None:
+        if isinstance(value, list):
+            for index, selector in enumerate(value):
+                if error := find(selector, (*path, index)):
+                    return error
+        elif isinstance(value, str):
+            if not value.isascii() and is_date_selector_shape(value):
+                return issue(value, path, "Use ASCII digits (0-9) in dates")
+            if DATE_RANGE_SELECTOR_PATTERN.match(value):
+                return issue(
+                    value, path, "Use individual dates or a named date group instead of a date range expression"
+                )
+        return None
+
+    dates = data.get("dates")
+    export = data.get("export")
+    bounds = dates.get("range") if isinstance(dates, dict) else None
+    if isinstance(bounds, dict):
+        for field in ("startDate", "endDate"):
+            value = bounds.get(field)
+            if isinstance(value, str) and not value.isascii() and is_date_selector_shape(value):
+                return issue(value, ("dates", "range", field), "Use ASCII digits (0-9) in dates")
+
+    sections = (
+        (("dates", "groups"), dates.get("groups") if isinstance(dates, dict) else None, ("members",)),
+        (("preferences",), data.get("preferences"), ("date", "countDates")),
+        (("export", "formatting"), export.get("formatting") if isinstance(export, dict) else None, ("dates",)),
+        (("export", "extraColumns"), export.get("extraColumns") if isinstance(export, dict) else None, ("countDates",)),
+    )
+    for path, entries, fields in sections:
+        if not isinstance(entries, list):
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            if path == ("dates", "groups"):
+                group_id = entry.get("id")
+                if isinstance(group_id, (str, int, date)) and is_date_selector_shape(str(group_id)):
+                    return issue(
+                        group_id,
+                        (*path, index, "id"),
+                        "Date group IDs cannot look like dates or date range expressions",
+                    )
+            for field in fields:
+                if error := find(entry.get(field), (*path, index, field)):
+                    return error
+    return None
+
+
+def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
+    date_error = _find_date_reference_error(data)
+    try:
+        spec = _FrontendScheduleSpec.model_validate(data)
+    except ValidationError as error:
+        if date_error is None:
+            raise
+        # AI edits compare validation errors before and after a repair.
+        # Keep preexisting errors visible alongside the date reference error.
+        raise ValidationError.from_exception_data(error.title, [date_error, *error.errors()]) from error
+    if date_error is not None:
+        raise ValidationError.from_exception_data(_FrontendScheduleSpec.__name__, [date_error])
+    return spec
+
+
 def load_frontend_data(content: bytes) -> ScheduleSpec:
     """Parse YAML with backend Schedule Spec validation and the frontend subset policy."""
-    return _FrontendScheduleSpec.model_validate(_load_yaml(content, reject_aliases=True))
+    return _validate_frontend_payload(_load_yaml(content, reject_aliases=True))
 
 
 def validate_frontend_data(data: ScheduleSpec) -> ScheduleSpec:
     """Apply the frontend subset policy to an already validated Schedule Spec."""
-    return _FrontendScheduleSpec.model_validate(data.model_dump(mode="python"))
+    return _validate_frontend_payload(data.model_dump(mode="python"))

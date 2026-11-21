@@ -150,3 +150,64 @@ export:
   await expect(yamlPreview).not.toContainText('extraColumns');
   await expect(yamlPreview).not.toContainText('extraRows');
 });
+
+test('uploading equivalent date spellings populates the requests grid after reload', async ({ page }) => {
+  await disableModalDialogs(page);
+  await page.goto('/save-and-load');
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'december.yaml',
+    mimeType: 'application/yaml',
+    buffer: Buffer.from(`
+apiVersion: alpha
+dates:
+  range: {startDate: 2026-12-01, endDate: 2026-12-31}
+people:
+  items: [{id: P1}]
+shiftTypes:
+  items: [{id: D}]
+preferences:
+  - type: at most one shift per day
+  - {type: shift request, person: [P1], date: ['12-02'], shiftType: [D], weight: 3}
+  - {type: shift request, person: [P1], date: [2026-12-03], shiftType: [D], weight: 4}
+`),
+  });
+  await expect(page.getByText('Schedule Spec uploaded:', { exact: true })).toBeVisible();
+
+  await page.goto('/shift-requests');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 02')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toHaveText('D (+4)');
+  await page.reload();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 02')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 03')).toHaveText('D (+4)');
+});
+
+test('rejects an uploaded date range expression without replacing the current Schedule Spec', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedScheduleSpecState(page, {
+    apiVersion: 'alpha',
+    description: 'Schedule to keep',
+    dates: { range: {}, groups: [] },
+    people: { items: [], groups: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+  });
+  await page.goto('/save-and-load');
+  await expect(page.locator('pre')).toContainText('Schedule to keep');
+
+  const dialog = page.waitForEvent('dialog', { predicate: value => value.type() === 'alert' });
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'unsupported.yaml',
+    mimeType: 'application/yaml',
+    buffer: Buffer.from(`
+apiVersion: alpha
+description: Rejected schedule
+dates:
+  range: {startDate: 2026-12-01, endDate: 2026-12-31}
+  groups: [{id: First, members: ['01~03']}]
+preferences: [{type: at most one shift per day}]
+`),
+  });
+
+  expect((await dialog).message()).toContain('dates.groups[0].members[0] uses a date range expression');
+  await expect(page.locator('pre')).toContainText('Schedule to keep');
+});

@@ -244,9 +244,12 @@ def test_model_rejects_invalid_dates_items_and_group_ids():
     with pytest.raises(ValueError, match="Date group ID 'WEEKDAY' cannot be one of the reserved values"):
         ScheduleSpec.model_validate(payload)
 
+
+@pytest.mark.parametrize("group_id", ["3", "03", "01-03", "2025-01-03", "3~4", "01-03~01-04", "３~４"])
+def test_model_rejects_date_shaped_group_ids(group_id):
     payload = _base_payload()
-    payload["dates"]["groups"] = [{"id": "2025-01-01", "members": ["2025-01-01"]}]
-    with pytest.raises(ValueError, match="Date group ID '2025-01-01' must not be in the format"):
+    payload["dates"]["groups"] = [{"id": group_id, "members": ["2025-01-01"]}]
+    with pytest.raises(ValueError, match="Date group ID .* cannot look like a date or date range expression"):
         ScheduleSpec.model_validate(payload)
 
 

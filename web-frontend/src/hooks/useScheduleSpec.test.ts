@@ -1033,7 +1033,7 @@ describe('useScheduleSpec', () => {
         dates: {
           range: { startDate: '2026-04-01', endDate: '2026-04-02' },
           items: [{ id: 1, description: 'Date 1' }],
-          groups: [{ id: 2, members: [1], description: 'Date Group' }],
+          groups: [{ id: 200, members: [1], description: 'Date Group' }],
         },
         people: {
           items: [{ id: 100, description: '', history: [] }],
@@ -1076,6 +1076,7 @@ describe('useScheduleSpec', () => {
 
     expect(result.current.peopleData.items.some(item => item.id === '100')).toBe(true);
     expect(result.current.shiftTypeData.items.some(item => item.id === '300')).toBe(true);
+    expect(result.current.dateData.groups).toContainEqual({ id: '200', members: ['01'], description: 'Date Group' });
 
     const requirementPref = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
       | { date?: string[]; shiftType: string[]; qualifiedPeople: string[] }
@@ -4724,6 +4725,140 @@ describe('useScheduleSpec', () => {
         { type: 'count', header: 'Both days', countDates: ['01'], countShiftTypes: ['D'] },
       ]);
     });
+  });
+
+  it('preserves date references when dates remain in range under new IDs', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const request = { type: SHIFT_REQUEST, person: ['P1'], shiftType: ['D'], weight: 3 };
+
+    act(() => {
+      result.current.loadFromYaml({
+        dates: {
+          range: { startDate: '2026-11-30', endDate: '2026-12-03' },
+          groups: [{ id: 'Special', members: ['11-30', new Date('2026-12-02')] }],
+        },
+        people: { items: [{ id: 'P1' }] },
+        shiftTypes: { items: [{ id: 'D' }] },
+        preferences: [
+          { type: AT_MOST_ONE_SHIFT_PER_DAY },
+          { ...request, date: ['11-30', '2026-12-02\n'] },
+          { ...request, date: ['11-30'], weight: 5 },
+          {
+            type: SHIFT_COUNT, person: ['P1'], countDates: ['2026-12-03'],
+            countShiftTypes: ['D'], expression: 'x = T', target: 1, weight: 1,
+          },
+        ],
+        export: {
+          formatting: [{ type: 'column', dates: ['2026-12-02', '11-30'] }],
+          extraColumns: [{ type: 'count', header: 'Days', countDates: ['12-03'], countShiftTypes: ['D'] }],
+        },
+      });
+    });
+
+    expect(result.current.dateData.groups.find(group => group.id === 'Special')?.members).toEqual(['11-30', '12-02']);
+    act(() => {
+      result.current.updateDateRange({
+        startDate: new Date('2026-12-01'),
+        endDate: new Date('2026-12-03'),
+      });
+    });
+
+    expect(result.current.dateData.groups.find(group => group.id === 'Special')?.members).toEqual(['02']);
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['02'] }]);
+    expect(result.current.getPreferencesByType(SHIFT_COUNT)).toEqual([expect.objectContaining({ countDates: ['03'] })]);
+    expect(result.current.exportData?.formatting).toEqual([{ type: 'column', dates: ['02'] }]);
+    expect(result.current.exportData?.extraColumns).toEqual([
+      expect.objectContaining({ header: 'Days', countDates: ['03'] }),
+    ]);
+
+    act(() => result.current.undo());
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toContainEqual({ ...request, date: ['11-30', '12-02'] });
+    act(() => result.current.redo());
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['02'] }]);
+  });
+
+  it.each(['3', '12-03', '2026-12-03', '3~4', '３~４', new Date('2026-12-03')])(
+    'rejects YAML imports with a date-shaped group ID %s',
+    groupId => {
+      const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+      expect(() => result.current.loadFromYaml({
+        dates: { groups: [{ id: groupId, members: [] }] },
+      })).toThrow('dates.groups[0].id');
+    },
+  );
+
+  it.each(['０３', '１２-０３', '２０２６-１２-０３', '３~４'])('rejects YAML date selectors with non-ASCII digits (%s)', selector => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(() => result.current.loadFromYaml({
+      dates: { range: { startDate: '2026-12-01', endDate: '2026-12-31' } },
+      preferences: [{ type: SHIFT_REQUEST, date: [selector] }],
+    })).toThrow('preferences[0].date[0]');
+  });
+
+  it('rejects a non-ASCII date range boundary in YAML', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(() => result.current.loadFromYaml({
+      dates: { range: { startDate: '２０２６-１２-０１', endDate: '2026-12-31' } },
+    })).toThrow('dates.range.startDate');
+  });
+
+  it('keeps a legacy date-shaped group reference until the group is renamed', () => {
+    const groupId = '2026-11-02';
+    const { state } = createPopulatedHistoryState();
+    const request = { type: SHIFT_REQUEST, person: ['Person 1'], shiftType: ['D'], weight: 3 };
+    const legacy = {
+      ...state,
+      dates: {
+        ...state.dates,
+        range: { startDate: '2026-11-01', endDate: '2026-11-03' },
+        groups: [
+          { id: groupId, members: ['2026-11-03'], description: '' },
+          { id: 'Dependent', members: [groupId], description: '' },
+        ],
+      },
+      preferences: [...state.preferences, { ...request, date: [groupId] }],
+      export: { formatting: [{ type: 'column', dates: [groupId] }] },
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: legacy, history: [legacy], currentHistoryIndex: 0 }));
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const expandedRange = { startDate: new Date('2026-11-01'), endDate: new Date('2027-01-01') };
+
+    act(() => {
+      expect(result.current.updateDateRange(expandedRange)).toBe(groupId);
+    });
+    expect(result.current.dateData.range.endDate).toEqual(new Date('2026-11-03'));
+    expect(result.current.dateData.groups.find(group => group.id === groupId)?.members).toEqual(['03']);
+    expect(result.current.dateData.groups.find(group => group.id === 'Dependent')?.members).toEqual([groupId]);
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: [groupId] }]);
+
+    act(() => result.current.updateGroup(DataType.DATES, result.current.dateData, groupId, 'Special Days'));
+    expect(result.current.dateData.groups.find(group => group.id === 'Dependent')?.members).toEqual(['Special Days']);
+    act(() => result.current.updateDateRange(expandedRange));
+
+    expect(result.current.dateData.range).toEqual(expandedRange);
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['Special Days'] }]);
+    expect(result.current.exportData?.formatting).toEqual([{ type: 'column', dates: ['Special Days'] }]);
+  });
+
+  it('normalizes saved date references in the current Schedule Spec and Undo history', () => {
+    const { state } = createPopulatedHistoryState();
+    const dates = { ...state.dates, range: { startDate: '2026-12-01', endDate: '2026-12-31' } };
+    const request = { type: SHIFT_REQUEST, person: ['Person 1'], shiftType: ['D'], weight: 3 };
+    const before = { ...state, dates, preferences: [...state.preferences, { ...request, date: ['2'] }] };
+    const current = {
+      ...state, dates, preferences: [...state.preferences, { ...request, date: ['12-03', '04~05'] }],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ state: current, history: [before, current], currentHistoryIndex: 1 }));
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['03', '04~05'] }]);
+    expect(result.current.dateReferenceIssue?.path).toBe('preferences[1].date[1]');
+    act(() => result.current.undo());
+    expect(result.current.dateReferenceIssue).toBeUndefined();
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['02'] }]);
+    act(() => result.current.redo());
+    expect(result.current.dateReferenceIssue?.path).toBe('preferences[1].date[1]');
+    expect(result.current.getPreferencesByType(SHIFT_REQUEST)).toEqual([{ ...request, date: ['03', '04~05'] }]);
   });
 
   it('drops export date references during date identifier format transitions', async () => {

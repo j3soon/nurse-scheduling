@@ -19,6 +19,7 @@
 
 # This test is mostly AI generated.
 
+import json
 from copy import deepcopy
 
 import pytest
@@ -138,3 +139,51 @@ preferences:
 
     with pytest.raises(ValidationError, match="must be a string for the web frontend"):
         load_frontend_data(content)
+
+
+@pytest.mark.parametrize(
+    ("change", "path"),
+    [
+        (
+            lambda spec: spec["dates"]["groups"][0].update(members=["01~02"]),
+            ("dates", "groups", 0, "members", 0),
+        ),
+        (
+            lambda spec: spec["preferences"][1].update(date=["01~02"]),
+            ("preferences", 1, "date", 0),
+        ),
+        (
+            lambda spec: spec["export"]["formatting"].append({"type": "column", "dates": ["01~02"]}),
+            ("export", "formatting", 0, "dates", 0),
+        ),
+        (
+            lambda spec: spec["export"]["extraColumns"].append(
+                {"type": "count", "header": "Days", "countDates": ["01~02"], "countShiftTypes": ["D"]}
+            ),
+            ("export", "extraColumns", 0, "countDates", 0),
+        ),
+    ],
+)
+def test_date_range_expressions_are_backend_only(change, path):
+    payload = _base_payload()
+    change(payload)
+    model = _model(payload)
+
+    with pytest.raises(ValidationError, match="individual dates or a named date group") as error:
+        validate_frontend_data(model)
+
+    assert error.value.errors()[0]["loc"] == path
+
+
+@pytest.mark.parametrize("group_id", ["3~4", "2026-01-01"])
+def test_frontend_rejects_date_shaped_group_id_before_compiling_its_references(group_id):
+    payload = _base_payload()
+    payload["dates"]["groups"][0]["id"] = group_id
+    payload["preferences"][1]["date"] = [group_id]
+
+    with pytest.raises(
+        ValidationError, match="Date group IDs cannot look like dates or date range expressions"
+    ) as error:
+        load_frontend_data(json.dumps(payload).encode())
+
+    assert error.value.errors()[0]["loc"] == ("dates", "groups", 0, "id")

@@ -21,6 +21,18 @@ import { DateRange } from '@/types/scheduling';
 
 export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
+// These shapes also identify legacy inputs that use non-ASCII digits.
+const CONCRETE_DATE_SHAPE = /^(?:\p{Decimal_Number}{1,2}|\p{Decimal_Number}{2}-\p{Decimal_Number}{2}|\p{Decimal_Number}{4}-\p{Decimal_Number}{2}-\p{Decimal_Number}{2})\n?$/u;
+export const DATE_RANGE_EXPRESSION = /^[\p{Decimal_Number}-]+~[\p{Decimal_Number}-]+\n?$/u;
+
+export function isDateSelectorShape(value: string): boolean {
+  return CONCRETE_DATE_SHAPE.test(value) || DATE_RANGE_EXPRESSION.test(value);
+}
+
+export function hasNonAsciiDateDigits(value: unknown): boolean {
+  return typeof value === 'string' && /[^0-9~\n-]/u.test(value) && isDateSelectorShape(value);
+}
+
 export function startOfMonth(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }

@@ -50,11 +50,12 @@ def test_parse_dates_rejects_month_day_when_years_differ():
         utils.parse_dates("01-01", {}, date_range)
 
 
-def test_parse_dates_rejects_invalid_date_format():
+@pytest.mark.parametrize("selector", ["2025/01/01", "０１", "０１-０１", "２０２５-０１-０１", "１~１"])
+def test_parse_dates_rejects_invalid_date_format(selector):
     date_range = DateRange(startDate=datetime.date(2025, 1, 1), endDate=datetime.date(2025, 1, 10))
 
     with pytest.raises(ValueError, match="is not in the format"):
-        utils.parse_dates("2025/01/01", {}, date_range)
+        utils.parse_dates(selector, {}, date_range)
 
 
 def test_parse_dates_rejects_out_of_range_date():

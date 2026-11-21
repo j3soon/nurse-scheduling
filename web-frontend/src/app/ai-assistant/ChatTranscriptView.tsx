@@ -124,7 +124,7 @@ export function ChatTranscriptView({
               className={classes}
             >
               <p className="label">{notice ? t("App notice")
-                : summary ? summary.invalidated ? t("Discarded conversation summary") : t("User · Conversation summary") : messageLabel(message, t)}</p>
+                : summary ? summary.invalidated ? t("Discarded compaction summary") : t("User · Compaction summary") : messageLabel(message, t)}</p>
               {/* Messages reach the model by default, so only exceptions get a status line. */}
               {(notice || summary?.invalidated || message.role === 'optimizer' || message.compacted) && (
                 <p className="message-status">
@@ -133,7 +133,7 @@ export function ChatTranscriptView({
                 </p>
               )}
               {summary && <details className="system-prompt">
-                <summary className="collapsed-summary">{t("Conversation summary")}</summary>
+                <summary className="collapsed-summary">{t("Compaction summary")}</summary>
                 <CompactionSummary entry={summary} />
               </details>}
               {uploads.length > 0 && (

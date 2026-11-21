@@ -117,7 +117,7 @@ describe('AiAssistantPage', () => {
     expect(composer).toHaveValue('Draft during compaction');
     expect(screen.getByText('Context ~10.0% used')).toBeInTheDocument();
     expect(screen.getByText('Tokens: ~1,000 / 10,000')).toBeInTheDocument();
-    await user.click(screen.getByText('Conversation summary', { exact: true }));
+    await user.click(screen.getByText('Compaction summary', { exact: true }));
     expect(screen.getByText(/\[Conversation summary\]\s+Keep the night constraints\./)).toBeInTheDocument();
   });
 

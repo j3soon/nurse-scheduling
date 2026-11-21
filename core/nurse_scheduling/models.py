@@ -19,7 +19,6 @@
 
 import datetime
 import math
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -574,12 +573,8 @@ class ScheduleSpec(BaseModel):
                 raise ValueError(
                     f"Date group ID {group.id!r} cannot be one of the reserved values: {date_reserved_ids}"
                 )
-            if (
-                re.match(r"^\d{1,2}$", group.id)
-                or re.match(r"^(\d{2})-(\d{2})$", group.id)
-                or re.match(r"^(\d{4})-(\d{2})-(\d{2})$", group.id)
-            ):
-                raise ValueError(f"Date group ID {group.id!r} must not be in the format of YYYY-MM-DD, MM-DD, or D")
+            if utils.is_date_selector_shape(group.id):
+                raise ValueError(f"Date group ID {group.id!r} cannot look like a date or date range expression")
             date_group_ids.add(group.id)
 
         self._compiled_schedule_spec = _validate_and_compile_schedule_spec(self)

@@ -22,14 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
-test('shrinking a month-spanning range back into one month reverts downstream IDs to DD format', async ({ page }) => {
-  /*
-   * Steps:
-   * 1. Confirm a seeded month-spanning range renders MM-DD IDs downstream.
-   * 2. Update the range so it stays within one month.
-   * 3. Confirm the Dates page shows the shorter duration.
-   * 4. Revisit Shift Requests and confirm the IDs now use DD format.
-   */
+test('shrinking a month-spanning range preserves requests for retained dates', async ({ page }) => {
   await disableModalDialogs(page);
   await seedScheduleSpecState(page, {
     apiVersion: 'test',
@@ -37,13 +30,16 @@ test('shrinking a month-spanning range back into one month reverts downstream ID
     dates: { range: { startDate: '2026-05-31', endDate: '2026-06-01' }, groups: [] },
     people: { items: [{ id: 'P1', description: 'Primary nurse', history: [] }], groups: [], history: [] },
     shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
-    preferences: [{ type: 'at most one shift per day' }],
+    preferences: [
+      { type: 'at most one shift per day' },
+      { type: 'shift request', person: ['P1'], date: ['05-31', '06-01'], shiftType: ['D'], weight: 3 },
+    ],
     export: { formatting: [] },
   });
 
   await page.goto('/shift-requests');
-  await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toBeVisible();
-  await expect(page.getByTitle('Click to update preferences for P1 on date 06-01')).toBeVisible();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toHaveText('D (+3)');
+  await expect(page.getByTitle('Click to update preferences for P1 on date 06-01')).toHaveText('D (+3)');
 
   await page.goto('/dates');
   await page.getByRole('button', { name: /Set Date Range|Edit Date Range/ }).click();
@@ -53,6 +49,47 @@ test('shrinking a month-spanning range back into one month reverts downstream ID
   await expect(page.getByText('Duration: 1 days')).toBeVisible();
 
   await page.goto('/shift-requests');
-  await expect(page.getByTitle('Click to update preferences for P1 on date 31')).toBeVisible();
+  await expect(page.getByTitle('Click to update preferences for P1 on date 31')).toHaveText('D (+3)');
   await expect(page.getByTitle('Click to update preferences for P1 on date 05-31')).toHaveCount(0);
+});
+
+test('requires renaming a legacy group before its ID collides with a generated date', async ({ page }) => {
+  await disableModalDialogs(page);
+  await seedScheduleSpecState(page, {
+    apiVersion: 'alpha',
+    description: '',
+    dates: {
+      range: { startDate: '2026-11-01', endDate: '2026-11-03' },
+      groups: [{ id: '2026-11-02', description: '', members: ['03'] }],
+    },
+    people: { items: [], groups: [], history: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/dates');
+  await page.getByRole('button', { name: 'Set Date Range', exact: true }).click();
+  await page.locator('#endDate').fill('2027-01-01');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('Rename date group 2026-11-02 before changing the range.')).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByText('Duration: 3 days')).toBeVisible();
+
+  const groupRow = page.getByRole('row')
+    .filter({ has: page.getByRole('button', { name: 'Edit', exact: true }) })
+    .filter({ has: page.getByTitle('2026-11-02', { exact: true }) });
+  await groupRow.getByRole('button', { name: 'Edit', exact: true }).click();
+  const id = page.getByPlaceholder('Enter group ID', { exact: true });
+  await id.fill('3~4');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('A date group ID cannot look like a date or date range expression.')).toBeVisible();
+  await id.fill('Special days');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByTitle('Special days', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Set Date Range', exact: true }).click();
+  await page.locator('#endDate').fill('2027-01-01');
+  await page.getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.getByText('Duration: 62 days')).toBeVisible();
 });

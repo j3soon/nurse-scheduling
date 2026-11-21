@@ -16,7 +16,7 @@ Selector fidelity:
 - Preserve an exact selector supplied by the user when validation accepts it. IDs such as `Person 3` and `P3` are different.
 - Keep reserved selectors such as `ALL` literal. Do not expand a group or reserved selector into its members.
 - Keep concrete IDs distinct from group IDs. For example, shift type `D` is not group `Day`.
-- Keep date selectors in the requested form. For example, `01`, `2025-11-01`, and a date-group ID are distinct.
+- Use the shortest date ID for the current range. The browser normalizes equivalent date spellings after applying an edit. Preserve named date-group selectors.
 - Quote a YAML string containing `: `, `#`, or another syntax-significant character.
 
 ---

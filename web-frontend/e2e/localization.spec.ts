@@ -70,6 +70,38 @@ test.describe('Traditional Chinese interface', () => {
     expect(errors).toEqual([]);
   });
 
+  test('translates date range expression errors in YAML edits and uploads', async ({ page }) => {
+    await disableModalDialogs(page);
+    await seedMinimalScheduleSpecState(page);
+    await page.goto('/save-and-load');
+    const preview = page.locator('pre');
+    await expect(preview).toContainText('Person 1');
+    const invalidYaml = `
+apiVersion: alpha
+description: Rejected schedule
+dates:
+  range: {startDate: 2026-12-01, endDate: 2026-12-31}
+  groups: [{id: First, members: ['01~03']}]
+preferences: [{type: at most one shift per day}]
+`;
+    const message = '請將 dates.groups[0].members[0] 的日期範圍表示式替換為個別日期或具名日期群組。';
+
+    await page.getByRole('button', { name: '編輯 YAML', exact: true }).click();
+    await page.locator('textarea').fill(invalidYaml);
+    await page.getByRole('button', { name: '儲存', exact: true }).click();
+    await expect(page.getByText(message, { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+
+    const dialog = page.waitForEvent('dialog', { predicate: value => value.type() === 'alert' });
+    await page.locator('input[type=file]').setInputFiles({
+      name: 'unsupported.yaml',
+      mimeType: 'application/yaml',
+      buffer: Buffer.from(invalidYaml),
+    });
+    expect((await dialog).message()).toContain(message);
+    await expect(preview).toContainText('Person 1');
+  });
+
   test('saved English overrides browser detection on reload', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('nurse-scheduling-language', 'en'));
     await page.goto('/');
