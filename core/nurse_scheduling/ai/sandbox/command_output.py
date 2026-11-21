@@ -23,6 +23,7 @@ import codecs
 import json
 import subprocess
 import sys
+from io import BufferedReader
 from pathlib import Path
 
 MAX_TAIL_BYTES = 100 * 1024
@@ -79,7 +80,9 @@ def main():
                 stderr=subprocess.STDOUT,
             ) as command,
         ):
-            while chunk := command.stdout.read1(CHUNK_BYTES):
+            output_stream = command.stdout
+            assert isinstance(output_stream, BufferedReader)
+            while chunk := output_stream.read1(CHUNK_BYTES):
                 log.write(chunk)
                 output.append(chunk)
             exit_code = command.wait()

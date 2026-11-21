@@ -28,8 +28,6 @@ exclude = [
     "nurse_scheduling/ai/chat_export.py",
     "nurse_scheduling/ai/chat_projection.py",
     "nurse_scheduling/ai/litellm_concurrency.py",
-    "nurse_scheduling/ai/sandbox/command_output.py",
-    "nurse_scheduling/ai/sandbox/e2b.py",
     "nurse_scheduling/ai/validation.py",
     "nurse_scheduling/sentry.py",
     "nurse_scheduling/solver_ortools_linear.py",
