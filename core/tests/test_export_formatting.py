@@ -172,7 +172,7 @@ export:
     ws = wb.active
 
     # With prettify enabled, the first history column is between the name column and dates.
-    assert ws["B1"].value == "H-1"
+    assert ws["B1"].value == "History"
     assert ws["B1"].fill.fgColor.rgb == "00000000"
     assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"
 
@@ -246,7 +246,7 @@ export:
     wb = load_workbook(output)
     ws = wb.active
 
-    assert ws["B1"].value == "H-1"
+    assert ws["B1"].value == "History"
     assert ws["B1"].fill.fgColor.rgb == "FFFEFCE8"
     assert ws["B3"].fill.fgColor.rgb == "00000000"
 
@@ -515,7 +515,7 @@ export:
         schedule(yaml_content, prettify=True)
 
 
-def test_export_xlsx_handles_unequal_trimmed_history_columns():
+def test_export_xlsx_keeps_unequal_histories_on_one_line():
     yaml_content = b"""
 apiVersion: alpha
 dates:
@@ -527,7 +527,7 @@ people:
     - id: n1
       history: [N]
     - id: n2
-      history: [A, D, N]
+      history: [A, D, N, D, D, D, N, N]
 shiftTypes:
   items:
     - id: A
@@ -554,8 +554,11 @@ export:
     wb = load_workbook(output)
     ws = wb.active
 
-    assert [ws["B1"].value, ws["C1"].value, ws["D1"].value] == ["H-3", "H-2", "H-1"]
-    assert [ws["B3"].value, ws["C3"].value, ws["D3"].value] == [None, None, "N"]
-    assert [ws["B4"].value, ws["C4"].value, ws["D4"].value] == ["A", "D", "N"]
+    assert [ws["B1"].value, ws["C1"].value] == ["History", 1]
+    assert ws["B3"].value == "N"
+    assert ws["B4"].value == "A,D,N,D,D,D,N,N"
+    assert ws.column_dimensions["B"].width >= len(ws["B4"].value)
+    assert not ws["B4"].alignment.wrap_text
+    assert ws.row_dimensions[4].height is None
     assert ws["B1"].fill.fgColor.rgb == "FFBFDBFE"
-    assert ws["D3"].fill.fgColor.rgb == "FFFEFCE8"
+    assert ws["B3"].fill.fgColor.rgb == "FFFEFCE8"

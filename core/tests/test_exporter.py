@@ -20,19 +20,25 @@
 # This test is mostly AI generated.
 
 import os
+import re
+import shutil
+import subprocess
 import sys
 from datetime import date
 from io import BytesIO
 from types import SimpleNamespace
+from xml.etree import ElementTree
 
 import pandas as pd
 import pytest
+import yaml
 from openpyxl import load_workbook
 
 # Add the project root to the Python path so imports will work when running directly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from nurse_scheduling import exporter, schedule
+from nurse_scheduling.ai.optimizer_privacy import _default_export_config
 
 
 @pytest.mark.parametrize(
@@ -703,6 +709,37 @@ preferences:
     assert df.iloc[0, 3] == "2025/1/2"
 
 
+@pytest.mark.parametrize(("second_shift", "off_label"), [("E", "O"), ("O", "OFF"), ("o", "OFF")])
+def test_default_layout_compacts_off_request_labels(second_shift, off_label):
+    payload = yaml.safe_load(f"""
+apiVersion: alpha
+dates:
+  range: {{startDate: 2025-01-01, endDate: 2025-01-03}}
+people:
+  items: [{{id: n1}}]
+shiftTypes:
+  items: [{{id: D}}, {{id: {second_shift}}}]
+preferences:
+  - {{type: at most one shift per day}}
+  - {{type: shift type requirement, shiftType: D, date: "01", requiredNumPeople: 1}}
+  - {{type: shift type requirement, shiftType: D, date: ["02", "03"], requiredNumPeople: 0}}
+  - {{type: shift type requirement, shiftType: {second_shift}, requiredNumPeople: 0}}
+  - {{type: shift request, person: n1, date: ["01", "02"], shiftType: "OFF", weight: 5}}
+""")
+    payload["export"] = _default_export_config(payload)
+    df, _, _, _, info = schedule(yaml.safe_dump(payload).encode(), prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, info)
+
+    workbook = load_workbook(output)
+    sheet = workbook.worksheets[0]
+    assert [sheet.cell(3, col).value for col in (2, 3, 4)] == [f"D [{off_label}]", f" [{off_label}]", None]
+    assert sheet["B3"].font.color.rgb == "FFC00000"
+    assert sheet["C3"].hyperlink is None
+    assert workbook["Notes"]["C2"].value == "Weight of unmet single-style request: 5"
+    assert workbook["Notes"].max_row == 2
+
+
 def test_prettify_off_annotations_and_workday_freeday_headers():
     yaml_content = b"""
 apiVersion: alpha
@@ -1062,3 +1099,142 @@ preferences:
     assert "#dcfce7" not in html
     assert "#dbeafe" not in html
     assert "#9ca3af" not in html
+
+
+@pytest.fixture
+def month_workbook(tmp_path):
+    payload = yaml.safe_load("""
+apiVersion: alpha
+dates:
+  range: {startDate: 2025-12-01, endDate: 2025-12-31}
+people:
+  items: [{id: 林小華楊, history: [D, D, D, D, D]}]
+shiftTypes:
+  items: [{id: D}]
+preferences:
+  - {type: at most one shift per day}
+  - {type: shift type requirement, shiftType: D, date: ["01", "02", "31"], requiredNumPeople: 1}
+  - {type: shift type requirement, shiftType: D, date: "03~30", requiredNumPeople: 0}
+  - {type: shift request, person: 林小華楊, date: "01", shiftType: "OFF", weight: 5}
+  - {type: shift request, person: 林小華楊, date: "02", shiftType: D, weight: 123456789012}
+""")
+    payload["export"] = _default_export_config(payload)
+    payload["export"]["extraRows"][0]["header"] = "A long summary label below the roster"
+    payload["export"]["formatting"].append(
+        {
+            "type": "cell",
+            "people": ["ALL"],
+            "dates": ["01"],
+            "shiftTypes": ["OFF"],
+            "appendText": " REVIEW",
+            "when": {"preference": {"types": ["shift request"], "satisfied": False}},
+        },
+    )
+    result = schedule(yaml.safe_dump(payload, allow_unicode=True).encode(), prettify=True)
+    path = tmp_path / "month.xlsx"
+    with path.open("wb") as output:
+        exporter.export_to_excel(result.dataframe, output, result.cell_export_info)
+    return path
+
+
+def test_schedule_print_area_excludes_summary_columns(month_workbook):
+    workbook = load_workbook(month_workbook)
+    sheet = workbook.worksheets[0]
+
+    assert sheet["AG1"].value == 31
+    assert sheet["AI2"].value == "OFF (Total)"
+    assert sheet.print_area.endswith(f"!$A$1:$AG${sheet.max_row}")
+    assert sheet.print_title_rows == "$1:$2"
+    assert sheet.page_setup.paperSize == int(sheet.PAPERSIZE_A4)
+    assert sheet.page_setup.orientation == "landscape"
+    assert sheet.sheet_properties.pageSetUpPr.fitToPage
+    assert sheet.page_setup.fitToWidth == 1
+    assert sheet.page_setup.fitToHeight == 0
+    margins = sheet.page_margins
+    assert (margins.left, margins.right, margins.top, margins.bottom) == pytest.approx((5 / 25.4,) * 4)
+    for col in range(1, 34):
+        assert sheet.cell(1, col).border.top.color.rgb == "FF000000"
+        assert sheet.cell(sheet.max_row, col).border.bottom.color.rgb == "FF000000"
+    for row in range(1, sheet.max_row + 1):
+        assert sheet.cell(row, 1).border.left.color.rgb == "FF000000"
+        assert sheet.cell(row, 33).border.right.color.rgb == "FF000000"
+    assert getattr(sheet["AI1"].border.top, "style", None) is None
+    assert sheet["B3"].value == "D,D,D,D,D"
+    assert sheet.column_dimensions["A"].width == 10
+    assert sheet["A7"].value == "A long summary label below the roster"
+    for row in sheet.iter_rows(max_col=33):
+        for cell in row:
+            assert not cell.alignment.wrap_text
+            assert not cell.alignment.indent
+            if cell.value is not None:
+                assert cell.alignment.shrink_to_fit
+    assert all(row.height is None for row in sheet.row_dimensions.values())
+    assert sheet["C3"].value == "D [O] REVIEW"
+    assert sheet["C4"].value == 123456789012
+    assert sheet["C3"].hyperlink.target == "#'Notes'!A2"
+    assert workbook["Notes"]["A2"].hyperlink.target == "#'Sheet1'!C3"
+
+
+def test_schedule_month_prints_on_one_a4_page_wide(month_workbook):
+    soffice = shutil.which("soffice")
+    if not soffice or not shutil.which("pdfinfo") or not shutil.which("pdftotext"):
+        pytest.skip("requires LibreOffice Calc and Poppler")
+
+    # Render only the first worksheet, keeping its workbook print settings.
+    workbook = load_workbook(month_workbook)
+    for sheet in workbook.worksheets[1:]:
+        workbook.remove(sheet)
+    workbook.save(month_workbook)
+    profile = month_workbook.parent / "lo-profile"
+    rendered = subprocess.run(
+        [
+            soffice,
+            f"-env:UserInstallation={profile.as_uri()}",
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(month_workbook.parent),
+            str(month_workbook),
+        ],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=45,
+    )
+    pdf = month_workbook.with_suffix(".pdf")
+    assert rendered.returncode == 0 and pdf.is_file(), rendered.stderr
+    metadata = subprocess.check_output(["pdfinfo", "-enc", "UTF-8", str(pdf)], encoding="utf-8", timeout=10)
+    assert re.search(r"^Pages:\s+1$", metadata, re.MULTILINE)
+    assert re.search(r"^Page size:.*\(A4\)", metadata, re.MULTILINE)
+    page = subprocess.check_output(
+        ["pdftotext", "-enc", "UTF-8", "-layout", str(pdf), "-"], encoding="utf-8", timeout=10
+    )
+    assert "林小華楊" in page
+    assert "D,D,D,D,D" in page
+    assert re.search(r"\b1\s+2\s+3.*\b30\s+31\b", page)
+    # Require every annotation fragment to stay in the first date column. The
+    # second date also contains an assignment, so overflow would overlap it.
+    box = subprocess.check_output(["pdftotext", "-enc", "UTF-8", "-bbox", str(pdf), "-"], encoding="utf-8", timeout=10)
+    words = ElementTree.fromstring(box).findall(".//{*}word")
+    first = next(word for word in words if word.text == "1")
+    second = next(word for word in words if word.text == "2")
+    weekday = next(word for word in words if word.text == "Mon")
+    score = next(word for word in words if word.text == "Score")
+    column_width = float(second.attrib["xMin"]) - float(first.attrib["xMin"])
+    center = (float(first.attrib["xMin"]) + float(first.attrib["xMax"])) / 2
+    line_fragments = [
+        word
+        for word in words
+        if center - column_width / 2 <= float(word.attrib["xMin"])
+        and float(word.attrib["xMax"]) <= center + column_width / 2
+        and float(weekday.attrib["yMax"]) <= float(word.attrib["yMin"]) < float(score.attrib["yMin"])
+    ]
+    line_fragments.sort(key=lambda word: (float(word.attrib["yMin"]), float(word.attrib["xMin"])))
+    assert "".join(word.text or "" for word in line_fragments) == "D[O]REVIEW"
+    assert len({word.attrib["yMin"] for word in line_fragments}) == 1
+    name = next(word for word in words if word.text == "林小華楊")
+    assert float(name.attrib["yMax"]) - float(name.attrib["yMin"]) >= 8
+    assert "123456789012" in page
+    assert "OFF (Total)" not in page

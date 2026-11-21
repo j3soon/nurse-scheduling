@@ -2773,6 +2773,17 @@ describe('useScheduleSpec', () => {
     });
   });
 
+  it('generates compact request labels and keeps the unmet request color and note', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const rules = result.current.effectiveExportData.formatting ?? [];
+    expect(rules.flatMap(rule => 'appendText' in rule && rule.appendText ? [rule.appendText] : []))
+      .toEqual([' [{shortShiftType}]']);
+    expect(rules.find(rule => 'note' in rule && rule.note)).toMatchObject({
+      fontColor: '#c00000',
+      when: { preference: { satisfied: false } },
+    });
+  });
+
   it('keeps the generated export layout stable across renders', () => {
     const { result, rerender } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
 

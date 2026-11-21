@@ -28,6 +28,7 @@ from openpyxl import load_workbook
 from openpyxl.xml.functions import DEFUSEDXML
 from ruamel.yaml import YAML
 
+from ..exporter import _content_column_width
 from ..loader import _load_yaml
 from ..models import (
     SHIFT_AFFINITY,
@@ -62,10 +63,9 @@ def _default_export_config(payload: dict) -> dict:
         "weightRange": [-float("inf"), float("inf")],
     }
     formatting = [
-        {"type": "cell", "appendText": " [{shiftType}]", **selector, "when": {"preference": preference}},
+        {"type": "cell", "appendText": " [{shortShiftType}]", **selector, "when": {"preference": preference}},
         {
             "type": "cell",
-            "appendText": " [X]",
             "fontColor": "#c00000",
             "note": {"text": "Weight of unmet single-style request: {totalAbsWeight}"},
             **selector,
@@ -165,6 +165,10 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
                         cell.value = original_id
                         # Assignment infers formulas and error cells, so restore IDs as literal text.
                         cell.data_type = "s"
+            if sheet.sheet_properties.pageSetUpPr.fitToPage:
+                name_column = sheet.column_dimensions["A"]
+                people_cells = (sheet.cell(row, 1) for row in range(3, 3 + people_count))
+                name_column.width = max(name_column.width, _content_column_width(people_cells))
             output = BytesIO()
             workbook.save(output)
             return output.getvalue()

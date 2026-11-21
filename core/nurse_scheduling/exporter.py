@@ -18,15 +18,26 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from copy import copy
+from dataclasses import dataclass
 from io import BytesIO, StringIO
+from math import ceil
+from unicodedata import east_asian_width
 
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Border, PatternFill
 from openpyxl.styles.borders import Side
+from openpyxl.utils import get_column_letter
 
 from . import constants, models
 from .context import Context
+
+
+@dataclass(frozen=True)
+class ScheduleSheetLayout:
+    people_count: int
+    date_count: int
+    has_history: bool
 
 
 def _get_font_color_for_background(hex_color: str) -> str:
@@ -234,9 +245,13 @@ def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_ty
     return count
 
 
-def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: float) -> str:
+def _render_export_template(
+    template: str, *, pref, requested_shift_type: str, off_label: str, total_abs_weight: float
+) -> str:
+    short_shift_type = off_label if requested_shift_type == constants.OFF else requested_shift_type
     return (
         template.replace("{shiftType}", requested_shift_type)
+        .replace("{shortShiftType}", short_shift_type)
         .replace("{weight}", str(pref.weight))
         .replace("{absWeight}", str(abs(pref.weight)))
         .replace("{totalAbsWeight}", str(total_abs_weight))
@@ -346,11 +361,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     # Dictionary to track cells with generated Excel notes
     cell_comment_info = {}
 
-    n_history_cols = 0
-    # Add history columns after the name column (only if prettify is enabled)
-    if prettify:
-        max_history_length = max((len(person.history) for person in people if person.history), default=0)
-        n_history_cols = max_history_length
+    has_history = prettify and any(person.history for person in people)
+    n_history_cols = int(has_history)
+    layout = ScheduleSheetLayout(len(people), len(dates), has_history)
 
     extra_column_rules = export_config.extraColumns if prettify and export_config else []
     extra_row_rules = export_config.extraRows if prettify and export_config else []
@@ -366,13 +379,8 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         dtype=object,
     )
 
-    # Fill history column headers (only if prettify is enabled)
-    if n_history_cols > 0:
-        # - row 0 contains history position labels (H-1, H-2, etc.)
-        # - row 1 contains "History" label
-        for h in range(n_history_cols):
-            df.iloc[0, n_leading_cols + h] = f"H-{n_history_cols - h}"
-            df.iloc[1, n_leading_cols + h] = "History"
+    if has_history:
+        df.iloc[0, n_leading_cols] = "History"
 
     # Fill day numbers and weekdays
     # - row 0 contains day number
@@ -393,22 +401,14 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     for p, person in enumerate(people):
         df.iloc[n_leading_rows + p, 0] = person.id
 
-        # Fill history columns with proper padding (only if prettify is enabled)
-        if n_history_cols > 0:
-            if person.history:
-                history = person.history
-                # Pad with empty strings at the front if history is shorter than n_history_cols
-                padded_history = [""] * max(0, n_history_cols - len(history)) + history
-                for h in range(n_history_cols):
-                    df.iloc[n_leading_rows + p, n_leading_cols + h] = padded_history[h]
-            else:
-                # Fill with empty strings if no history
-                for h in range(n_history_cols):
-                    df.iloc[n_leading_rows + p, n_leading_cols + h] = ""
+        if has_history and person.history:
+            df.iloc[n_leading_rows + p, n_leading_cols] = ",".join(person.history)
 
     annotation_rules = _build_cell_annotation_rules(ctx) if prettify else []
     cell_annotations = {}
     if annotation_rules:
+        shift_ids = (*shift_types, *scenario.shiftTypes.groups)
+        off_label = constants.OFF if any(str(item.id).upper() == "O" for item in shift_ids) else "O"
         for annotation_rule_data in annotation_rules:
             rule = annotation_rule_data["rule"]
             matches_by_cell = {}
@@ -429,6 +429,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     rendered_context = {
                         "pref": pref,
                         "requested_shift_type": requested_shift_type,
+                        "off_label": off_label,
                         "total_abs_weight": total_abs_weight,
                     }
                     if rule.appendText:
@@ -442,6 +443,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                             rule.note.text,
                             pref=pref,
                             requested_shift_type=requested_shift_type,
+                            off_label=off_label,
                             total_abs_weight=total_abs_weight,
                         )
                     )
@@ -587,12 +589,93 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 row_idx = extra_row_start + rule_idx
                 for col_idx in range(len(df.columns)):
                     style_info.setdefault((row_idx + 1, col_idx + 1), {})["bottomBorderColor"] = rule.bottomBorderColor
-        return styled_df, {"comments": cell_comment_info, "styles": style_info}
+        return styled_df, {"comments": cell_comment_info, "styles": style_info, "layout": layout}
 
     style_info = _build_custom_export_style_info(
         ctx, len(df.index), len(df.columns), n_leading_rows, n_leading_cols, n_history_cols
     )
-    return df, {"comments": cell_comment_info, "styles": style_info}
+    return df, {"comments": cell_comment_info, "styles": style_info, "layout": layout}
+
+
+def _wide_character_placeholder(text: str) -> str:
+    return "".join("XX" if ch in "MWmw" or east_asian_width(ch) in {"F", "W"} else ch for ch in text)
+
+
+def _content_column_width(cells) -> int:
+    lines = (line for cell in cells if cell.value is not None for line in str(cell.value).splitlines())
+    return min(255, 2 + max((len(_wide_character_placeholder(line)) for line in lines), default=0))
+
+
+def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout) -> int:
+    first_date_col = 3 if layout.has_history else 2
+    last_date_col = first_date_col + layout.date_count - 1
+    ws.print_area = f"A1:{get_column_letter(last_date_col)}{ws.max_row}"
+    ws.print_title_rows = "1:2"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+    # Use more of the available page width per date on shorter schedules.
+    date_width = min(8.5, 31 * 4.5 / min(layout.date_count, 31))
+    first_footer_row = layout.people_count + 3
+    footer_rows = (first_footer_row, first_footer_row + 1)
+    if layout.date_count == 1:
+        footer_cells = [ws.cell(row, first_date_col) for row in footer_rows]
+        date_width = max(date_width, _content_column_width(footer_cells))
+    for col, cells in enumerate(ws.iter_cols(), start=1):
+        letter = get_column_letter(col)
+        if col == 1:
+            # Allow four full-width characters even when the names are anonymized.
+            width = max(10, _content_column_width(cells[2 : 2 + layout.people_count]))
+        elif first_date_col <= col <= last_date_col:
+            width = date_width
+        else:
+            width = _content_column_width(cells)
+        ws.column_dimensions[letter].width = width
+
+    # Keep long numbers and status text visible without widening the date grid.
+    for row in footer_rows:
+        value = ws.cell(row, first_date_col).value
+        value_width = len(_wide_character_placeholder(str(value)))
+        if value_width > date_width:
+            end_col = min(last_date_col, first_date_col + ceil((value_width + 2) / date_width) - 1)
+            ws.merge_cells(start_row=row, start_column=first_date_col, end_row=row, end_column=end_col)
+
+    # Fit longer entries on one line at the worksheet's existing row height.
+    for row in ws.iter_rows(max_col=last_date_col):
+        for cell in row:
+            if cell.value is not None:
+                alignment = copy(cell.alignment)
+                alignment.wrap_text = None
+                alignment.shrink_to_fit = True
+                alignment.indent = 0
+                cell.alignment = alignment
+
+    return last_date_col
+
+
+def _set_schedule_print_frame(ws, last_date_col: int):
+    # XLSX margins use inches. Leave a 5 mm offset on each side for printing.
+    margin = 5 / 25.4
+    ws.page_margins.left = ws.page_margins.right = margin
+    ws.page_margins.top = ws.page_margins.bottom = margin
+
+    black = Side(style="medium", color="FF000000")
+
+    def set_edge(cell, edge):
+        border = copy(cell.border)
+        setattr(border, edge, black)
+        cell.border = border
+
+    last_row = ws.max_row
+    for col in range(1, last_date_col + 1):
+        set_edge(ws.cell(1, col), "top")
+        set_edge(ws.cell(last_row, col), "bottom")
+    for row in range(1, last_row + 1):
+        set_edge(ws.cell(row, 1), "left")
+        set_edge(ws.cell(row, last_date_col), "right")
 
 
 def export_to_excel(df, output_buffer, cell_export_info=None):
@@ -602,7 +685,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 
     Args:
         output_buffer: BytesIO buffer to write to
-        cell_export_info: Dictionary containing comments/styles from dataframe export
+        cell_export_info: Dictionary containing comments, styles and layout from dataframe export
     """
 
     # Write to a temporary BytesIO buffer first
@@ -619,11 +702,17 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 
     comment_info = {}
     style_info = {}
+    last_date_col = None
     if cell_export_info is not None:
-        if not isinstance(cell_export_info, dict) or not {"comments", "styles"}.issuperset(cell_export_info):
-            raise ValueError("cell_export_info must be a dictionary with optional 'comments' and 'styles' keys")
+        if not isinstance(cell_export_info, dict) or not {"comments", "styles", "layout"}.issuperset(cell_export_info):
+            raise ValueError(
+                "cell_export_info must be a dictionary with optional 'comments', 'styles' and 'layout' keys"
+            )
         comment_info = cell_export_info.get("comments") or {}
         style_info = cell_export_info.get("styles") or {}
+        layout = cell_export_info.get("layout")
+        if layout is not None:
+            last_date_col = _set_schedule_print_layout(ws, layout)
 
     # Put notes in a separate sheet so many annotations remain readable without
     # overlapping native Excel comment popups.
@@ -698,6 +787,9 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                     vertical=existing_border.vertical,
                     horizontal=existing_border.horizontal,
                 )
+
+    if last_date_col is not None:
+        _set_schedule_print_frame(ws, last_date_col)
 
     # Schedule and note text must remain literal, including strings that Excel
     # or the writer recognizes as formulas or error values. Preserve other types.

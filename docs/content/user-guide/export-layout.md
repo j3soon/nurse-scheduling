@@ -30,7 +30,9 @@ for its workbook.
 
 Use `#RRGGBB` color values. Count coefficients are optional and default to `1`.
 Rules apply in displayed order within each section, so later styles can change
-earlier ones.
+earlier ones. In request annotations, `{shiftType}` uses the original target.
+Use `{shortShiftType}` to show `O` for `OFF` when no shift type or group uses
+`O` (case-insensitive).
 
 Select **Add Export Rule** to create a rule. Use the clear and regenerate
 controls to recover the default layout when an experiment is no longer useful.
