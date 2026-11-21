@@ -146,6 +146,39 @@ test('edits one date of a people-group request and compacts it again when descri
   });
 });
 
+test('clears whitespace-only descriptions from the grid and the request list', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    ...scheduleSpec,
+    preferences: [
+      { type: 'shift request', person: ['P1'], date: ['01', '02'], shiftType: ['D'], weight: 2, description: 'Shared note' },
+    ],
+  });
+
+  await page.goto('/shift-requests');
+  const firstCell = page.getByTitle('Click to update preferences for P1 on date 01', { exact: true });
+  const secondCell = page.getByTitle('Click to update preferences for P1 on date 02', { exact: true });
+  await expect(firstCell.getByRole('img', { name: 'Request description' })).toBeVisible();
+  await firstCell.click();
+  const editor = page.getByRole('dialog', { name: 'Shift Preference Matrix' });
+  await editor.getByLabel('Request description for D').fill(' \n ');
+  await editor.getByRole('button', { name: 'Save Preferences' }).click();
+  await expect(firstCell.getByRole('img', { name: 'Request description' })).toHaveCount(0);
+
+  await page.getByText('Shared note', { exact: true }).dblclick();
+  const description = page.getByRole('textbox', { name: 'Request description for all listed dates' });
+  await description.fill(' \n ');
+  await description.press('Enter');
+  await expect(secondCell.getByRole('img', { name: 'Request description' })).toHaveCount(0);
+  await expect(page.getByRole('article')).toHaveCount(1);
+
+  await page.goto('/save-and-load');
+  const preview = page.locator('pre');
+  await expect(preview).toContainText('shift request');
+  expect(yaml.load(await preview.innerText())).toEqual(expect.objectContaining({
+    preferences: [{ type: 'shift request', person: ['P1'], date: ['01', '02'], shiftType: ['D'], weight: 2 }],
+  }));
+});
+
 test('edits descriptions on imported selectors without combining overlapping requests', async ({ page }) => {
   await seedScheduleSpecState(page, {
     ...scheduleSpec,

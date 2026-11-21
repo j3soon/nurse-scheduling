@@ -977,7 +977,7 @@ export default function ShiftRequestsPage() {
           date: [dateId],
           shiftType: [preference.shiftTypeId],
           weight: preference.weight,
-          ...(preference.description ? { description: preference.description } : {}),
+          ...(preference.description?.trim() ? { description: preference.description } : {}),
         }, dateItemIds);
       }
     }
@@ -1080,9 +1080,10 @@ export default function ShiftRequestsPage() {
   };
 
   const saveRequestDescription = (request: ShiftRequestPreference, value: string) => {
-    if (value !== (request.description ?? '')) {
+    const description = value.trim() ? value : undefined;
+    if (description !== request.description) {
       const requests = shiftRequestPreferences.filter(pref => pref !== request);
-      addShiftRequest(requests, { ...request, description: value || undefined }, dateItemIds);
+      addShiftRequest(requests, { ...request, description }, dateItemIds);
       updateShiftRequestPreferences(requests);
     }
     setDescriptionEdit(null);

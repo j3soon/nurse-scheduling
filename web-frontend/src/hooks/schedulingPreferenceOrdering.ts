@@ -63,8 +63,10 @@ export function normalizePreferenceOrder(pref: Preference, state: ScheduleSpecSt
     };
   }
   if (pref.type === SHIFT_REQUEST) {
+    const { description, ...request } = pref;
     return {
-      ...pref,
+      ...request,
+      ...(description?.trim() ? { description } : {}),
       person: sortIdsByEntryOrder(pref.person, peopleEntries),
       date: sortIdsByEntryOrder(pref.date, dateEntries),
       shiftType: sortIdsByEntryOrder(pref.shiftType, shiftTypeEntries),
