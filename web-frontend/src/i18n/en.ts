@@ -205,6 +205,7 @@ export const en = {
   "Back to top": "Back to top",
   "Backend": "Backend",
   "Backend optimization options are unavailable.": "Backend optimization options are unavailable.",
+  "Backend predates the current optimizer API. Update the backend.": "Backend predates the current optimizer API. Update the backend.",
   "Backend returned invalid optimization options.": "Backend returned invalid optimization options.",
   "Backend token": "Backend token",
   "Backend unavailable. Check or select an online backend.": "Backend unavailable. Check or select an online backend.",

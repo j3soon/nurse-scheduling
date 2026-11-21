@@ -183,6 +183,7 @@ export const zhTW: Catalog = {
   "Backend URL already exists.": "後端網址已存在。",
   "Backend URL is required.": "後端網址為必填。",
   "Backend optimization options are unavailable.": "無法取得後端最佳化選項。",
+  "Backend predates the current optimizer API. Update the backend.": "後端版本早於目前的最佳化 API。請更新後端。",
   "Backend returned invalid optimization options.": "後端傳回無效的最佳化選項。",
   "Backend token": "後端權杖",
   "Backend unavailable. Check or select an online backend.": "後端無法使用。請檢查或選取線上的後端。",

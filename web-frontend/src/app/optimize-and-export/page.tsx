@@ -66,6 +66,7 @@ type JsonFetchResult =
 
 type OptimizationOptionsResult =
   | { kind: 'options'; options: OptimizationOptionsResponse }
+  | { kind: 'missing' }
   | { kind: 'invalid' }
   | { kind: 'unauthorized' }
   | { kind: 'unavailable' };
@@ -165,32 +166,9 @@ const INITIAL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 const SERVER_ACTIVITY_REFRESH_MS = 15000;
 const SERVER_OPTIONS_STORAGE_KEY = 'nurse-scheduling-optimize-server-options';
 const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
-// Keep the legacy /schedule_spec/optimize request defaults and validation range for backward compatibility with backends that predate /optimize/options.
-const BACKWARD_COMPATIBLE_OPTIMIZATION_OPTIONS: OptimizationOptionsResponse = {
-  schema_version: 'alpha',
-  solver: {
-    default: 'ortools/cp-sat',
-    choices: [
-      {
-        value: 'ortools/cp-sat',
-        label: 'OR-Tools | CP-SAT',
-        compute: 'cpu',
-        timeout: {
-          default: 300,
-          minimum: 1,
-          maximum: 3600,
-        },
-        controls: {
-          cancel_running: true,
-          finish_now: true,
-        },
-      },
-    ],
-  },
-  prettify: {
-    default: true,
-  },
-};
+// Tagged release backends advertise the same API version but lack this route and
+// /schedule_spec/optimize, so their missing options mark them incompatible.
+const MISSING_OPTIMIZATION_OPTIONS_ERROR = "Backend predates the current optimizer API. Update the backend.";
 
 function createServerEntry(
   server: StoredOptimizeServerEntry,
@@ -493,9 +471,7 @@ async function fetchOptimizationOptions(
     if (result.status === 401) {
       return { kind: 'unauthorized' };
     }
-    return result.status === 404
-      ? { kind: 'options', options: BACKWARD_COMPATIBLE_OPTIMIZATION_OPTIONS }
-      : { kind: 'unavailable' };
+    return result.status === 404 ? { kind: 'missing' } : { kind: 'unavailable' };
   }
   if (result.kind === 'unavailable') {
     return result;
@@ -958,7 +934,7 @@ export default function OptimizeAndExportPage() {
           || (options.kind === 'unavailable' && currentServer.options !== null);
         const status: ServerStatus = result.status === 'offline'
           ? 'offline'
-          : result.status === 'incompatible'
+          : result.status === 'incompatible' || options.kind === 'missing'
             ? 'incompatible'
             : options.kind === 'unauthorized'
               ? 'unauthorized'
@@ -987,9 +963,11 @@ export default function OptimizeAndExportPage() {
               : options.kind === 'unauthorized'
                 // Credential problems are shown by the Status icon, not by this line.
                 ? null
-                : options.kind === 'invalid'
-                  ? "Backend returned invalid optimization options."
-                  : "Optimization options are temporarily unavailable.",
+                : options.kind === 'missing'
+                  ? MISSING_OPTIMIZATION_OPTIONS_ERROR
+                  : options.kind === 'invalid'
+                    ? "Backend returned invalid optimization options."
+                    : "Optimization options are temporarily unavailable.",
           lastCheckedAt: new Date(),
           pingMs,
         };

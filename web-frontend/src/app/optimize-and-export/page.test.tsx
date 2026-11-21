@@ -508,42 +508,22 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText('Activity unavailable')).toHaveLength(2);
   });
 
-  it('uses default options and reports an unavailable current submission route without a legacy retry', async () => {
-    const user = userEvent.setup();
+  it('marks a tagged release backend without the options route incompatible before submission', async () => {
+    // A v0.2.0 backend passes the /info checks but serves neither current route.
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockImplementation((url: string) => {
-      if (url.endsWith('/optimize/options')) {
-        return Promise.resolve({ ok: false, status: 404 });
-      }
-      if (url.endsWith('/schedule_spec/optimize')) {
-        return Promise.resolve({ ok: false, status: 404, text: vi.fn().mockResolvedValue('Not Found') });
-      }
-      return Promise.resolve(healthyResponse());
-    });
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/optimize/options') ? { ok: false, status: 404 } : healthyResponse()
+    ));
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    expect(screen.queryByText(/backend is too old/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveValue(300);
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('min', '1');
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('max', '3600');
-    expect(screen.getByRole('checkbox', { name: /prettify xlsx/i })).toBeChecked();
-
-    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `${LOCAL_API_URL}/schedule_spec/optimize`,
-      expect.objectContaining({ method: 'POST' })
-    ));
-    const optimizeRequest = fetchMock.mock.calls.find(([url]) => url === `${LOCAL_API_URL}/schedule_spec/optimize`);
-    const requestBody = optimizeRequest?.[1]?.body as FormData;
-    expect(requestBody.get('schedule_spec_file')).toBeInstanceOf(File);
-    expect(requestBody.get('file')).toBeNull();
-    expect(requestBody.get('solver')).toBe('ortools/cp-sat');
-    expect(requestBody.get('timeout')).toBe('300');
-    expect(requestBody.get('prettify')).toBe('true');
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      'Incompatible. Backend predates the current optimizer API. Update the backend.'
+    );
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/schedule_spec/optimize'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => url === `${LOCAL_API_URL}/optimize`)).toBe(false);
   });
 
