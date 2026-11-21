@@ -206,6 +206,33 @@ test('quick add preserves descriptions and separate weights on an already reques
   await expect(sameDate).toHaveCount(1);
 });
 
+test('saves the inline description before applying Quick Add in the grid', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    ...scheduleSpec,
+    preferences: [
+      { type: 'shift request', person: ['P1'], date: ['01'], shiftType: ['D'], weight: 2, description: 'Old note' },
+    ],
+  });
+
+  await page.goto('/shift-requests');
+  await expect(page.getByText('Old note', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Quick Add Preference' }).click();
+  await page.getByRole('checkbox', { name: 'D', exact: true }).check();
+  await page.getByPlaceholder('Enter weight (positive for preference, negative for avoidance, or Infinity/-Infinity)').fill('3');
+  await page.getByText('Old note', { exact: true }).dblclick();
+  await page.getByRole('textbox', { name: 'Request description for all listed dates' }).fill('Pending note');
+
+  const target = page.getByTitle('Click or drag to update preferences for P1 on date 02');
+  await target.click();
+  await expect(target.getByText('D (+3)')).toBeVisible();
+  const request = page.getByRole('article').filter({ hasText: 'Pending note' });
+  await expect(request).toContainText('Date: 01');
+
+  await page.keyboard.press('Control+z');
+  await expect(target.getByText('D (+3)')).toHaveCount(0);
+  await expect(request).toContainText('Date: 01');
+});
+
 test.describe('request descriptions on a phone', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
 

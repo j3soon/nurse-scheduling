@@ -1729,7 +1729,17 @@ export default function ShiftRequestsPage() {
             </div>
 
             <div ref={mainScrollContainerRef} className="overflow-x-auto">
-              <table ref={tableRef} className="min-w-full divide-y divide-gray-200">
+              <table
+                ref={tableRef}
+                className="min-w-full divide-y divide-gray-200"
+                onPointerDownCapture={() => {
+                  // Grid drag handling prevents default mouse-down behavior.
+                  // Save the inline draft before that handler changes requests.
+                  if (descriptionEdit && document.activeElement instanceof HTMLTextAreaElement) {
+                    document.activeElement.blur();
+                  }
+                }}
+              >
                 {/* Header */}
                 <thead className="bg-gray-50">
                   {renderTableHeader()}
