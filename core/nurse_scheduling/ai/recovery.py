@@ -36,7 +36,7 @@ from .history import ChatHistory, EntryRow, EventRow, RunKind, RunStatus
 from .optimizer import OptimizerArtifact, SessionOptimization
 from .provider import TokenUsage
 from .session_event_stream import SessionEvent, SessionEventStream, fold_recovery
-from .session_events import AgentSessionTerminalEvent
+from .session_events import AgentSessionTerminalEvent, ScheduleSpecAppliedEvent
 from .sessions import SessionStore
 from .workspace import SandboxAttachment, SandboxAttachmentUnavailableError
 
@@ -358,7 +358,7 @@ class SessionRecovery:
         usage: TokenUsage | None,
         committed: bool,
         *,
-        schedule_spec_change: dict[str, Any] | None = None,
+        schedule_spec_change: ScheduleSpecAppliedEvent | None = None,
     ) -> bool:
         """Save the outcome with the resulting state. A failed write is retried by the next save."""
         if self.history is None:
@@ -479,7 +479,7 @@ class SessionRecovery:
         run_id: str,
         kind: str,
         status: str,
-        schedule_spec_change: dict[str, Any] | None = None,
+        schedule_spec_change: ScheduleSpecAppliedEvent | None = None,
     ) -> None:
         """Publish the terminal event a stored run lacks. A running run was interrupted by the restart."""
         terminal: AgentSessionTerminalEvent
@@ -498,7 +498,8 @@ class SessionRecovery:
             terminal = {"type": "stale", "message": STALE_RUN_ERROR}
         else:
             terminal = {"type": "error", "message": "The AI response failed."}
-        session.publish({**terminal, "run_id": run_id})
+        terminal["run_id"] = run_id
+        session.publish(terminal)
 
     def _observe(self, session_id: str, event: SessionEvent) -> None:
         """Queue a published event for storage. Optimizer progress stays transient."""

@@ -61,7 +61,9 @@ from .session_events import (
     OptimizationEvent,
     OptimizationProgressEvent,
     OptimizerUpdate,
+    ResponseEndEvent,
     RunDoneEvent,
+    ScheduleSpecAppliedEvent,
 )
 from .transcript import (
     AgentMessage,
@@ -240,7 +242,7 @@ class RunRecorder(Protocol):
         usage: TokenUsage | None,
         committed: bool,
         *,
-        schedule_spec_change: dict[str, Any] | None = None,
+        schedule_spec_change: ScheduleSpecAppliedEvent | None = None,
     ) -> bool: ...
 
 
@@ -641,7 +643,11 @@ class AgentSession:
     def publish_optimizer_update(self, update: OptimizerUpdate) -> None:
         """Project independent job updates onto the same stream as agent output."""
         if "progress" in update:
-            self.publish(OptimizationProgressEvent(type="optimization_progress", **update))
+            progress = update["progress"]
+            assert isinstance(progress, dict)
+            self.publish(
+                OptimizationProgressEvent(type="optimization_progress", job_id=update["job_id"], progress=progress)
+            )
         else:
             self.publish(OptimizationEvent(type="optimization", **update))
 
@@ -833,10 +839,20 @@ class AgentSession:
         previous = output.calls.get(call.id)
         if call == previous:
             return
-        data = asdict(call)
-        data["call_id"] = data.pop("id")
         publication = events.emit(
-            {"type": "provider_call", **data, "reasoning": (runtime.selection or {}).get("reasoning", "default")}
+            {
+                "type": "provider_call",
+                "call_id": call.id,
+                "model": call.model,
+                "reasoning": (runtime.selection or {}).get("reasoning", "default"),
+                "status": call.status,
+                "cost_usd": call.cost_usd,
+                "usage": asdict(call.usage) if call.usage is not None else None,
+                "provider_call_id": call.provider_call_id,
+                "response_model": call.response_model,
+                "streaming_seconds": call.streaming_seconds,
+                "time_to_first_output_seconds": call.time_to_first_output_seconds,
+            }
         )
         try:
             saved = await runtime.recorder.save_provider_call(self.id, publication)
@@ -926,7 +942,7 @@ class AgentSession:
                             events.emit(wire)
                         if isinstance(event, AgentCompactionEnd):
                             skipped = event.skipped
-                        if isinstance(event, AgentCompactionEnd) and event.success:
+                        if isinstance(event, AgentCompactionEnd) and event.success and event.used_chars is not None:
                             events.emit(
                                 {
                                     "type": "context_usage",
@@ -1002,7 +1018,10 @@ class AgentSession:
                         if isinstance(event, AgentContextUsage) or (
                             isinstance(event, AgentCompactionEnd) and event.success
                         ):
-                            context_chars = event.used_chars
+                            used_chars = event.used_chars
+                            if used_chars is None:
+                                continue
+                            context_chars = used_chars
                             events.emit(
                                 {
                                     "type": "context_usage",
@@ -1049,7 +1068,7 @@ class AgentSession:
     async def _publish_completion(
         self,
         run: AgentRun,
-        schedule_spec_change: dict[str, Any] | None,
+        schedule_spec_change: ScheduleSpecAppliedEvent | None,
         completion: RunCompletion,
         output: RunOutput,
         events: RunEvents,
@@ -1142,13 +1161,12 @@ class AgentSession:
                 committed = runtime.store.finish(self.id, retained_entries(entries), snapshot=snapshot).run_saved
             else:
                 runtime.store.abort(self.id, snapshot)
-            events.emit(
-                {
-                    "type": "response_end",
-                    "stop_reason": stop_reason,
-                    **({"context_note": entries[-1].text} if committed else {}),
-                }
-            )
+            response: ResponseEndEvent = {"type": "response_end", "stop_reason": stop_reason}
+            if committed:
+                note = entries[-1]
+                assert isinstance(note, AppEventEntry)
+                response["context_note"] = note.text
+            events.emit(response)
         if history_started:
             # Messages the run loop has not saved yet, including an interrupted response.
             self._save_run_messages(run.id, entries if compact_only else entries[1:])
@@ -1163,12 +1181,13 @@ class AgentSession:
             event = output.consume(
                 AgentCompactionEnd(output.compaction.reason, False, output.compaction.tokens_before, aborted=stopped)
             )
-            events.emit(event)
+            if event is not None:
+                events.emit(event)
         if outcome.terminal is not None:
             events.emit(outcome.terminal)
         try:
             history_saved = None
-            schedule_spec_change = None
+            schedule_spec_change: ScheduleSpecAppliedEvent | None = None
             if (
                 outcome.completion is not None
                 and outcome.completion.schedule_spec_applied
@@ -1312,7 +1331,13 @@ class AgentSession:
                     "optimizer" if background else "question",
                 )
                 if runtime.selection is not None:
-                    events.emit({"type": "model_selection", **runtime.selection})
+                    events.emit(
+                        {
+                            "type": "model_selection",
+                            "model": runtime.selection["model"],
+                            "reasoning": runtime.selection.get("reasoning", "default"),
+                        }
+                    )
                 await self._execute_run(snapshot, messages, artifact, runtime, output, events, context_chars)
                 run_entries = [run_entries[0], *self.agent.state.messages]
             completion = self._commit_run(run, snapshot, run_entries, output, store)

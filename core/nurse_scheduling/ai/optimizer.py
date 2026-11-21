@@ -23,7 +23,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Protocol
@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from .config import MAX_OPTIMIZER_RESULT_BYTES, MAX_OPTIMIZER_RUNS_PER_SESSION, MAX_SCHEDULE_BYTES
 from .optimizer_privacy import OptimizerResultError, prepare_optimizer_spec, restore_people_ids
 from .result_context import build_request_audit, build_result_context
+from .session_events import OptimizerTiming, OptimizerUpdate
 
 OPTIMIZER_TOOL = "optimizer"
 WORKSPACE_OPTIMIZER_RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
@@ -141,7 +142,7 @@ class SessionOptimization:
     finish_now_requested_by: Literal["user", "agent"] | None = None
     control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def completion_details(self) -> dict[str, Any]:
+    def completion_details(self) -> OptimizerTiming:
         """Keep timing and early-completion attribution in events, reviews, and archives."""
         payload = self.payload
         elapsed = (
@@ -179,7 +180,7 @@ class OptimizerArtifact:
 
 
 CompletionCallback = Callable[[str, str, OptimizerArtifact | None, dict[str, str] | None], Awaitable[None]]
-UpdateCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+UpdateCallback = Callable[[str, OptimizerUpdate], Awaitable[None]]
 
 
 @dataclass
@@ -708,7 +709,7 @@ class SessionOptimizer:
                 self._cached_artifact_bytes -= job.artifact.retained_bytes
                 self._artifact_order.remove(job_id)
 
-    def _start_task(self, coroutine: Awaitable[None]) -> asyncio.Task[None]:
+    def _start_task(self, coroutine: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine)
         self._tasks.add(task)
 

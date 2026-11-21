@@ -213,7 +213,15 @@ class HistoryTrimmedEvent(RunFields):
     dropped: int
 
 
-class OptimizerStateUpdate(TypedDict):
+class OptimizerTiming(TypedDict):
+    created_at: str | None
+    started_at: str | None
+    finished_at: str | None
+    elapsed_seconds: float | None
+    finish_now_requested_by: Literal["user", "agent"] | None
+
+
+class OptimizerStateUpdate(OptimizerTiming):
     """Job state shared by the optimizer callback and the public session event."""
 
     job_id: str
@@ -224,6 +232,7 @@ class OptimizerStateUpdate(TypedDict):
     result: dict[str, Any] | None
     error: dict[str, Any] | None
     downloadable: bool
+    controls: dict[str, Any]
 
 
 class OptimizerProgressUpdate(TypedDict):

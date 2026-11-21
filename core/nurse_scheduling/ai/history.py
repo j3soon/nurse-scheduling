@@ -38,6 +38,7 @@ from ..server.retry import RepeatedFailure
 from .context import ABORTED_RESPONSE_HISTORY, interrupted_entries
 from .costs import CostTotals
 from .provider import ProviderCall, TokenUsage
+from .session_events import ScheduleSpecAppliedEvent
 from .transcript import (
     AgentMessage,
     AppEventEntry,
@@ -267,7 +268,7 @@ class ChatHistory:
         session_id: str,
         state: SessionState,
         entries: Sequence[EntryRow] = (),
-        schedule_spec_change: dict[str, Any] | None = None,
+        schedule_spec_change: ScheduleSpecAppliedEvent | None = None,
         uploads: Sequence[SandboxAttachment] = (),
         downloads: dict[str, bytes | None] | None = None,
         files: Sequence[dict] = (),
