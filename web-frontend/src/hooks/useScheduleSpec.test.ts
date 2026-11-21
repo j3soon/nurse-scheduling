@@ -2236,6 +2236,30 @@ describe('useScheduleSpec', () => {
     });
   });
 
+  it('orders tied shift requests by description, including requests with infinite weight', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const request = { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['D'], weight: Infinity } as const;
+
+    act(() => {
+      result.current.loadFromYaml({
+        preferences: [
+          { ...request, description: 'Zebra' },
+          { ...request, description: 'appointment' },
+          { ...request },
+          { ...request, weight: 2, description: 'Weekend' },
+        ],
+      });
+    });
+
+    const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST);
+    expect(requests.map(pref => [pref.weight, pref.description])).toEqual([
+      [2, 'Weekend'],
+      [Infinity, undefined],
+      [Infinity, 'appointment'],
+      [Infinity, 'Zebra'],
+    ]);
+  });
+
   it('accepts SHIFT_REQUEST entries with multiple people or shift types', async () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
