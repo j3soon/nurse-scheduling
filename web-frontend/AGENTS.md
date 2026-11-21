@@ -361,7 +361,8 @@ do not discard a feedback draft.
   accepts numeric prefixes of dates and malformed values, so it cannot validate
   those counts.
 - ESLint uses `next/core-web-vitals` plus TypeScript rules from
-  `eslint.config.mjs`.
+  `eslint.config.mjs`. Production TypeScript also checks for floating promises.
+  Mark intentional background calls with `void` when they handle their own errors.
 - Every frontend test file (`*.test.ts` and `*.test.tsx`) must include the AGPL
   header documented in `../docs/agent-license-headers.md`.
 

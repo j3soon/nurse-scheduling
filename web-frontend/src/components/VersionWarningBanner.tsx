@@ -44,7 +44,7 @@ export default function VersionWarningBanner() {
       }
     };
 
-    loadLatestTag();
+    void loadLatestTag();
   }, []);
 
   // Determine version status:

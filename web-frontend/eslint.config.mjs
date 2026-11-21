@@ -11,6 +11,15 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
   },
 }, {
+  files: ["src/**/*.{ts,tsx}"],
+  ignores: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+  languageOptions: {
+    parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+  },
+  rules: {
+    "@typescript-eslint/no-floating-promises": "error",
+  },
+}, {
   ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "coverage/**", "coverage-e2e/**", ".e2e-coverage/**", "test-results/**", "playwright-report/**", "next-env.d.ts"]
 }];
 
