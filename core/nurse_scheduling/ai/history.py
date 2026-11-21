@@ -30,6 +30,7 @@ from typing import Any, Literal
 
 import anyio
 import psycopg
+from anyio.to_thread import run_sync
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 
@@ -559,7 +560,7 @@ class ChatHistory:
         """Run a lookup. A failure becomes a RuntimeError that callers map to HTTP 503."""
         try:
             with anyio.CancelScope(shield=True):
-                return await anyio.to_thread.run_sync(getattr(self, operation), *args)
+                return await run_sync(getattr(self, operation), *args)
         except (psycopg.Error, OSError):
             logger.exception("AI history %s failed", operation)
             raise RuntimeError(RECOVERY_UNAVAILABLE) from None
@@ -568,7 +569,7 @@ class ChatHistory:
         """Run a write. A failure is logged with its exception and returns False."""
         try:
             with anyio.CancelScope(shield=True):
-                await anyio.to_thread.run_sync(lambda: getattr(self, operation)(*args, **kwargs))
+                await run_sync(lambda: getattr(self, operation)(*args, **kwargs))
             if failures is not None:
                 ended_failures = failures.recovered()
                 if ended_failures:
@@ -609,7 +610,7 @@ def _recover_run_context(connection, session_id: str, run_id: str) -> None:
     )
     final_answer = last is not None and isinstance(last[1], AssistantMessage) and not last[1].tool_calls
     # Final validation may not have run before the process stopped, and an interrupted run's summary is not applied.
-    marked = [
+    marked: list[EntryRow] = [
         (seq, run_id, replace(entry, valid=False))
         for (seq, _kind, _payload), entry in zip(rows, original, strict=True)
         if isinstance(entry, CompactionEntry) and entry.valid

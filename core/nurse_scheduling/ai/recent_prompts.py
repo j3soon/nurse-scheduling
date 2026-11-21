@@ -28,7 +28,7 @@ from typing import TextIO
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 
 from ..sentry import flush_sentry, init_sentry
 from ..version import get_app_version
@@ -112,7 +112,7 @@ def _main() -> None:
         parser.error("AI_HISTORY_POSTGRES_URL is required")
     try:
         options = conninfo_to_dict(database_url).get("options", "")
-        with psycopg.connect(
+        with psycopg.Connection[DictRow].connect(
             database_url,
             connect_timeout=5,
             options=f"{options} -c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=5000",

@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from time import monotonic
-from typing import BinaryIO
+from typing import IO, BinaryIO
 from urllib.parse import quote
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
@@ -188,7 +188,7 @@ def _documents(snapshot, files):
     return html, markdown
 
 
-def write_chat_archive(history: ChatHistory, session_id: str, output: BinaryIO, *, owner: str | None = None) -> None:
+def write_chat_archive(history: ChatHistory, session_id: str, output: IO[bytes], *, owner: str | None = None) -> None:
     """Write one snapshot without loading a whole file or the ZIP into memory."""
     with history._connect() as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
