@@ -23,9 +23,12 @@ import { SHIFT_REQUEST, type Preference } from '@/types/scheduling';
 
 export function recoverShiftRequestDescriptions(preferences: Preference[]): Preference[] {
   return preferences.map(preference => {
-    const description = preference.description;
-    // Older YAML imports could save unquoted description values as numbers or booleans.
+    const description: unknown = preference.description;
+    // YAML can parse unquoted descriptions as numbers, booleans, or timestamps.
     if (preference.type !== SHIFT_REQUEST || description == null || typeof description === 'string') return preference;
+    if (description instanceof Date) {
+      return { ...preference, description: description.toISOString() };
+    }
     return {
       ...preference,
       description: typeof description === 'object' ? JSON.stringify(description) : String(description),
