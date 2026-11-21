@@ -33,6 +33,7 @@ import {
   SHIFT_TYPE_SUCCESSIONS,
   ShiftRequestPreference,
 } from '@/types/scheduling';
+import { anonymizeScheduleSpecStateWithMapping } from '@/utils/anonymizeScheduleSpecState';
 import { ALL, OFF } from '@/utils/keywords';
 import { TAIWAN_FREEDAY_GROUP_ID, TAIWAN_WORKDAY_GROUP_ID } from '@/utils/taiwanHolidays';
 
@@ -1077,6 +1078,15 @@ describe('useScheduleSpec', () => {
     expect(result.current.peopleData.items.some(item => item.id === '100')).toBe(true);
     expect(result.current.shiftTypeData.items.some(item => item.id === '300')).toBe(true);
     expect(result.current.dateData.groups).toContainEqual({ id: '200', members: ['01'], description: 'Date Group' });
+    expect(result.current.peopleData.groups).toContainEqual({ id: '200', members: ['100'], description: '' });
+    expect(result.current.shiftTypeData.groups).toContainEqual({ id: '400', members: ['300'], description: '' });
+    // Optimization anonymizes people by default, which matches string member IDs only.
+    const anonymized = anonymizeScheduleSpecStateWithMapping(result.current.savedState, {
+      anonymizePeopleItems: true,
+      anonymizePeopleGroups: false,
+      removeDescriptions: true,
+    });
+    expect(anonymized.state.people.groups).toContainEqual({ id: '200', members: ['P1'] });
 
     const requirementPref = result.current.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as
       | { date?: string[]; shiftType: string[]; qualifiedPeople: string[] }
@@ -1225,6 +1235,35 @@ describe('useScheduleSpec', () => {
         expect.arrayContaining([{ id: 'D', description: '' }]),
       );
     });
+  });
+
+  it('repairs numeric group members saved by older YAML imports', async () => {
+    const savedState = {
+      apiVersion: 'alpha',
+      description: '',
+      dates: { range: {}, items: [], groups: [] },
+      people: { items: [{ id: '1' }, { id: '2' }], groups: [{ id: 'Team A', members: [1, 2] }] },
+      shiftTypes: { items: [{ id: '10' }], groups: [{ id: 'Shifts', members: [10] }] },
+      preferences: [],
+    };
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ state: savedState, history: [savedState], currentHistoryIndex: 0 }),
+    );
+
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+
+    await waitFor(() => {
+      expect(result.current.peopleData.groups).toEqual(
+        expect.arrayContaining([{ id: 'Team A', members: ['1', '2'], description: '' }]),
+      );
+    });
+    expect(result.current.shiftTypeData.groups).toEqual(
+      expect.arrayContaining([{ id: 'Shifts', members: ['10'], description: '' }]),
+    );
+    expect(loadStateFromStorage().history[0].people.groups).toEqual(
+      expect.arrayContaining([{ id: 'Team A', members: ['1', '2'], description: '' }]),
+    );
   });
 
   it('sorts SHIFT_REQUEST preferences and date arrays in updatePreferencesByType', async () => {
