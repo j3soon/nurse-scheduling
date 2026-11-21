@@ -25,7 +25,6 @@ extend-select = ["B904", "B905"]
 include = ["nurse_scheduling"]
 # Remove each temporary exclusion as the file passes type checking.
 exclude = [
-    "nurse_scheduling/ai/validation.py",
     "nurse_scheduling/sentry.py",
     "nurse_scheduling/solver_ortools_linear.py",
     "nurse_scheduling/solver_ortools_mathopt.py",
