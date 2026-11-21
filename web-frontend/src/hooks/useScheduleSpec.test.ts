@@ -2236,6 +2236,27 @@ describe('useScheduleSpec', () => {
     });
   });
 
+  it('restores the Schedule Spec and Undo history with a numeric request description', () => {
+    const saved = createPopulatedHistoryState();
+    const request = { type: SHIFT_REQUEST, person: ['Person 1'], date: ['01'], shiftType: ['D'], weight: 2 };
+    const previous = {
+      ...saved.state,
+      description: 'Previous Schedule Spec',
+      preferences: [{ ...request, description: 'Appointment' }, { ...request, description: 123 }],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      state: { ...saved.state, description: 'Current Schedule Spec' },
+      history: [previous, saved.state],
+      currentHistoryIndex: 1,
+    }));
+
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(result.current.descriptionData).toBe('Current Schedule Spec');
+    act(() => result.current.undo());
+    expect(result.current.descriptionData).toBe('Previous Schedule Spec');
+    expect(result.current.preferences.map(pref => pref.description)).toEqual(['123', 'Appointment']);
+  });
+
   it('orders tied shift requests by description, including requests with infinite weight', () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const request = { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['D'], weight: Infinity } as const;
