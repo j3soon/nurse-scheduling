@@ -40,6 +40,10 @@ const scheduleSpec = {
 };
 
 test('keeps the grid at the same scroll position after saving or canceling the dialog', async ({ page }) => {
+  await page.route('https://api.github.com/repos/j3soon/nurse-scheduling/tags', route => route.fulfill({
+    json: [{ name: 'v999.0.0' }],
+    headers: { 'access-control-allow-origin': '*' },
+  }));
   await seedScheduleSpecState(page, {
     ...scheduleSpec,
     people: {
@@ -52,6 +56,8 @@ test('keeps the grid at the same scroll position after saving or canceling the d
   });
 
   await page.goto('/shift-requests');
+  // A late version banner shifts the document while the grid stays in place.
+  await expect(page.getByTitle('Dismiss version warning')).toBeVisible();
   const cell = page.getByTitle('Click to update preferences for P20 on date 02', { exact: true });
   await cell.evaluate(element => element.scrollIntoView({ block: 'center' }));
   for (const action of ['Save Preferences', 'Cancel']) {
