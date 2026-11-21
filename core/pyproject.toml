@@ -23,6 +23,9 @@ extend-select = ["B904", "B905"]
 
 [tool.ty.src]
 include = [
+    "nurse_scheduling/ai/session_event_projection.py",
+    "nurse_scheduling/ai/session_event_stream.py",
+    "nurse_scheduling/ai/session_events.py",
     "nurse_scheduling/constants.py",
     "nurse_scheduling/context.py",
     "nurse_scheduling/errors.py",

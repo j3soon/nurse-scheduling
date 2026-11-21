@@ -32,7 +32,7 @@ directory. Project packages are installed system-wide, so run `python`,
 - `pytest tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
-- `ty check --python "$(command -v python)"`: type-check the scheduling modules
+- `ty check --python "$(command -v python)"`: type-check the core modules
   listed in `pyproject.toml` using the same Python environment as the tests.
 
 After modifying core code, run Ruff, ty, and affected pytest suites before finishing.

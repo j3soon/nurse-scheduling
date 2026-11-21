@@ -46,7 +46,7 @@ jobs:
         run: sudo apt-get install -y glpk-utils
       - name: Install dependencies
         run: cd core && python -m pip install -r requirements-optional.txt
-      - name: Type-check core scheduling modules
+      - name: Type-check core modules
         run: cd core && ty check --python "$(command -v python)"
       - name: Test with pytest and collect coverage
         run: cd core && pytest --cov=nurse_scheduling --durations=20 --solver-profile=${{ github.event_name == 'schedule' && 'all' || inputs.solver_profile || 'primary' }} tests --ignore=tests/test_schedule_pulp_cuopt.py

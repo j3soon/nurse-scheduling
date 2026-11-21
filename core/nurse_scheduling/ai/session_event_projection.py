@@ -42,7 +42,16 @@ from .context import interrupted_entries
 from .costs import CostTotals
 from .provider import ProviderCall, ProviderRetry, TokenUsage
 from .session_event_stream import SessionEvent
-from .session_events import AgentSessionEvent, AgentSessionRunEvent, AgentSessionTerminalEvent, TextEvent, ToolEndEvent
+from .session_events import (
+    AgentSessionEvent,
+    AgentSessionRunEvent,
+    AgentSessionTerminalEvent,
+    CompactionEndEvent,
+    ContextUsageEvent,
+    GenerationProgressEvent,
+    TextEvent,
+    ToolEndEvent,
+)
 from .transcript import AgentMessage
 from .workspace import AgentAnalysis, AgentDownload, AgentScheduleSpecChange
 
@@ -113,7 +122,7 @@ class RunOutput:
             if event.success:
                 self.last_call = None
                 self.context_estimate = event.estimated_tokens_after
-            result = {
+            result: CompactionEndEvent = {
                 "type": "compaction_end",
                 "reason": event.reason,
                 "success": event.success,
@@ -177,8 +186,8 @@ class RunEvents:
         self.run_id = run_id
         self._publish = publish
         self._pending: TextEvent | None = None
-        self._pending_usage: AgentSessionRunEvent | None = None
-        self._pending_progress: AgentSessionRunEvent | None = None
+        self._pending_usage: ContextUsageEvent | None = None
+        self._pending_progress: GenerationProgressEvent | None = None
         self._timer: asyncio.TimerHandle | None = None
         self._terminal: AgentSessionTerminalEvent | None = None
 
