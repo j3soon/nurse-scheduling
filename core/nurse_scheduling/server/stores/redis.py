@@ -22,7 +22,7 @@ import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any, overload
+from typing import Any, cast, overload
 from uuid import uuid4
 
 import redis
@@ -124,6 +124,12 @@ def _decode_event(raw_id: bytes, fields: Mapping[bytes, bytes]) -> JobEvent:
         data=json.loads(_decode(fields.get(b"data")) or "{}"),
         occurred_at=datetime.fromisoformat(_decode(fields.get(b"occurred_at")) or ""),
     )
+
+
+def _sorted_set_ids(client: redis.Redis, key: str, start: int = 0, end: int = -1) -> list[str]:
+    """Read member IDs without scores from a sorted set."""
+    members = cast(list[bytes], client.zrange(key, start, end))
+    return [_decode(member) for member in members]
 
 
 class RedisJobStore:
@@ -279,8 +285,7 @@ class RedisJobStore:
                     retained_count = transaction.zcard(self._jobs_key)
                     if retained_count >= limits.max_retained:
                         finished_order = {
-                            _decode(raw_id): rank
-                            for rank, raw_id in enumerate(transaction.zrange(self._finished_key, 0, -1))
+                            job_id: rank for rank, job_id in enumerate(_sorted_set_ids(transaction, self._finished_key))
                         }
                         terminal = sorted(
                             (candidate for candidate in self._all_jobs() if candidate.state.terminal),
@@ -298,7 +303,9 @@ class RedisJobStore:
                             raise JobCapacityError("Too many jobs are retained")
                         prune_ids = [candidate.id for candidate in terminal[:prune_count]]
 
-                    queued_entries = transaction.zrange(self._queue_key, 0, -1, withscores=True)
+                    queued_entries = cast(
+                        list[tuple[bytes, float]], transaction.zrange(self._queue_key, 0, -1, withscores=True)
+                    )
                     # Append after legacy timestamp scores too. WATCH serializes concurrent admissions.
                     queue_score = queued_entries[-1][1] + 1 if queued_entries else 0
                     queue_order = [_decode(raw_id) for raw_id, _score in queued_entries]
@@ -354,6 +361,7 @@ class RedisJobStore:
         content = self._redis.get(self._input_key(job_id))
         if content is None:
             raise JobInputNotFoundError("Job input was not found")
+        assert isinstance(content, bytes)
         return content
 
     def get_artifact(self, job_id: str, name: str) -> StoredArtifact:
@@ -370,6 +378,7 @@ class RedisJobStore:
         content = self._redis.get(self._artifact_key(job_id))
         if content is None:
             raise JobArtifactNotFoundError("Job artifact was not found")
+        assert isinstance(content, bytes)
         metadata = self._redis.hgetall(self._artifact_metadata_key(job_id))
         stored_name = _decode(metadata.get(b"name")) or name
         media_type = _decode(metadata.get(b"media_type")) or "application/octet-stream"
@@ -421,11 +430,11 @@ class RedisJobStore:
                     ):
                         transaction.unwatch()
                         return None
-                    queued = transaction.zrange(self._queue_key, 0, 0)
+                    queued = _sorted_set_ids(transaction, self._queue_key, 0, 0)
                     if not queued:
                         transaction.unwatch()
                         return None
-                    job_id = _decode(queued[0])
+                    job_id = queued[0]
                     job_key = self._job_key(job_id)
                     transaction.watch(job_key)
                     raw = transaction.get(job_key)
@@ -467,7 +476,7 @@ class RedisJobStore:
                         },
                         occurred_at=started_at,
                     )
-                    remaining_ids = [_decode(raw_id) for raw_id in transaction.zrange(self._queue_key, 1, -1)]
+                    remaining_ids = _sorted_set_ids(transaction, self._queue_key, start=1)
                     transaction.multi()
                     transaction.set(job_key, self._serialize_job(claimed))
                     transaction.zrem(self._queue_key, job_id)
@@ -635,15 +644,17 @@ class RedisJobStore:
                     finished_score = None
                     if updated_job.state.terminal and not current.state.terminal:
                         transaction.watch(self._finished_key)
-                        finished_tail = transaction.zrange(self._finished_key, -1, -1, withscores=True)
+                        finished_tail = cast(
+                            list[tuple[bytes, float]], transaction.zrange(self._finished_key, -1, -1, withscores=True)
+                        )
                         finished_score = finished_tail[0][1] + 1 if finished_tail else 0
                     remaining_queue_ids: list[str] = []
                     if current.state == JobState.QUEUED and updated_job.state != JobState.QUEUED:
                         transaction.watch(self._queue_key)
                         remaining_queue_ids = [
                             queued_id
-                            for raw_id in transaction.zrange(self._queue_key, 0, -1)
-                            if (queued_id := _decode(raw_id)) != updated_job.id
+                            for queued_id in _sorted_set_ids(transaction, self._queue_key)
+                            if queued_id != updated_job.id
                         ]
                     worker_id_to_release: str | None = None
                     if updated_job.state.terminal and updated_job.worker_id is not None:
@@ -691,7 +702,10 @@ class RedisJobStore:
             redis.RedisError: If a Redis operation fails.
         """
         terminal = self.get(job_id).state.terminal
-        streams = self._redis.xread({self._events_key(job_id): _normalize_stream_id(after_id)})
+        streams = cast(
+            list[tuple[bytes, list[tuple[bytes, dict[bytes, bytes]]]]],
+            self._redis.xread({self._events_key(job_id): _normalize_stream_id(after_id)}),
+        )
         events = [_decode_event(raw_id, fields) for _stream, entries in streams for raw_id, fields in entries]
         return events, terminal
 
@@ -726,10 +740,9 @@ class RedisJobStore:
             try:
                 with self._redis.pipeline() as transaction:
                     transaction.watch(self._workers_key, self._worker_tokens_key, self._worker_active_jobs_key)
-                    raw_ids = transaction.zrangebyscore(
-                        self._workers_key,
-                        "-inf",
-                        observed_at.timestamp(),
+                    raw_ids = cast(
+                        list[bytes],
+                        transaction.zrangebyscore(self._workers_key, "-inf", observed_at.timestamp()),
                     )
                     worker_ids = [_decode(raw_id) for raw_id in raw_ids]
                     if not worker_ids:
@@ -790,8 +803,7 @@ class RedisJobStore:
         Raises:
             redis.RedisError: If a Redis operation fails.
         """
-        raw_ids = self._redis.zrange(self._jobs_key, 0, -1)
-        job_ids = [_decode(raw_id) for raw_id in raw_ids]
+        job_ids = _sorted_set_ids(self._redis, self._jobs_key)
         if not job_ids:
             return []
         raw_jobs = self._redis.mget([self._job_key(job_id) for job_id in job_ids])
@@ -805,7 +817,7 @@ class RedisJobStore:
         """
         if job.state != JobState.QUEUED:
             return replace(job, queue_position=None)
-        rank = self._redis.zrank(self._queue_key, job.id)
+        rank = cast(int | None, self._redis.zrank(self._queue_key, job.id))
         return replace(job, queue_position=rank + 1 if rank is not None else None)
 
     def _stage_event_appends(self, transaction, job_id: str, events: Sequence[JobEvent]) -> None:
