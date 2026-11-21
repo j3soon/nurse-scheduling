@@ -367,11 +367,11 @@ class SessionOptimizer:
             )
         except ValueError as exc:
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer requires a valid frontend Schedule Spec. {exc}")
+            raise OptimizerError(f"The optimizer requires a valid frontend Schedule Spec. {exc}") from exc
         except OptimizerError as exc:
             logger.warning("Optimizer submission failed: %s", exc)
             self._release_reservation(session_id, owner, reservation)
-            raise OptimizerError(f"The optimizer could not accept the Schedule Spec. {exc}")
+            raise OptimizerError(f"The optimizer could not accept the Schedule Spec. {exc}") from exc
         except BaseException:
             self._release_reservation(session_id, owner, reservation)
             raise

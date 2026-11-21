@@ -363,7 +363,7 @@ def test_roster_statistics_count_exact_shifts_and_bound_people(audit):
 def test_roster_statistics_include_only_history_runs_crossing_the_boundary(audit, tmp_path):
     path, _ = audit
     payload = parse_schedule(FIXTURE.read_text(encoding="utf-8"))
-    for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None]):
+    for person, history in zip(payload["people"]["items"], [["OFF", "OFF"], ["D", "N"], None], strict=True):
         person["history"] = history
     source = tmp_path / "source.yaml"
     source.write_bytes(schedule_spec_yaml(payload).encode())

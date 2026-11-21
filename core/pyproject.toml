@@ -13,3 +13,10 @@ line-length = 120
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.ruff.lint]
+extend-select = ["B904", "B905"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+# Remove this exception with the legacy AI evaluation suite.
+"tests/ai_eval/**" = ["B905"]
