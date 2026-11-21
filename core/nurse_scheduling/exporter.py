@@ -21,7 +21,6 @@ from copy import copy
 from dataclasses import dataclass
 from io import BytesIO, StringIO
 from math import ceil
-from textwrap import TextWrapper
 from unicodedata import east_asian_width
 
 import pandas as pd
@@ -629,30 +628,14 @@ def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout):
         date_width = max(date_width, _content_column_width(footer_cells))
     for col, cells in enumerate(ws.iter_cols(), start=1):
         letter = get_column_letter(col)
-        if first_date_col <= col <= last_date_col:
+        if col == 1:
+            # Allow four full-width characters even when the names are anonymized.
+            width = max(10, _content_column_width(cells[2 : 2 + layout.people_count]))
+        elif first_date_col <= col <= last_date_col:
             width = date_width
         else:
             width = _content_column_width(cells)
-        ws.column_dimensions[letter].width = max(width, 9) if col == 1 else width
-
-    # Size rows for wrapped assignments. Calc can keep the original row height
-    # when it imports XLSX. History is kept on one line and sized by column width.
-    # Excel widths are measured in digits of the default font. Leave room for padding.
-    wrapper = TextWrapper(width=int(date_width), break_on_hyphens=False)
-    for row in ws.iter_rows(min_col=first_date_col, max_col=last_date_col, max_row=layout.people_count + 2):
-        max_lines = 1
-        for cell in row:
-            if not isinstance(cell.value, str):
-                continue
-            lines = _wide_character_placeholder(cell.value).split("\n")
-            line_count = sum(max(1, len(wrapper.wrap(line))) for line in lines)
-            if line_count > 1:
-                alignment = copy(cell.alignment)
-                alignment.wrap_text = True
-                cell.alignment = alignment
-                max_lines = max(max_lines, line_count)
-        if max_lines > 1:
-            ws.row_dimensions[row[0].row].height = min(409, 15 * max_lines)
+        ws.column_dimensions[letter].width = width
 
     # Keep long numbers and status text visible without widening the date grid.
     for row in footer_rows:
@@ -661,6 +644,16 @@ def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout):
         if value_width > date_width:
             end_col = min(last_date_col, first_date_col + ceil((value_width + 2) / date_width) - 1)
             ws.merge_cells(start_row=row, start_column=first_date_col, end_row=row, end_column=end_col)
+
+    # Fit longer entries on one line at the worksheet's existing row height.
+    for row in ws.iter_rows(max_col=last_date_col):
+        for cell in row:
+            if cell.value is not None:
+                alignment = copy(cell.alignment)
+                alignment.wrap_text = None
+                alignment.shrink_to_fit = True
+                alignment.indent = 0
+                cell.alignment = alignment
 
 
 def export_to_excel(df, output_buffer, cell_export_info=None):
@@ -722,8 +715,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 note_cell = notes_ws.cell(row=notes_ws.max_row, column=1)
                 note_cell.hyperlink = f"#'{schedule_sheet_name}'!{cell.coordinate}"
                 note_cell.style = "Hyperlink"
-            # Calc prints hyperlinks on one line even in a wrapped cell.
-            if notes and not cell.alignment.wrap_text:
+            if notes:
                 cell.hyperlink = f"#'{notes_sheet_name}'!A{first_note_row}"
 
     # Apply custom export formatting styles.

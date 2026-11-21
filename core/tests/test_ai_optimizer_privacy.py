@@ -109,6 +109,7 @@ def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> Non
     workbook.active.sheet_properties.pageSetUpPr.fitToPage = True
     workbook.active.print_area = "A1:C4"
     workbook.active.column_dimensions["A"].width = 10
+    workbook.active["A5"] = "A long summary label below the roster"
     before = BytesIO()
     workbook.save(before)
     workbook.close()
@@ -118,7 +119,7 @@ def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> Non
     try:
         assert workbook.active["A3"].value == "陳小華測試姓名"
         assert workbook.active["A4"].value == "Bob"
-        assert workbook.active.column_dimensions["A"].width >= 16
+        assert workbook.active.column_dimensions["A"].width == 16
         assert workbook.active.sheet_properties.pageSetUpPr.fitToPage
         assert workbook.active.print_area.endswith("!$A$1:$C$4")
     finally:

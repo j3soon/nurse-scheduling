@@ -1108,17 +1108,18 @@ apiVersion: alpha
 dates:
   range: {startDate: 2025-12-01, endDate: 2025-12-31}
 people:
-  items: [{id: 林小華, history: [D, D, D, D, D]}]
+  items: [{id: 林小華楊, history: [D, D, D, D, D]}]
 shiftTypes:
   items: [{id: D}]
 preferences:
   - {type: at most one shift per day}
   - {type: shift type requirement, shiftType: D, date: ["01", "02", "31"], requiredNumPeople: 1}
   - {type: shift type requirement, shiftType: D, date: "03~30", requiredNumPeople: 0}
-  - {type: shift request, person: 林小華, date: "01", shiftType: "OFF", weight: 5}
-  - {type: shift request, person: 林小華, date: "02", shiftType: D, weight: 123456789012}
+  - {type: shift request, person: 林小華楊, date: "01", shiftType: "OFF", weight: 5}
+  - {type: shift request, person: 林小華楊, date: "02", shiftType: D, weight: 123456789012}
 """)
     payload["export"] = _default_export_config(payload)
+    payload["export"]["extraRows"][0]["header"] = "A long summary label below the roster"
     payload["export"]["formatting"].append(
         {
             "type": "cell",
@@ -1150,11 +1151,18 @@ def test_schedule_print_area_excludes_summary_columns(month_workbook):
     assert sheet.page_setup.fitToWidth == 1
     assert sheet.page_setup.fitToHeight == 0
     assert sheet["B3"].value == "D,D,D,D,D"
-    assert not sheet["B3"].alignment.wrap_text
+    assert sheet.column_dimensions["A"].width == 10
+    assert sheet["A7"].value == "A long summary label below the roster"
+    for row in sheet.iter_rows(max_col=33):
+        for cell in row:
+            assert not cell.alignment.wrap_text
+            assert not cell.alignment.indent
+            if cell.value is not None:
+                assert cell.alignment.shrink_to_fit
+    assert all(row.height is None for row in sheet.row_dimensions.values())
     assert sheet["C3"].value == "D [O] REVIEW"
-    assert sheet["C3"].alignment.wrap_text
     assert sheet["C4"].value == 123456789012
-    assert sheet["C3"].hyperlink is None
+    assert sheet["C3"].hyperlink.target == "#'Notes'!A2"
     assert workbook["Notes"]["A2"].hyperlink.target == "#'Sheet1'!C3"
 
 
@@ -1191,7 +1199,7 @@ def test_schedule_month_prints_on_one_a4_page_wide(month_workbook):
     assert re.search(r"^Pages:\s+1$", metadata, re.MULTILINE)
     assert re.search(r"^Page size:.*\(A4\)", metadata, re.MULTILINE)
     page = subprocess.check_output(["pdftotext", "-layout", str(pdf), "-"], text=True, timeout=10)
-    assert "林小華" in page
+    assert "林小華楊" in page
     assert "D,D,D,D,D" in page
     assert re.search(r"\b1\s+2\s+3.*\b30\s+31\b", page)
     # Require every annotation fragment to stay in the first date column. The
@@ -1213,6 +1221,8 @@ def test_schedule_month_prints_on_one_a4_page_wide(month_workbook):
     ]
     line_fragments.sort(key=lambda word: (float(word.attrib["yMin"]), float(word.attrib["xMin"])))
     assert "".join(word.text or "" for word in line_fragments) == "D[O]REVIEW"
-    assert all(float(word.attrib["yMax"]) - float(word.attrib["yMin"]) >= 8 for word in line_fragments)
+    assert len({word.attrib["yMin"] for word in line_fragments}) == 1
+    name = next(word for word in words if word.text == "林小華楊")
+    assert float(name.attrib["yMax"]) - float(name.attrib["yMin"]) >= 8
     assert "123456789012" in page
     assert "OFF (Total)" not in page

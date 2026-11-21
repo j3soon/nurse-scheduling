@@ -167,7 +167,8 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
                         cell.data_type = "s"
             if sheet.sheet_properties.pageSetUpPr.fitToPage:
                 name_column = sheet.column_dimensions["A"]
-                name_column.width = max(name_column.width, _content_column_width(sheet["A"]))
+                people_cells = (sheet.cell(row, 1) for row in range(3, 3 + people_count))
+                name_column.width = max(name_column.width, _content_column_width(people_cells))
             output = BytesIO()
             workbook.save(output)
             return output.getvalue()
