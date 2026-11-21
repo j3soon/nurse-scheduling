@@ -56,10 +56,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   If log access is denied, reproduce the failing CI step locally or ask the
   user to restart the container with `GH_TOKEN`.
 - For concurrent agent edits, mount the main clone at `/app` and create one
-  checkout per agent with `scripts/add_worktree.sh NAME [BASE_REF]`. The helper
-  requires Git 2.48+ on both host and container and keeps relative Git links
-  under the ignored `.worktrees/` directory. Do not mount a linked checkout
-  alone, because its shared Git metadata lives outside that mount.
+  checkout per agent with `scripts/add_worktree.sh TYPE/NAME [BASE_REF]`.
+  Use a branch prefix that describes the change, such as `fix/`, `feat/`,
+  or `docs/`. The helper requires Git 2.48+ on both host and container and
+  keeps relative Git links under the ignored `.worktrees/` directory. Do not
+  mount a linked checkout alone, because its shared Git metadata lives outside
+  that mount.
   Each agent owns its branch and worktree. The coordinating agent reviews and
   integrates completed commits, then removes clean checkouts with
   `git worktree remove`. Do not reset another agent's branch or delete its work.

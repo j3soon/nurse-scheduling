@@ -6,12 +6,13 @@
 set -euo pipefail
 
 if [[ ${1:-} == --help ]]; then
-  echo 'Usage: scripts/add_worktree.sh NAME [BASE_REF]'
-  echo 'Create agent/NAME in .worktrees/NAME using relative Git paths (Git 2.48+).'
+  echo 'Usage: scripts/add_worktree.sh TYPE/NAME [BASE_REF]'
+  echo 'Create a branch such as fix/api in .worktrees/api using relative Git paths (Git 2.48+).'
   exit 0
 fi
-if (($# < 1 || $# > 2)) || [[ ! $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-  echo 'Provide a name containing only letters, digits, dots, hyphens, and underscores.' >&2
+if (($# < 1 || $# > 2)) ||
+  [[ ! $1 =~ ^[a-z][a-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ || $1 == agent/* || $1 == j3soon/* ]]; then
+  echo 'Provide a branch with a change-type prefix, such as fix/api or feat/ui.' >&2
   exit 2
 fi
 
@@ -26,9 +27,9 @@ if [[ $help_text != *relative-paths* ]]; then
   exit 2
 fi
 
-name="$1"
+branch="$1"
+name="${branch#*/}"
 base_ref="${2:-HEAD}"
-branch="agent/$name"
 worktree_path="$root_dir/.worktrees/$name"
 git check-ref-format --branch "$branch" > /dev/null
 git rev-parse --verify --end-of-options "$base_ref^{commit}" > /dev/null

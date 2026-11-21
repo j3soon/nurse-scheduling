@@ -51,7 +51,7 @@ class AgentWorktreeTests(unittest.TestCase):
 
     def test_parallel_checkouts_survive_a_different_mount_path(self):
         with ThreadPoolExecutor(max_workers=2) as workers:
-            results = list(workers.map(lambda name: self.add(name), ["alpha", "beta"]))
+            results = list(workers.map(self.add, ["feat/alpha", "fix/beta"]))
         for result in results:
             self.assertEqual(result.returncode, 0, result.stderr)
         alpha = self.root / ".worktrees/alpha"
@@ -74,8 +74,8 @@ class AgentWorktreeTests(unittest.TestCase):
         self.root = relocated
         alpha = self.root / ".worktrees/alpha"
         beta = self.root / ".worktrees/beta"
-        self.assertEqual(self.git("branch", "--show-current", cwd=alpha), "agent/alpha")
-        self.assertEqual(self.git("branch", "--show-current", cwd=beta), "agent/beta")
+        self.assertEqual(self.git("branch", "--show-current", cwd=alpha), "feat/alpha")
+        self.assertEqual(self.git("branch", "--show-current", cwd=beta), "fix/beta")
         self.git("add", "shared.txt", cwd=alpha)
         self.git("commit", "-qm", "Independent agent change", cwd=alpha)
         self.assertEqual(self.git("status", "--porcelain"), "")
@@ -85,22 +85,29 @@ class AgentWorktreeTests(unittest.TestCase):
         self.git("worktree", "remove", str(beta))
 
     def test_invalid_names_refs_and_existing_content_are_preserved(self):
-        for name in ("../outside", "nested/path", ".."):
+        for name in (
+            "../outside",
+            "fix/nested/path",
+            "fix/..",
+            "bare-name",
+            "agent/legacy",
+            "j3soon/legacy",
+        ):
             self.assertNotEqual(self.add(name).returncode, 0, name)
-        self.assertNotEqual(self.add("bad-base", "does-not-exist").returncode, 0)
+        self.assertNotEqual(self.add("fix/bad-base", "does-not-exist").returncode, 0)
         occupied = self.root / ".worktrees/occupied"
         occupied.mkdir(parents=True)
         (occupied / "keep.txt").write_text("keep", encoding="utf-8")
-        self.assertNotEqual(self.add("occupied").returncode, 0)
+        self.assertNotEqual(self.add("fix/occupied").returncode, 0)
         self.assertEqual((occupied / "keep.txt").read_text(encoding="utf-8"), "keep")
-        self.git("branch", "agent/existing")
-        self.assertNotEqual(self.add("existing").returncode, 0)
+        self.git("branch", "fix/existing")
+        self.assertNotEqual(self.add("fix/existing").returncode, 0)
         self.assertFalse((self.root / ".worktrees/existing").exists())
-        self.assertEqual(self.git("branch", "--list", "agent/bad-base"), "")
+        self.assertEqual(self.git("branch", "--list", "fix/bad-base"), "")
 
     def test_linked_checkout_cannot_hide_git_metadata_outside_the_mount(self):
-        self.assertEqual(self.add("first").returncode, 0)
-        result = self.add("nested", cwd=self.root / ".worktrees/first")
+        self.assertEqual(self.add("feat/first").returncode, 0)
+        result = self.add("fix/nested", cwd=self.root / ".worktrees/first")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("main clone", result.stderr)
         self.assertFalse((self.root / ".worktrees/first/.worktrees").exists())
@@ -116,7 +123,7 @@ class AgentWorktreeTests(unittest.TestCase):
         )
         shim.chmod(0o755)
         result = self.add(
-            "old",
+            "fix/old",
             env={
                 **os.environ,
                 "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}",
