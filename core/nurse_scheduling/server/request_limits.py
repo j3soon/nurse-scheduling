@@ -19,13 +19,52 @@
 
 # This code is mostly AI generated.
 
-from starlette.datastructures import Headers
+from collections.abc import Callable, Coroutine
+from typing import Any
+
+from fastapi import Request, Response
+from fastapi.routing import APIRoute
+from starlette.datastructures import FormData, Headers
+from starlette.requests import AwaitableOrContextManager
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 """Room for multipart boundaries, part headers, and the small form fields beside the upload."""
 OVERSIZE_BODY_MESSAGE = "Request body is too large"
+
+
+class ScheduleSpecFormRequest(Request):
+    """Parse a submission form whose text field can be as large as an uploaded file.
+
+    Starlette limits each text field to 1 MiB by default. `MaxBodySizeMiddleware` already
+    bounds the whole body, and the route checks the exact Schedule Spec YAML limit.
+    """
+
+    def form(
+        self,
+        *,
+        max_files: float = 1000,
+        max_fields: float = 1000,
+        max_part_size: int | None = None,
+    ) -> AwaitableOrContextManager[FormData]:
+        """Read the form with a text field limit no stricter than the body limit."""
+        if max_part_size is None:
+            max_part_size = self.app.state.settings.max_yaml_bytes + MULTIPART_OVERHEAD_BYTES
+        return super().form(max_files=max_files, max_fields=max_fields, max_part_size=max_part_size)
+
+
+class ScheduleSpecFormRoute(APIRoute):
+    """Route class for endpoints that accept Schedule Spec YAML as a form field."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        """Hand FastAPI a request whose form parser admits the configured YAML size."""
+        handler = super().get_route_handler()
+
+        async def route_handler(request: Request) -> Response:
+            return await handler(ScheduleSpecFormRequest(request.scope, request.receive))
+
+        return route_handler
 
 
 class MaxBodySizeMiddleware:

@@ -38,12 +38,13 @@ from ..config import ServerSettings
 from ..errors import EventStreamCapacityError
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
+from ..request_limits import ScheduleSpecFormRoute
 from ..solver_capabilities import solver_supports_finish_now
 from ..solver_options import normalize_solver_option
 from .schemas import JobResponse, OptimizationBackendResponse, OptimizationOptionsResponse
 from .sse import format_sse_event
 
-router = APIRouter()
+router = APIRouter(route_class=ScheduleSpecFormRoute)
 # The event stream authorizes through a URL token as well, so it carries its own dependency.
 events_router = APIRouter()
 CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"

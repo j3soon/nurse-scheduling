@@ -2527,6 +2527,33 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
         assert oversized.status_code == 413
 
 
+@pytest.mark.parametrize(
+    ("path", "field", "multipart"),
+    [
+        # The AI service sends a multipart part without a filename, which Starlette parses as text.
+        ("/schedule_spec/optimize", "schedule_spec_yaml", True),
+        ("/schedule_spec/optimize", "schedule_spec_yaml", False),
+        ("/optimize", "yaml_content", True),
+    ],
+    ids=["multipart-text", "urlencoded", "legacy-multipart-text"],
+)
+def test_text_input_uses_configured_limit_above_multipart_text_default(path, field, multipart):
+    max_yaml_bytes = 1024 * 1024 + 1
+    settings = _settings(max_yaml_bytes=max_yaml_bytes)
+
+    def submit(client, size):
+        content = "x" * size
+        if multipart:
+            return client.post(path, files={field: (None, content)})
+        return client.post(path, data={field: content})
+
+    with _client(start_background=False, settings=settings) as client:
+        assert submit(client, max_yaml_bytes).status_code == 202
+        oversized = submit(client, max_yaml_bytes + 1)
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Schedule Spec YAML is too large"
+
+
 AUTH_TOKEN = "integration-shared-token"
 AUTH_TOKENS = (
     AuthCredential(id="institution-a", token="institution-a-auth-token"),
