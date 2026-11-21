@@ -63,14 +63,8 @@ export function normalizePreferenceOrder(pref: Preference, state: ScheduleSpecSt
     };
   }
   if (pref.type === SHIFT_REQUEST) {
-    // Older YAML imports could save unquoted description values as numbers or
-    // booleans. Recover their text before sorting or opening a description editor.
-    const description = pref.description;
     return {
       ...pref,
-      ...(description != null && typeof description !== 'string' && {
-        description: typeof description === 'object' ? JSON.stringify(description) : String(description),
-      }),
       person: sortIdsByEntryOrder(pref.person, peopleEntries),
       date: sortIdsByEntryOrder(pref.date, dateEntries),
       shiftType: sortIdsByEntryOrder(pref.shiftType, shiftTypeEntries),
