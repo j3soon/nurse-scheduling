@@ -2,10 +2,10 @@
 
 [Open Export Layout](https://nursescheduling.org/export-layout){ .md-button .md-button--primary }
 
-Export Layout controls workbook formatting and summaries when **Prettify XLSX**
-is enabled. The default layout already marks weekends, requests, history, and
-common counts. This page is optional. Skip it when the default workbook is
-sufficient.
+Export Layout controls workbook styles and count summaries. Style rules apply
+with **Prettify XLSX** on or off. When enabled, **Prettify XLSX** also adds
+history, shift request annotations, and count summaries. The default layout
+already covers weekends and common counts.
 
 ## Real scenario example
 

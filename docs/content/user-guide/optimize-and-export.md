@@ -31,7 +31,8 @@ starts.
    the token for that backend, and select **Save**. Enable **Remember on this
    device** to keep it for later visits, or leave it unchecked to use it only
    until the page is reloaded.
-2. Optional: keep **Prettify XLSX** enabled to apply Export Layout.
+2. Optional: keep **Prettify XLSX** enabled for history, shift request annotations,
+   and count summaries. Export Layout style rules apply in either mode.
 3. Optional: review **Anonymize Schedule Spec**. Keep it enabled unless there
    is an approved reason to send original people IDs.
 4. Optional: change the timeout when the default is unsuitable.
