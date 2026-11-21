@@ -101,3 +101,63 @@ test('editing the Schedule Spec description updates YAML and creates one Undo st
   await page.reload();
   await expect(description).toHaveValue(revised);
 });
+
+test('carries a pending description into the YAML editor and back on cancel', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'Original description',
+    dates: { range: {}, groups: [] },
+    people: { items: [], groups: [], history: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [],
+  });
+
+  await page.goto('/save-and-load');
+  const description = page.getByLabel('Schedule Spec description (optional)');
+  await expect(description).toHaveValue('Original description');
+  await description.fill('Pending description');
+  await page.getByRole('button', { name: 'Edit YAML' }).click();
+  const editor = page.getByPlaceholder('Enter Schedule Spec YAML...');
+  expect(yaml.load(await editor.inputValue())).toMatchObject({ description: 'Pending description' });
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(description).toHaveValue('Pending description');
+
+  await page.getByRole('button', { name: 'Edit YAML' }).click();
+  await editor.fill((await editor.inputValue()) + '\n# Checked the YAML\n');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('pre')).toContainText('Pending description');
+  await expect(page.getByRole('button', { name: 'Save description' })).toHaveCount(0);
+});
+
+test('confirms replacement when an upload would discard the pending description', async ({ page }) => {
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'Original description',
+    dates: { range: {}, groups: [] },
+    people: { items: [], groups: [], history: [] },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [],
+  });
+
+  await page.goto('/save-and-load');
+  const description = page.getByLabel('Schedule Spec description (optional)');
+  await expect(description).toHaveValue('Original description');
+  const preview = page.locator('pre');
+  const matchingYaml = (await preview.innerText()).replace('Original description', 'Uploaded description');
+  await description.fill('Pending description');
+
+  for (const accept of [false, true]) {
+    const prompt = page.waitForEvent('dialog', { timeout: 5000 });
+    const upload = page.locator('input[type="file"]').setInputFiles({
+      name: 'replacement.yaml',
+      mimeType: 'application/x-yaml',
+      buffer: Buffer.from(matchingYaml),
+    });
+    const dialog = await prompt;
+    expect(dialog.message()).toContain('discard the unsaved description');
+    if (accept) await dialog.accept();
+    else await dialog.dismiss();
+    await upload;
+    await expect(description).toHaveValue(accept ? 'Uploaded description' : 'Pending description');
+  }
+});

@@ -144,6 +144,7 @@ export default function SaveAndLoadPage() {
   } | null>(null);
   const description = descriptionEdit?.base === filteredState ? descriptionEdit.value : descriptionData;
   const hasDescriptionEdit = description !== descriptionData;
+  const hasDescriptionEditRef = useRef(hasDescriptionEdit);
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -163,6 +164,14 @@ export default function SaveAndLoadPage() {
     };
   }, []);
   useTabSwitchWarning(isEditing || hasDescriptionEdit);
+  useEffect(() => {
+    hasDescriptionEditRef.current = hasDescriptionEdit;
+    if (!hasDescriptionEdit) return;
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [hasDescriptionEdit]);
 
   // Convert current state to YAML with custom flow style for leaf arrays
   const currentYaml = generateYamlFromState(filteredState);
@@ -217,7 +226,7 @@ export default function SaveAndLoadPage() {
   };
 
   const handleStartEdit = () => {
-    setEditedYaml(currentYaml);
+    setEditedYaml(hasDescriptionEdit ? generateYamlFromState({ ...filteredState, description }) : currentYaml);
     setIsEditing(true);
     setYamlError(null);
   };
@@ -272,6 +281,7 @@ export default function SaveAndLoadPage() {
 
       // Load the parsed data directly without validation, this willl create a new history state
       loadFromYaml(parsedData);
+      setDescriptionEdit(null);
       setNotice(null);
 
       // Close the editor
@@ -304,10 +314,16 @@ export default function SaveAndLoadPage() {
 
         const summary = summarizeYamlImport(parsedData, file.name, getVersionWarning(parsedData, true), t);
         const versionWarning = getVersionWarning(parsedData);
-        if (versionWarning && !confirm(t("{value0}\n\nDo you want to continue replacing the current Schedule Spec?", { value0: versionWarning }))) {
+        const draftWarning = hasDescriptionEditRef.current ? t("Replacing the Schedule Spec will discard the unsaved description.") : null;
+        const warning = [versionWarning, draftWarning].filter(Boolean).join('\n\n');
+        if (warning && !confirm(t("{value0}\n\nDo you want to continue replacing the current Schedule Spec?", { value0: warning }))) {
           return;
         }
         loadFromYaml(parsedData);
+        if (draftWarning) {
+          setDescriptionEdit(null);
+          handleCancelEdit();
+        }
         setNotice(summary);
       } catch (error) {
         alert(t("Error loading YAML file: {value0}", { value0: error instanceof Error ? error.message : 'Invalid YAML format' }));
