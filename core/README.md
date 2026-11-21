@@ -64,7 +64,7 @@ ruff check nurse_scheduling tests
 ruff check --fix nurse_scheduling tests
 # apply consistent formatting
 ruff format nurse_scheduling tests
-# type-check the core modules listed in pyproject.toml
+# type-check production Python
 ty check --python "$(command -v python)"
 ```
 

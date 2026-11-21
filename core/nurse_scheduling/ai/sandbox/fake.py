@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 
 from .base import (
@@ -60,7 +60,7 @@ class FakeSandboxBackend:
         return self._sandbox_id
 
     @asynccontextmanager
-    async def activity_batch(self) -> AsyncIterator[None]:
+    async def activity_batch(self) -> AsyncGenerator[None]:
         self._ensure_open()
         yield
 

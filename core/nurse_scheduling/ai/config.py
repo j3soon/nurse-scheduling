@@ -21,7 +21,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Literal, cast
+from typing import Literal
 
 from ..server.auth import AuthCredential, normalize_auth_credentials, parse_auth_credentials
 
@@ -115,7 +115,7 @@ def _read_sandbox_backend() -> SandboxBackendName:
     value = os.getenv("AI_SANDBOX_BACKEND", "none").strip().lower()
     if value not in {"none", "e2b"}:
         raise ValueError("AI_SANDBOX_BACKEND must be one of: none, e2b")
-    return cast(SandboxBackendName, value)
+    return value
 
 
 @dataclass(frozen=True)
