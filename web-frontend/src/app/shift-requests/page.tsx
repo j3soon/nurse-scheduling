@@ -136,10 +136,16 @@ export default function ShiftRequestsPage() {
   const [quickAddHeight, setQuickAddHeight] = useState(0);
   const quickAddRef = useRef<HTMLDivElement>(null);
   const stickyQuickAddRef = useRef<HTMLDivElement>(null);
-  useTabSwitchWarning(
-    editorState.isOpen || historyEditState.isOpen ||
-    (descriptionEdit !== null && shiftRequestPreferences.includes(descriptionEdit))
-  );
+  const isEditingRequest = editorState.isOpen ||
+    (descriptionEdit !== null && shiftRequestPreferences.includes(descriptionEdit));
+  useTabSwitchWarning(isEditingRequest || historyEditState.isOpen);
+  useEffect(() => {
+    if (!isEditingRequest) return;
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [isEditingRequest]);
   // TODO(perf): The multi-select drag feature is now lagging, unsure why.
 
   enum SelectedCellType {

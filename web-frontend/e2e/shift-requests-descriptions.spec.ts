@@ -101,7 +101,12 @@ test('edits one date of a people-group request and compacts it again when descri
   await dayDescription.press('Enter');
   await dayDescription.pressSequentially('a');
   await expect(dayDescription).toHaveValue('Appointment\na');
+  const warnsBeforeUnload = () => page.evaluate(() =>
+    !window.dispatchEvent(new Event('beforeunload', { cancelable: true }))
+  );
+  await expect.poll(warnsBeforeUnload).toBe(true);
   await editor.getByRole('button', { name: 'Save Preferences' }).click();
+  await expect.poll(warnsBeforeUnload).toBe(false);
 
   const dayTwo = page.getByRole('article').filter({ hasText: 'Weight: +2', has: page.getByText('Date: 02', { exact: true }) });
   await expect(dayTwo).toContainText('Appointment');
@@ -119,8 +124,10 @@ test('edits one date of a people-group request and compacts it again when descri
   const singleDateDescription = dayTwo.getByRole('textbox', { name: 'Request description for all listed dates' });
   await expect(singleDateDescription).toHaveValue('Appointment\na');
   await singleDateDescription.fill('Shared note');
+  await expect.poll(warnsBeforeUnload).toBe(true);
   await singleDateDescription.press('Enter');
   await expect(shared).toContainText('Date: 01, 02, 03');
+  await expect.poll(warnsBeforeUnload).toBe(false);
 
   await page.goto('/save-and-load');
   const preview = page.locator('pre');
