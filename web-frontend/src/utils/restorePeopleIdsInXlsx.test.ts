@@ -24,6 +24,16 @@ describe('restorePeopleIdsInXlsx', () => {
   it('restores only people IDs in the first worksheet person-header range', async () => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Schedule');
+    worksheet.getColumn(1).width = 10;
+    worksheet.pageSetup = {
+      paperSize: 9,
+      orientation: 'landscape',
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printArea: 'A1:B5',
+      printTitlesRow: '1:2',
+    };
     worksheet.getCell('A1').value = 'P1';
     worksheet.getCell('A3').value = 'P1';
     worksheet.getCell('A3').font = { bold: true };
@@ -37,7 +47,7 @@ describe('restorePeopleIdsInXlsx', () => {
     const outputBlob = await restorePeopleIdsInXlsx(
       new Blob([inputBytes.buffer]),
       new Map([
-        ['P1', 'Alice'],
+        ['P1', '陳小華測試姓名'],
         ['P2', 'Bob'],
       ]),
       2
@@ -49,11 +59,13 @@ describe('restorePeopleIdsInXlsx', () => {
     const outputWorksheet = outputWorkbook.getWorksheet('Schedule')!;
 
     expect(outputWorksheet.getCell('A1').value).toBe('P1');
-    expect(outputWorksheet.getCell('A3').value).toBe('Alice');
+    expect(outputWorksheet.getCell('A3').value).toBe('陳小華測試姓名');
     expect(outputWorksheet.getCell('A3').font.bold).toBe(true);
     expect(outputWorksheet.getCell('A4').value).toBe('Bob');
     expect(outputWorksheet.getCell('A5').value).toBe('P1');
     expect(outputWorksheet.getCell('B3').value).toBe('P1');
+    expect(outputWorksheet.getColumn(1).width).toBeGreaterThanOrEqual(16);
+    expect(outputWorksheet.pageSetup).toMatchObject(worksheet.pageSetup);
     expect(outputWorkbook.getWorksheet('Notes')!.getCell('A3').value).toBe('P1');
   });
 });

@@ -32,6 +32,7 @@ export async function restorePeopleIdsInXlsx(
   await workbook.xlsx.load(arrayBuffer as unknown as Parameters<typeof workbook.xlsx.load>[0]);
 
   const scheduleWorksheet = workbook.worksheets[0];
+  let restoredNameWidth = 0;
   for (let row = 3; row < 3 + peopleCount; row += 1) {
     const cell = scheduleWorksheet.getCell(row, 1);
     if (typeof cell.value !== 'string') {
@@ -40,7 +41,20 @@ export async function restorePeopleIdsInXlsx(
     const originalId = originalIdByAnonymizedId.get(cell.value);
     if (originalId !== undefined) {
       cell.value = originalId;
+      for (const line of originalId.split(/\r?\n/)) {
+        // Estimate wide glyphs in units of the default font's digit width.
+        let width = 2;
+        for (const ch of line) {
+          width += /[MWmw]|[^ -~]/.test(ch) ? 2 : 1;
+        }
+        restoredNameWidth = Math.max(restoredNameWidth, width);
+      }
     }
+  }
+
+  if (scheduleWorksheet.pageSetup.fitToPage && restoredNameWidth > 0) {
+    const names = scheduleWorksheet.getColumn(1);
+    names.width = Math.max(names.width ?? 9, Math.min(restoredNameWidth, 255));
   }
 
   const outputBuffer = await workbook.xlsx.writeBuffer();

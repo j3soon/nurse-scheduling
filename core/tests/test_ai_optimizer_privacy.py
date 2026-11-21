@@ -105,17 +105,22 @@ def test_optimizer_generates_default_layout_only_for_workbook_submission() -> No
 
 
 def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> None:
-    prepared = prepare_optimizer_spec(named_schedule(), 1_000_000)
-    restored = restore_people_ids(
-        optimizer_workbook_bytes(("P2", "P3")),
-        prepared.original_id_by_anonymized_id,
-        prepared.people_count,
-    )
+    workbook = load_workbook(BytesIO(optimizer_workbook_bytes(("P2", "P3"))))
+    workbook.active.sheet_properties.pageSetUpPr.fitToPage = True
+    workbook.active.print_area = "A1:C4"
+    workbook.active.column_dimensions["A"].width = 10
+    before = BytesIO()
+    workbook.save(before)
+    workbook.close()
 
-    workbook = load_workbook(BytesIO(restored), read_only=True)
+    restored = restore_people_ids(before.getvalue(), {"P2": "陳小華測試姓名", "P3": "Bob"}, 2)
+    workbook = load_workbook(BytesIO(restored))
     try:
-        assert workbook.active["A3"].value == "Alice"
+        assert workbook.active["A3"].value == "陳小華測試姓名"
         assert workbook.active["A4"].value == "Bob"
+        assert workbook.active.column_dimensions["A"].width >= 16
+        assert workbook.active.sheet_properties.pageSetUpPr.fitToPage
+        assert workbook.active.print_area.endswith("!$A$1:$C$4")
     finally:
         workbook.close()
 

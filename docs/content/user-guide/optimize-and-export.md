@@ -62,6 +62,13 @@ request, and the **Notes** sheet lists its weight.
 Count summaries appear at the edges. **Score** and **Status** appear below the
 schedule.
 
+The first sheet prints the schedule grid one page wide on landscape A4. The
+date headers repeat on vertically continued pages. Summary columns to the
+right are available in the workbook and can be printed separately by selecting
+them. With **Prettify XLSX** enabled, history is shown in order as a single
+comma-separated column. Long histories stay on one line and can make the print
+smaller.
+
 ## Fix common problems
 
 | Problem | What to do |
