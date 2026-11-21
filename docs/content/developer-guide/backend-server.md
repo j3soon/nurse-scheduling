@@ -484,6 +484,7 @@ All server settings are read once when the application is constructed.
 | `API_AUTH_TOKEN` | unset | Require this shared bearer token on every application route except `/info` and `/ready`. |
 | `API_AUTH_TOKENS` | unset | Require one of the bearer keys in this JSON object mapping administrative IDs to keys. |
 | `API_AUTH_REQUIRED` | `false` | Require authentication, making an empty legacy and identified key set a startup failure. Set in the deployment images. |
+| `API_COOKIE_SECURE` | `false` | Mark the client correlation cookie secure when a TLS-terminating proxy forwards plain HTTP. Docker Compose sets `true`. |
 | `SUSPICION_COUNTER_ENABLED` | `true` | Count repeats of one signal from one address and escalate them. |
 | `SUSPICION_WINDOW_SECONDS` | `300` | Length of the window over which repeats are counted. |
 | `SUSPICION_ESCALATE_COUNT` | `5` | Repeats within a window that make a signal an error. |

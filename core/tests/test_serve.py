@@ -980,6 +980,19 @@ def test_server_settings_load_optimization_options_from_env(monkeypatch):
     assert settings.default_prettify is False
 
 
+def test_deployment_environment_examples_document_every_reference_setting():
+    # `docker/.env.example` is the source of truth, so each deployment variant repeats its settings.
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+
+    def keys(name: str) -> set[str]:
+        lines = (docker_dir / name).read_text(encoding="utf-8").splitlines()
+        return {line.split("=", 1)[0] for line in lines if line and not line.startswith("#") and "=" in line}
+
+    reference = keys(".env.example")
+    for name in (".env.staging.example", ".env.gpu.example"):
+        assert sorted(reference - keys(name)) == [], name
+
+
 def test_server_settings_load_claimed_performance_from_env(monkeypatch):
     monkeypatch.setenv("CLAIMED_PERFORMANCE_SCORE", "41.524445")
     monkeypatch.setenv("CLAIMED_PERFORMANCE_APP_VERSION", "v0.2.0-66-g959adc4")
