@@ -49,8 +49,6 @@ exclude = [
     "nurse_scheduling/ai/validation.py",
     "nurse_scheduling/ai/workspace.py",
     "nurse_scheduling/ai/workspace_tools.py",
-    "nurse_scheduling/cli.py",
-    "nurse_scheduling/model_build_stats.py",
     "nurse_scheduling/sentry.py",
     "nurse_scheduling/server/stores/redis.py",
     "nurse_scheduling/server/usage_metrics.py",
