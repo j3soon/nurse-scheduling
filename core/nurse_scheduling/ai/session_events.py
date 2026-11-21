@@ -155,12 +155,15 @@ class ModelInputMessage(TypedDict):
     title: NotRequired[str]
 
 
-class ModelInputEvent(RunFields):
+class ModelInputFields(TypedDict):
+    system: str
+    messages: list[ModelInputMessage]
+
+
+class ModelInputEvent(RunFields, ModelInputFields):
     """The system message and the request messages added since the last assistant reply."""
 
     type: Literal["model_input"]
-    system: str
-    messages: list[ModelInputMessage]
     schedule_spec_yaml: NotRequired[str]
 
 
@@ -192,14 +195,17 @@ class GenerationProgressEvent(RunFields):
     step: int
 
 
-class ContextUsageEvent(RunFields):
-    type: Literal["context_usage"]
+class ContextUsageFields(TypedDict):
     used_chars: int
     max_chars: int
     # Latest request tokens, or an estimate after compaction. The limit needs model metadata.
     used_tokens: NotRequired[int]
     max_tokens: NotRequired[int]
     estimated: NotRequired[bool]
+
+
+class ContextUsageEvent(RunFields, ContextUsageFields):
+    type: Literal["context_usage"]
 
 
 class HistoryTrimmedEvent(RunFields):
