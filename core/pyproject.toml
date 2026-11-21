@@ -56,5 +56,4 @@ exclude = [
     "nurse_scheduling/server/usage_metrics.py",
     "nurse_scheduling/solver_ortools_linear.py",
     "nurse_scheduling/solver_ortools_mathopt.py",
-    "nurse_scheduling/solver_pulp.py",
 ]
