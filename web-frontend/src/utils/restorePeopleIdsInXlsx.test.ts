@@ -91,12 +91,12 @@ describe('restorePeopleIdsInXlsx', () => {
       </worksheet>`);
     const workbookPart = 'xl/workbook.xml';
     const workbookXml = (await original.file(workbookPart)!.async('string')).replace(
-      '</workbook>',
+      '<calcPr',
       `<definedNames>
         <definedName name="_xlnm.Print_Titles" localSheetId="0">'Schedule'!$1:$2</definedName>
         <definedName name="_xlnm.Print_Area" localSheetId="0">'Schedule'!$A$1:$AF$5</definedName>
         <definedName name="_xlnm._FilterDatabase" localSheetId="1" hidden="1">'Notes'!$A$1:$C$1</definedName>
-      </definedNames></workbook>`
+      </definedNames><calcPr`
     );
     original.file(workbookPart, workbookXml);
     const blob = new Blob([await original.generateAsync({ type: 'arraybuffer' })]);
