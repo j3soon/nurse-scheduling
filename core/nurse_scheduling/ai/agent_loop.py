@@ -22,7 +22,7 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import asdict, replace
 from math import ceil
@@ -77,7 +77,7 @@ TRUNCATED_TOOL_CALL_RESULT = (
 
 
 @asynccontextmanager
-async def _unbatched_activity() -> AsyncIterator[None]:
+async def _unbatched_activity() -> AsyncGenerator[None, None]:
     yield
 
 
@@ -95,7 +95,7 @@ async def agent_loop(
     history_limit: int = MAX_HISTORY_CHARS,
     reserve_tokens: int = 16384,
     keep_recent_tokens: int = 20000,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncGenerator[AgentEvent, None]:
     """Run the model/tool loop shared by agent capability layers."""
     registered = {tool.name: tool for tool in tools}
 
