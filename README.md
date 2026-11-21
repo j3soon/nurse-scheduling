@@ -289,10 +289,10 @@ that describes the change, such as `fix/`, `feat/`, or `docs/`.
 ```sh
 ./scripts/add_worktree.sh fix/api
 ./scripts/add_worktree.sh feat/ui
-cd .worktrees/api
+cd .worktrees/fix/api
 ```
 
-The helper creates `fix/api` in `.worktrees/api` from the current
+The helper creates `fix/api` in `.worktrees/fix/api` from the current
 `HEAD`. Pass another base as the second argument when needed. Relative Git
 paths keep these checkouts usable both on the host and under `/app`. This
 optional workflow enables Git's relative-worktree repository extension, so
@@ -307,7 +307,7 @@ Review the agent's commits before integrating them. From the main clone:
 
 ```sh
 git merge --no-ff fix/api -m "Merge reviewed API fix"
-git worktree remove .worktrees/api
+git worktree remove .worktrees/fix/api
 # Delete the branch only after its changes have been integrated.
 git branch -d fix/api
 ```

@@ -7,7 +7,7 @@ set -euo pipefail
 
 if [[ ${1:-} == --help ]]; then
   echo 'Usage: scripts/add_worktree.sh TYPE/NAME [BASE_REF]'
-  echo 'Create a branch such as fix/api in .worktrees/api using relative Git paths (Git 2.48+).'
+  echo 'Create a branch such as fix/api in .worktrees/fix/api using relative Git paths (Git 2.48+).'
   exit 0
 fi
 if (($# < 1 || $# > 2)) ||
@@ -28,11 +28,15 @@ if [[ $help_text != *relative-paths* ]]; then
 fi
 
 branch="$1"
-name="${branch#*/}"
 base_ref="${2:-HEAD}"
-worktree_path="$root_dir/.worktrees/$name"
+worktree_path="$root_dir/.worktrees/$branch"
+type_dir="${worktree_path%/*}"
 git check-ref-format --branch "$branch" > /dev/null
 git rev-parse --verify --end-of-options "$base_ref^{commit}" > /dev/null
+if [[ -e "$type_dir/.git" ]]; then
+  echo "Worktree type directory already contains a checkout: $type_dir" >&2
+  exit 2
+fi
 if [[ -e $worktree_path || -L $worktree_path ]]; then
   echo "Worktree path already exists: $worktree_path" >&2
   exit 2
@@ -42,5 +46,6 @@ if git show-ref --verify --quiet "refs/heads/$branch"; then
   exit 2
 fi
 
+mkdir -p -- "$type_dir"
 git worktree add --relative-paths -b "$branch" -- "$worktree_path" "$base_ref"
 printf 'Worktree: %s\nBranch: %s\n' "$worktree_path" "$branch"
