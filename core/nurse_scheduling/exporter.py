@@ -613,6 +613,8 @@ def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout) -> int:
     ws.print_title_rows = "1:2"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+    # ExcelJS in v0.2.0 writes the unused outlinePr after pageSetUpPr.
+    ws.sheet_properties.outlinePr = None
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0

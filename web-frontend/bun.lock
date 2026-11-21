@@ -6,8 +6,8 @@
       "name": "web-frontend",
       "dependencies": {
         "@sentry/nextjs": "^10.76.2",
-        "exceljs": "^4.4.0",
         "js-yaml": "^4.3.2",
+        "jszip": "^3.10.1",
         "next": "16.4.1",
         "react": "19.2.6",
         "react-dom": "19.2.6",
@@ -30,6 +30,7 @@
         "@vitest/coverage-v8": "^4.1.11",
         "eslint": "^9.39.5",
         "eslint-config-next": "16.4.1",
+        "exceljs": "^4.4.0",
         "jsdom": "^29.1.1",
         "monocart-coverage-reports": "^2.13.2",
         "tailwindcss": "^4.3.3",

@@ -283,15 +283,16 @@ Use Git 2.48 or newer on the host and in the container. Both Ubuntu development
 images install Git through APT from `ppa:git-core/ppa`. The CPU image uses
 Ubuntu 24.04 and Python 3.12. Rebuild older images before using this workflow.
 
-From the main clone, create a branch and checkout for each agent:
+Create a branch and checkout for each agent from the main clone. Use a prefix
+that describes the change, such as `fix/`, `feat/`, or `docs/`.
 
 ```sh
-./scripts/add_worktree.sh fix-api
-./scripts/add_worktree.sh fix-ui
-cd .worktrees/fix-api
+./scripts/add_worktree.sh fix/api
+./scripts/add_worktree.sh feat/ui
+cd .worktrees/fix/api
 ```
 
-The helper creates `agent/fix-api` in `.worktrees/fix-api` from the current
+The helper creates `fix/api` in `.worktrees/fix/api` from the current
 `HEAD`. Pass another base as the second argument when needed. Relative Git
 paths keep these checkouts usable both on the host and under `/app`. This
 optional workflow enables Git's relative-worktree repository extension, so
@@ -305,10 +306,10 @@ servers. Load credentials from the main clone's ignored `docker/.env`.
 Review the agent's commits before integrating them. From the main clone:
 
 ```sh
-git merge --no-ff agent/fix-api -m "Merge reviewed API fix"
-git worktree remove .worktrees/fix-api
+git merge --no-ff fix/api -m "Merge reviewed API fix"
+git worktree remove .worktrees/fix/api
 # Delete the branch only after its changes have been integrated.
-git branch -d agent/fix-api
+git branch -d fix/api
 ```
 
 ### Web Frontend
