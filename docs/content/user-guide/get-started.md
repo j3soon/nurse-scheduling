@@ -115,7 +115,7 @@ Open the XLSX and confirm:
 
 - every person and date is present
 - each staffed shift has the required coverage
-- the individual request from this walkthrough was satisfied or marked `[X]`
+- the individual request from this walkthrough was satisfied or marked in red
 
 ![Optimized XLSX with the schedule, counts, score, and status](../assets/images/user-guide/09-workbook.png)
 

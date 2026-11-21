@@ -93,7 +93,9 @@ def test_optimizer_generates_default_layout_only_for_workbook_submission() -> No
     outbound = parse_schedule(prepare_optimizer_spec(source, 1_000_000).submission_yaml)
     assert "export" not in parse_schedule(source)
     layout = outbound["export"]
-    assert any(rule.get("appendText") == " [X]" for rule in layout["formatting"])
+    assert [rule["appendText"] for rule in layout["formatting"] if "appendText" in rule] == [" [{shortShiftType}]"]
+    unmet_rule = next(rule for rule in layout["formatting"] if "note" in rule)
+    assert unmet_rule["fontColor"] == "#c00000"
     assert any(rule.get("dates") == ["FREEDAY"] for rule in layout["formatting"])
     assert [rule["header"] for rule in layout["extraRows"]] == ["D Count", "N Count", "WORK Count"]
     assert "OFF (FREEDAY)" in [rule["header"] for rule in layout["extraColumns"]]

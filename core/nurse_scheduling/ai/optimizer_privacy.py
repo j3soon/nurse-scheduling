@@ -62,10 +62,9 @@ def _default_export_config(payload: dict) -> dict:
         "weightRange": [-float("inf"), float("inf")],
     }
     formatting = [
-        {"type": "cell", "appendText": " [{shiftType}]", **selector, "when": {"preference": preference}},
+        {"type": "cell", "appendText": " [{shortShiftType}]", **selector, "when": {"preference": preference}},
         {
             "type": "cell",
-            "appendText": " [X]",
             "fontColor": "#c00000",
             "note": {"text": "Weight of unmet single-style request: {totalAbsWeight}"},
             **selector,

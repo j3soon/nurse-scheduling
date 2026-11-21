@@ -703,6 +703,41 @@ preferences:
     assert df.iloc[0, 3] == "2025/1/2"
 
 
+@pytest.mark.parametrize(("second_shift", "off_label"), [("E", "O"), ("O", "OFF"), ("o", "OFF")])
+def test_default_layout_compacts_off_request_labels(second_shift, off_label):
+    import yaml
+
+    from nurse_scheduling.ai.optimizer_privacy import _default_export_config
+
+    payload = yaml.safe_load(f"""
+apiVersion: alpha
+dates:
+  range: {{startDate: 2025-01-01, endDate: 2025-01-03}}
+people:
+  items: [{{id: n1}}]
+shiftTypes:
+  items: [{{id: D}}, {{id: {second_shift}}}]
+preferences:
+  - {{type: at most one shift per day}}
+  - {{type: shift type requirement, shiftType: D, date: "01", requiredNumPeople: 1}}
+  - {{type: shift type requirement, shiftType: D, date: ["02", "03"], requiredNumPeople: 0}}
+  - {{type: shift type requirement, shiftType: {second_shift}, requiredNumPeople: 0}}
+  - {{type: shift request, person: n1, date: ["01", "02"], shiftType: "OFF", weight: 5}}
+""")
+    payload["export"] = _default_export_config(payload)
+    df, _, _, _, info = schedule(yaml.safe_dump(payload).encode(), prettify=True)
+    output = BytesIO()
+    exporter.export_to_excel(df, output, info)
+
+    workbook = load_workbook(output)
+    sheet = workbook.worksheets[0]
+    assert [sheet.cell(3, col).value for col in (2, 3, 4)] == [f"D [{off_label}]", f" [{off_label}]", None]
+    assert sheet["B3"].font.color.rgb == "FFC00000"
+    assert sheet["C3"].hyperlink is None
+    assert workbook["Notes"]["C2"].value == "Weight of unmet single-style request: 5"
+    assert workbook["Notes"].max_row == 2
+
+
 def test_prettify_off_annotations_and_workday_freeday_headers():
     yaml_content = b"""
 apiVersion: alpha

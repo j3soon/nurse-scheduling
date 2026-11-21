@@ -799,7 +799,7 @@ when the schedule is crowded. Review every staffing coverage warning.
 3. Review the downloaded workbook with the person preparing the schedule. Check
    daily ordinary and senior staffing, unmet requests, and each person's total and freeday
    `OFF` counts. In the default output, a blank assignment cell means `OFF`,
-   and `[X]` marks an unmet individual person-date request. Open the **Notes**
+   and red text marks an unmet individual person-date request. Open the **Notes**
    worksheet to see each marked cell and the unmet request's weight.
 4. A feasible schedule should normally be found for this example. If none is
    found, check hard staffing counts, qualifications, mandatory requests,

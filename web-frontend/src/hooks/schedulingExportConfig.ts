@@ -159,7 +159,7 @@ export function generateExportLayoutConfig(
       {
         description: 'Show requested shift request target',
         type: 'cell',
-        appendText: ' [{shiftType}]',
+        appendText: ' [{shortShiftType}]',
         people: [ALL],
         dates: [ALL],
         shiftTypes: [ALL, OFF],
@@ -174,7 +174,6 @@ export function generateExportLayoutConfig(
       {
         description: 'Mark unsatisfied shift requests',
         type: 'cell',
-        appendText: ' [X]',
         fontColor: '#c00000',
         note: {
           text: 'Weight of unmet single-style request: {totalAbsWeight}'

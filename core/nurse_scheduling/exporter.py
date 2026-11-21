@@ -234,9 +234,13 @@ def _count_extra_row_for_date(ctx: Context, d: int, count_people, count_shift_ty
     return count
 
 
-def _render_export_template(template: str, *, pref, requested_shift_type: str, total_abs_weight: float) -> str:
+def _render_export_template(
+    template: str, *, pref, requested_shift_type: str, off_label: str, total_abs_weight: float
+) -> str:
+    short_shift_type = off_label if requested_shift_type == constants.OFF else requested_shift_type
     return (
         template.replace("{shiftType}", requested_shift_type)
+        .replace("{shortShiftType}", short_shift_type)
         .replace("{weight}", str(pref.weight))
         .replace("{absWeight}", str(abs(pref.weight)))
         .replace("{totalAbsWeight}", str(total_abs_weight))
@@ -409,6 +413,8 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     annotation_rules = _build_cell_annotation_rules(ctx) if prettify else []
     cell_annotations = {}
     if annotation_rules:
+        shift_ids = (*shift_types, *scenario.shiftTypes.groups)
+        off_label = constants.OFF if any(str(item.id).upper() == "O" for item in shift_ids) else "O"
         for annotation_rule_data in annotation_rules:
             rule = annotation_rule_data["rule"]
             matches_by_cell = {}
@@ -429,6 +435,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                     rendered_context = {
                         "pref": pref,
                         "requested_shift_type": requested_shift_type,
+                        "off_label": off_label,
                         "total_abs_weight": total_abs_weight,
                     }
                     if rule.appendText:
@@ -442,6 +449,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                             rule.note.text,
                             pref=pref,
                             requested_shift_type=requested_shift_type,
+                            off_label=off_label,
                             total_abs_weight=total_abs_weight,
                         )
                     )

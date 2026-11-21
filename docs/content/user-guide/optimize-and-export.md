@@ -56,7 +56,9 @@ the score, so higher is better. Compare scores only between runs of the same mod
 
 Rows in the workbook are people. Date cells contain shift IDs, and a plain
 blank means `OFF`. For individual-person to individual-date requests, the
-default layout appends `[shift]` and adds `[X]` when the request is unmet.
+default layout appends `[shift]`. It shows a request for a day off as `[O]`, or
+`[OFF]` if a shift type or group already uses `O`. Red text marks an unmet
+request, and the **Notes** sheet lists its weight.
 Count summaries appear at the edges. **Score** and **Status** appear below the
 schedule.
 
