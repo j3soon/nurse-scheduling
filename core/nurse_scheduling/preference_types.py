@@ -96,6 +96,7 @@ def shift_type_requirements(
     # Also note that this requirement is used in other preference types,
     # so this could not be implemented as a special case of shift_count.
 
+    solver = ctx.require_solver()
     for d in compiled_preference.dates:
         for group_idx, ss in enumerate(compiled_preference.shift_type_groups):
             for s in ss:
@@ -126,7 +127,7 @@ def shift_type_requirements(
                     unqualified_n_people = sum(
                         ctx.shifts[(d, s, p)] for p in range(ctx.n_people) if p not in qualified_ps
                     )
-                    ctx.solver.add_constraint(unqualified_n_people == 0)
+                    solver.add_constraint(unqualified_n_people == 0)
 
             # Add the hard lower/exact staffing constraint over the whole
             # requirement group. For singleton groups this is the simple
@@ -140,19 +141,19 @@ def shift_type_requirements(
                 ss,
             )
             if preference.preferredNumPeople is not None:
-                ctx.solver.add_constraint(actual_n_people >= preference.requiredNumPeople)
+                solver.add_constraint(actual_n_people >= preference.requiredNumPeople)
             else:
-                ctx.solver.add_constraint(actual_n_people == preference.requiredNumPeople)
+                solver.add_constraint(actual_n_people == preference.requiredNumPeople)
 
             # Add soft constraint for preferred number of people if specified
             if preference.preferredNumPeople is not None:
-                ctx.solver.add_constraint(actual_n_people <= preference.preferredNumPeople)
+                solver.add_constraint(actual_n_people <= preference.preferredNumPeople)
                 # Create a variable to track the difference between actual and preferred number of people
                 diff_var_name = f"pref_{preference_idx}_d_{d}_g_{group_idx}_diff"
-                ctx.model_vars[diff_var_name] = diff = ctx.solver.new_int_var(
+                ctx.model_vars[diff_var_name] = diff = solver.new_int_var(
                     0, preference.preferredNumPeople, diff_var_name
                 )
-                ctx.solver.add_constraint(diff == preference.preferredNumPeople - actual_n_people)
+                solver.add_constraint(diff == preference.preferredNumPeople - actual_n_people)
 
                 # Add the objective
                 weight = preference.weight
@@ -187,13 +188,14 @@ def shift_request(
     # For all people, try to fulfill the shift requests.
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * shifts[(d, s, p)]), for all satisfying (d, s)
+    solver = ctx.require_solver()
     for d in compiled_preference.dates:
         # Note that the order of p and s is inverted deliberately
         for p in compiled_preference.people:
             weight = preference.weight
             if utils.is_ss_equivalent_to_all(compiled_preference.shift_types, ctx.n_shift_types):
                 # Add the objective
-                utils.add_objective(ctx, weight, ctx.solver.negate(ctx.offs[(d, p)]))
+                utils.add_objective(ctx, weight, solver.negate(ctx.offs[(d, p)]))
                 ctx.reports.append(
                     Report(
                         f"shift_request_pref_{preference_idx}_d_{d}_p_{p}_offs",
@@ -235,9 +237,11 @@ def shift_type_successions(
     # Note that a shift is represented as (d, s)
     # i.e., max(weight * (actual_n_matched == target_n_matched)), for all p,
     # where actual_n_matched = sum_{(d, s)}(shifts[(d, s, p)]), for all satisfying (d, s)
+    solver = ctx.require_solver()
+
     def _pattern_element_match_expr(d, p, pattern_element):
         if pattern_element.matches_all_working_shifts:
-            return ctx.solver.negate(ctx.offs[(d, p)]), True
+            return solver.negate(ctx.offs[(d, p)]), True
         matches = [
             ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for s in pattern_element.shift_types
         ]
@@ -257,10 +261,10 @@ def shift_type_successions(
         weight = preference.weight
 
         if weight == -math.inf:
-            ctx.solver.add_constraint(actual_n_matched <= target_n_matched - 1)
+            solver.add_constraint(actual_n_matched <= target_n_matched - 1)
             continue
         if weight == math.inf:
-            ctx.solver.add_constraint(actual_n_matched == target_n_matched)
+            solver.add_constraint(actual_n_matched == target_n_matched)
             continue
 
         # Construct: is_match = all pattern elements match.
@@ -272,18 +276,18 @@ def shift_type_successions(
             # side becomes 1 and forces is_match to 1. Otherwise, the
             # constraint allows is_match to remain 0, and the negative
             # objective weight makes 0 strictly preferred.
-            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.new_bool_var(is_match_var_name)
-            ctx.solver.add_constraint(is_match >= actual_n_matched - target_n_matched + 1)
+            ctx.model_vars[is_match_var_name] = is_match = solver.new_bool_var(is_match_var_name)
+            solver.add_constraint(is_match >= actual_n_matched - target_n_matched + 1)
             utils.add_objective(ctx, weight, is_match)
             ctx.reports.append(Report(unique_var_prefix, is_match, lambda x: x == 0))
             continue
-        if is_literal_pattern and ctx.solver.should_use_bool_and_var(len(pattern_element_matches)):
-            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_and_var(
+        if is_literal_pattern and solver.should_use_bool_and_var(len(pattern_element_matches)):
+            ctx.model_vars[is_match_var_name] = is_match = solver.create_bool_and_var(
                 is_match_var_name,
                 [match_expr for match_expr, _is_literal in pattern_element_matches],
             )
         else:
-            ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
+            ctx.model_vars[is_match_var_name] = is_match = solver.create_bool_var_with_constraint(
                 is_match_var_name,
                 actual_n_matched,
                 constants.Operator.EQ,
@@ -305,6 +309,7 @@ def shift_count(
     # For specified people, dates, and shift types, penalize violations of the expression
     # The expression is evaluated as a mathematical formula where x is the actual evaluated value
     # and T is the target value
+    solver = ctx.require_solver()
     coefficients = dict(compiled_preference.coefficients)
     weight = preference.weight
     for expression, T in zip(compiled_preference.expressions, compiled_preference.targets, strict=True):
@@ -333,20 +338,18 @@ def shift_count(
                 # - abs(x - T) in [0, max(|0 - T|, |max_x - T|)]
                 max_abs_diff = max(abs(0 - T), abs(max_x - T))
                 abs_diff_var_name = f"{unique_var_prefix}_abs_diff"
-                ctx.model_vars[abs_diff_var_name] = abs_diff = ctx.solver.new_int_var(
+                ctx.model_vars[abs_diff_var_name] = abs_diff = solver.new_int_var(
                     0,
                     max_abs_diff,
                     abs_diff_var_name,
                 )  # Min is 0, since abs_diff is assigned through abs
                 # Use abstracted abs equality method
-                ctx.solver.add_abs_equality(abs_diff, x - T, (0 - T, max_x - T))
+                solver.add_abs_equality(abs_diff, x - T, (0 - T, max_x - T))
                 # Square the difference
                 squared_var_name = f"{unique_var_prefix}_squared"
-                ctx.model_vars[squared_var_name] = squared = ctx.solver.new_int_var(
-                    0, max_abs_diff**2, squared_var_name
-                )
+                ctx.model_vars[squared_var_name] = squared = solver.new_int_var(0, max_abs_diff**2, squared_var_name)
                 # Use abstracted squared equality method
-                ctx.solver.add_squared_equality(squared, abs_diff, (0, max_abs_diff))
+                solver.add_squared_equality(squared, abs_diff, (0, max_abs_diff))
                 # Add the objective
                 utils.add_objective(ctx, weight, squared)
                 ctx.reports.append(Report(f"shift_count_{squared_var_name}", squared, lambda x: x == 0))
@@ -360,7 +363,7 @@ def shift_count(
                     "x = T": constants.Operator.EQ,
                 }
                 # Add the objective
-                ctx.model_vars[expr_var_name] = expr = ctx.solver.create_bool_var_with_constraint(
+                ctx.model_vars[expr_var_name] = expr = solver.create_bool_var_with_constraint(
                     expr_var_name,
                     x,
                     operators[expression],
@@ -407,6 +410,7 @@ def shift_affinity(
     # we will lose the ability to handle the example scenarios above.
     # Therefore, the current formulation is the most flexible one, albeit a bit confusing on first sight.
 
+    solver = ctx.require_solver()
     for d in compiled_preference.dates:
         for i, p1s in enumerate(compiled_preference.people1_groups):
             for j, p2s in enumerate(compiled_preference.people2_groups):
@@ -418,29 +422,25 @@ def shift_affinity(
                     sum1 = sum(
                         ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p1s for s in ss
                     )
-                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = (
-                        ctx.solver.create_bool_var_with_constraint(
-                            some_p1_matched_var_name,
-                            sum1,
-                            constants.Operator.GE,
-                            1,
-                            (0, len(p1s) * len(ss)),
-                        )
+                    ctx.model_vars[some_p1_matched_var_name] = some_p1_matched = solver.create_bool_var_with_constraint(
+                        some_p1_matched_var_name,
+                        sum1,
+                        constants.Operator.GE,
+                        1,
+                        (0, len(p1s) * len(ss)),
                     )
                     sum2 = sum(
                         ctx.shifts[(d, s, p)] if s != constants.OFF_sid else ctx.offs[(d, p)] for p in p2s for s in ss
                     )
-                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = (
-                        ctx.solver.create_bool_var_with_constraint(
-                            some_p2_matched_var_name,
-                            sum2,
-                            constants.Operator.GE,
-                            1,
-                            (0, len(p2s) * len(ss)),
-                        )
+                    ctx.model_vars[some_p2_matched_var_name] = some_p2_matched = solver.create_bool_var_with_constraint(
+                        some_p2_matched_var_name,
+                        sum2,
+                        constants.Operator.GE,
+                        1,
+                        (0, len(p2s) * len(ss)),
                     )
                     sum3 = some_p1_matched + some_p2_matched
-                    ctx.model_vars[is_match_var_name] = is_match = ctx.solver.create_bool_var_with_constraint(
+                    ctx.model_vars[is_match_var_name] = is_match = solver.create_bool_var_with_constraint(
                         is_match_var_name,
                         sum3,
                         constants.Operator.EQ,
@@ -458,11 +458,22 @@ def shift_affinity(
                     )
 
 
-PREFERENCE_TYPES_TO_FUNC = {
-    models.SHIFT_TYPE_REQUIREMENT: shift_type_requirements,
-    models.AT_MOST_ONE_SHIFT_PER_DAY: all_people_work_at_most_one_shift_per_day,
-    models.SHIFT_REQUEST: shift_request,
-    models.SHIFT_TYPE_SUCCESSIONS: shift_type_successions,
-    models.SHIFT_COUNT: shift_count,
-    models.SHIFT_AFFINITY: shift_affinity,
-}
+def apply_preference(
+    ctx: Context, preference: models.BasePreference, compiled: models.CompiledPreference, index: int
+) -> None:
+    """Pass the validated preference and its compiled selectors to the same handler."""
+    match preference, compiled:
+        case models.ShiftTypeRequirementsPreference(), models.CompiledShiftTypeRequirements():
+            shift_type_requirements(ctx, preference, compiled, index)
+        case models.MaxOneShiftPerDayPreference(), None:
+            all_people_work_at_most_one_shift_per_day(ctx, preference, compiled, index)
+        case models.ShiftRequestPreference(), models.CompiledShiftRequest():
+            shift_request(ctx, preference, compiled, index)
+        case models.ShiftTypeSuccessionsPreference(), models.CompiledShiftTypeSuccessions():
+            shift_type_successions(ctx, preference, compiled, index)
+        case models.ShiftCountPreference(), models.CompiledShiftCount():
+            shift_count(ctx, preference, compiled, index)
+        case models.ShiftAffinityPreference(), models.CompiledShiftAffinity():
+            shift_affinity(ctx, preference, compiled, index)
+        case _:
+            raise ValueError(f"Compiled preference {index} does not match {preference.type!r}")
