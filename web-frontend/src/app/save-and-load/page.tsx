@@ -131,11 +131,20 @@ export default function SaveAndLoadPage() {
   const { t } = useI18n();
   const {
     dateData,
+    descriptionData,
+    updateDescription,
     loadFromYaml,
     savedState: filteredState,
   } = useScheduleSpec();
 
   const [isEditing, setIsEditing] = useState(false);
+  const [descriptionEdit, setDescriptionEdit] = useState<{
+    base: typeof filteredState;
+    value: string;
+  } | null>(null);
+  const description = descriptionEdit?.base === filteredState ? descriptionEdit.value : descriptionData;
+  const hasDescriptionEdit = description !== descriptionData;
+  const hasDescriptionEditRef = useRef(hasDescriptionEdit);
   const [editedYaml, setEditedYaml] = useState('');
   const [yamlError, setYamlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -154,7 +163,15 @@ export default function SaveAndLoadPage() {
       }
     };
   }, []);
-  useTabSwitchWarning(isEditing);
+  useTabSwitchWarning(isEditing || hasDescriptionEdit);
+  useEffect(() => {
+    hasDescriptionEditRef.current = hasDescriptionEdit;
+    if (!hasDescriptionEdit) return;
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [hasDescriptionEdit]);
 
   // Convert current state to YAML with custom flow style for leaf arrays
   const currentYaml = generateYamlFromState(filteredState);
@@ -209,7 +226,7 @@ export default function SaveAndLoadPage() {
   };
 
   const handleStartEdit = () => {
-    setEditedYaml(currentYaml);
+    setEditedYaml(hasDescriptionEdit ? generateYamlFromState({ ...filteredState, description }) : currentYaml);
     setIsEditing(true);
     setYamlError(null);
   };
@@ -264,6 +281,7 @@ export default function SaveAndLoadPage() {
 
       // Load the parsed data directly without validation, this willl create a new history state
       loadFromYaml(parsedData);
+      setDescriptionEdit(null);
       setNotice(null);
 
       // Close the editor
@@ -296,10 +314,16 @@ export default function SaveAndLoadPage() {
 
         const summary = summarizeYamlImport(parsedData, file.name, getVersionWarning(parsedData, true), t);
         const versionWarning = getVersionWarning(parsedData);
-        if (versionWarning && !confirm(t("{value0}\n\nDo you want to continue replacing the current Schedule Spec?", { value0: versionWarning }))) {
+        const draftWarning = hasDescriptionEditRef.current ? t("Replacing the Schedule Spec will discard the unsaved description.") : null;
+        const warning = [versionWarning, draftWarning].filter(Boolean).join('\n\n');
+        if (warning && !confirm(t("{value0}\n\nDo you want to continue replacing the current Schedule Spec?", { value0: warning }))) {
           return;
         }
         loadFromYaml(parsedData);
+        if (draftWarning) {
+          setDescriptionEdit(null);
+          handleCancelEdit();
+        }
         setNotice(summary);
       } catch (error) {
         alert(t("Error loading YAML file: {value0}", { value0: error instanceof Error ? error.message : 'Invalid YAML format' }));
@@ -441,6 +465,40 @@ export default function SaveAndLoadPage() {
           )}
         </div>
       </details>
+
+      {!isEditing && (
+        <form
+          className="mb-6 rounded-lg border border-gray-200 bg-white p-4"
+          onSubmit={event => {
+            event.preventDefault();
+            if (hasDescriptionEdit) {
+              updateDescription(description);
+              setDescriptionEdit(null);
+            }
+          }}
+        >
+          <label htmlFor="schedule-spec-description" className="block font-medium text-gray-800">
+            {t("Schedule Spec description (optional)")}
+          </label>
+          <textarea
+            id="schedule-spec-description"
+            value={description}
+            onChange={event => setDescriptionEdit({ base: filteredState, value: event.target.value })}
+            rows={3}
+            className="mt-2 block w-full rounded-md border border-gray-300 p-2 text-sm"
+          />
+          {hasDescriptionEdit && (
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={() => setDescriptionEdit(null)} className="rounded-md border border-gray-300 px-3 py-1 text-sm">
+                {t("Cancel")}
+              </button>
+              <button type="submit" className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700">
+                {t("Save description")}
+              </button>
+            </div>
+          )}
+        </form>
+      )}
 
       {/* YAML Display/Editor */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">

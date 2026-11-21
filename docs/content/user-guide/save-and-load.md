@@ -22,6 +22,10 @@ After loading, the YAML preview shows the November dates and groups.
 
 ## Back up and restore
 
+Use **Schedule Spec description (optional)** to record context for the whole
+Schedule Spec. Select **Save description** to update the YAML preview and
+include the description in copies and downloads.
+
 - **Download** saves the current Schedule Spec as YAML.
 - Optional **Upload** replaces the current Schedule Spec with the selected YAML.
   If the file's app version is missing, different, or from a development build,

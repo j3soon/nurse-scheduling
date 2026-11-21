@@ -130,7 +130,8 @@ test('reorders preference cards and edits the saved YAML on a phone', async ({ p
   await input.fill(original.replace('Phone editing schedule', 'Edited from phone'));
   await page.getByRole('button', { name: 'Save', exact: true }).tap();
   await page.reload();
-  await expect(page.getByText('Edited from phone', { exact: false })).toBeVisible();
+  await expect(page.locator('pre')).toContainText('description: Edited from phone');
+  await expect(page.getByLabel('Schedule Spec description (optional)')).toHaveValue('Edited from phone');
 });
 
 test('reorders a succession pattern without dragging', async ({ page }) => {

@@ -63,8 +63,14 @@ export function normalizePreferenceOrder(pref: Preference, state: ScheduleSpecSt
     };
   }
   if (pref.type === SHIFT_REQUEST) {
+    // Older YAML imports could save unquoted description values as numbers or
+    // booleans. Recover their text before sorting or opening a description editor.
+    const description = pref.description;
     return {
       ...pref,
+      ...(description != null && typeof description !== 'string' && {
+        description: typeof description === 'object' ? JSON.stringify(description) : String(description),
+      }),
       person: sortIdsByEntryOrder(pref.person, peopleEntries),
       date: sortIdsByEntryOrder(pref.date, dateEntries),
       shiftType: sortIdsByEntryOrder(pref.shiftType, shiftTypeEntries),
@@ -106,14 +112,15 @@ export function sortPreferencesByType(preferences: Preference[]): Preference[] {
 export function sortShiftRequestsByEntityOrder(preferences: ShiftRequestPreference[], state: ScheduleSpecState): ShiftRequestPreference[] {
   const peopleEntries = getOrderedEntries(state.people);
   const shiftTypeEntries = getOrderedEntries(state.shiftTypes);
-  // Sort requests by person, then shift type, then weight; request dates are
-  // normalized inside each request rather than used for list-level ordering.
+  // Sort requests by person, shift type, weight, then description.
+  // Dates are sorted within each request.
   return [...preferences].sort((a, b) => {
     const personOrder = compareFirstIdByEntryOrder(a.person, b.person, peopleEntries);
     if (personOrder !== 0) return personOrder;
     const shiftTypeOrder = compareFirstIdByEntryOrder(a.shiftType, b.shiftType, shiftTypeEntries);
     if (shiftTypeOrder !== 0) return shiftTypeOrder;
-    return a.weight - b.weight;
+    if (a.weight !== b.weight) return a.weight - b.weight;
+    return (a.description ?? '').localeCompare(b.description ?? '', 'en');
   });
 }
 
