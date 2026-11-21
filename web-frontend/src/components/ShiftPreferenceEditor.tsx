@@ -66,12 +66,21 @@ export default function ShiftPreferenceEditor({
     if (!isOpen) return;
 
     const root = document.documentElement;
-    const { overflow, scrollbarGutter } = root.style;
+    const { overflow, overflowAnchor, scrollbarGutter } = root.style;
     const { scrollX, scrollY } = window;
     const previousFocus = document.activeElement;
+    const restoreScroll = () => {
+      if (window.scrollX !== scrollX || window.scrollY !== scrollY) {
+        window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+      }
+    };
+    // Prevent the browser from moving the scroll position when the scrollbar
+    // styles change the layout beneath the dialog.
+    root.style.overflowAnchor = 'none';
     root.style.scrollbarGutter = 'stable';
     root.style.overflow = 'hidden';
     dialogRef.current?.focus({ preventScroll: true });
+    restoreScroll();
 
     return () => {
       root.style.overflow = overflow;
@@ -79,9 +88,8 @@ export default function ShiftPreferenceEditor({
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
         previousFocus.focus({ preventScroll: true });
       }
-      if (window.scrollX !== scrollX || window.scrollY !== scrollY) {
-        window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
-      }
+      restoreScroll();
+      root.style.overflowAnchor = overflowAnchor;
     };
   }, [isOpen]);
 
