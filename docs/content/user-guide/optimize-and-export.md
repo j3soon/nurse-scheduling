@@ -62,12 +62,13 @@ request, and the **Notes** sheet lists its weight.
 Count summaries appear at the edges. **Score** and **Status** appear below the
 schedule.
 
-The first sheet prints the schedule grid one page wide on landscape A4. Date
-headers repeat on later pages. The first column is sized for roster names.
-Longer entries use smaller text to stay on one line, and rows keep their
-default height. Select the summary columns to print them separately. With **Prettify XLSX** enabled, history is shown in order as a single
-comma-separated column. Long histories stay on one line and can make the print
-smaller.
+The first sheet prints the schedule grid one page wide on landscape A4 with a
+black outline and 5 mm margins. Date headers repeat on later pages. The first
+column is sized for roster names. Longer entries use smaller text to stay on
+one line, and rows keep their default height. Select the summary columns to
+print them separately. With **Prettify XLSX** enabled, history is shown in order
+as a single comma-separated column. Long histories stay on one line and can
+make the print smaller.
 
 ## Fix common problems
 

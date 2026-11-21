@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries
 from pydantic import ValidationError
 
 import nurse_scheduling
@@ -62,7 +63,28 @@ def _normalize_border_side(side):
     }
 
 
-def _normalize_worksheet(ws):
+def _print_frame_sides(ws):
+    # The print regression checks the new perimeter separately. The golden
+    # workbooks still check the formatting rules and all interior borders.
+    if not ws.print_area:
+        return {}
+    _, _, last_col, last_row = range_boundaries(ws.print_area.rsplit("!", 1)[1])
+    sides = {}
+    for col in range(1, last_col + 1):
+        sides.setdefault((1, col), set()).add("top")
+        sides.setdefault((last_row, col), set()).add("bottom")
+    for row in range(1, last_row + 1):
+        sides.setdefault((row, 1), set()).add("left")
+        sides.setdefault((row, last_col), set()).add("right")
+    # openpyxl also stores a merged range's bottom and right edges on its anchor.
+    for merged in ws.merged_cells.ranges:
+        merged_sides = sides.get((merged.max_row, merged.max_col), set()) & {"bottom", "right"}
+        if merged_sides:
+            sides.setdefault((merged.min_row, merged.min_col), set()).update(merged_sides)
+    return sides
+
+
+def _normalize_worksheet(ws, print_frame_sides):
     normalized_cells = []
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
         normalized_row = []
@@ -90,10 +112,9 @@ def _normalize_worksheet(ws):
                         "wrap_text": cell.alignment.wrap_text,
                     },
                     "border": {
-                        "left": _normalize_border_side(cell.border.left),
-                        "right": _normalize_border_side(cell.border.right),
-                        "top": _normalize_border_side(cell.border.top),
-                        "bottom": _normalize_border_side(cell.border.bottom),
+                        side: _normalize_border_side(getattr(cell.border, side))
+                        for side in ("left", "right", "top", "bottom")
+                        if side not in print_frame_sides.get((cell.row, cell.column), ())
                     },
                     "comment": None
                     if cell.comment is None
@@ -124,7 +145,10 @@ def _assert_workbook_matches_golden(generated_xlsx: bytes, golden_xlsx_path: str
     for sheet_name in generated_sheet_names:
         generated_ws = generated_wb[sheet_name]
         golden_ws = golden_wb[sheet_name]
-        assert _normalize_worksheet(generated_ws) == _normalize_worksheet(golden_ws)
+        print_frame_sides = _print_frame_sides(generated_ws)
+        assert _normalize_worksheet(generated_ws, print_frame_sides) == _normalize_worksheet(
+            golden_ws, print_frame_sides
+        )
 
 
 def _get_golden_xlsx_path(filepath: str, prettify: bool) -> str:

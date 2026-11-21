@@ -606,7 +606,7 @@ def _content_column_width(cells) -> int:
     return min(255, 2 + max((len(_wide_character_placeholder(line)) for line in lines), default=0))
 
 
-def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout):
+def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout) -> int:
     first_date_col = 3 if layout.has_history else 2
     last_date_col = first_date_col + layout.date_count - 1
     ws.print_area = f"A1:{get_column_letter(last_date_col)}{ws.max_row}"
@@ -616,8 +616,6 @@ def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout):
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
-    ws.page_margins.left = ws.page_margins.right = 0.25
-    ws.page_margins.top = ws.page_margins.bottom = 0.4
 
     # Use more of the available page width per date on shorter schedules.
     date_width = min(8.5, 31 * 4.5 / min(layout.date_count, 31))
@@ -655,6 +653,30 @@ def _set_schedule_print_layout(ws, layout: ScheduleSheetLayout):
                 alignment.indent = 0
                 cell.alignment = alignment
 
+    return last_date_col
+
+
+def _set_schedule_print_frame(ws, last_date_col: int):
+    # XLSX margins use inches. Leave a 5 mm offset on each side for printing.
+    margin = 5 / 25.4
+    ws.page_margins.left = ws.page_margins.right = margin
+    ws.page_margins.top = ws.page_margins.bottom = margin
+
+    black = Side(style="medium", color="FF000000")
+
+    def set_edge(cell, edge):
+        border = copy(cell.border)
+        setattr(border, edge, black)
+        cell.border = border
+
+    last_row = ws.max_row
+    for col in range(1, last_date_col + 1):
+        set_edge(ws.cell(1, col), "top")
+        set_edge(ws.cell(last_row, col), "bottom")
+    for row in range(1, last_row + 1):
+        set_edge(ws.cell(row, 1), "left")
+        set_edge(ws.cell(row, last_date_col), "right")
+
 
 def export_to_excel(df, output_buffer, cell_export_info=None):
     """
@@ -680,6 +702,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
 
     comment_info = {}
     style_info = {}
+    last_date_col = None
     if cell_export_info is not None:
         if not isinstance(cell_export_info, dict) or not {"comments", "styles", "layout"}.issuperset(cell_export_info):
             raise ValueError(
@@ -689,7 +712,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
         style_info = cell_export_info.get("styles") or {}
         layout = cell_export_info.get("layout")
         if layout is not None:
-            _set_schedule_print_layout(ws, layout)
+            last_date_col = _set_schedule_print_layout(ws, layout)
 
     # Put notes in a separate sheet so many annotations remain readable without
     # overlapping native Excel comment popups.
@@ -764,6 +787,9 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                     vertical=existing_border.vertical,
                     horizontal=existing_border.horizontal,
                 )
+
+    if last_date_col is not None:
+        _set_schedule_print_frame(ws, last_date_col)
 
     # Schedule and note text must remain literal, including strings that Excel
     # or the writer recognizes as formulas or error values. Preserve other types.

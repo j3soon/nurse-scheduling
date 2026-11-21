@@ -1150,6 +1150,15 @@ def test_schedule_print_area_excludes_summary_columns(month_workbook):
     assert sheet.sheet_properties.pageSetUpPr.fitToPage
     assert sheet.page_setup.fitToWidth == 1
     assert sheet.page_setup.fitToHeight == 0
+    margins = sheet.page_margins
+    assert (margins.left, margins.right, margins.top, margins.bottom) == pytest.approx((5 / 25.4,) * 4)
+    for col in range(1, 34):
+        assert sheet.cell(1, col).border.top.color.rgb == "FF000000"
+        assert sheet.cell(sheet.max_row, col).border.bottom.color.rgb == "FF000000"
+    for row in range(1, sheet.max_row + 1):
+        assert sheet.cell(row, 1).border.left.color.rgb == "FF000000"
+        assert sheet.cell(row, 33).border.right.color.rgb == "FF000000"
+    assert getattr(sheet["AI1"].border.top, "style", None) is None
     assert sheet["B3"].value == "D,D,D,D,D"
     assert sheet.column_dimensions["A"].width == 10
     assert sheet["A7"].value == "A long summary label below the roster"
