@@ -51,28 +51,6 @@ from .transcript import (
 )
 from .workspace import SANDBOX_SYSTEM_PROMPT, SandboxAttachment, attachment_path
 
-CANDIDATE_VALIDATION_ERROR = (
-    "The candidate Schedule Spec failed trusted validation. All Schedule Spec changes made during this agent turn were "
-    "discarded. The current Schedule Spec was not changed."
-)
-PROVIDER_ERROR = "The AI provider failed. Please try again."
-SANDBOX_COMMAND_TIMEOUT_ERROR = (
-    "An AI shell command timed out. The temporary workspace was discarded. Please try again."
-)
-SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
-STALE_TURN_ERROR = "The Schedule Spec changed while this response was generated, so the response was discarded."
-
-
-def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
-    """Keep the newest retained messages that fit the prompt budget, oldest first.
-
-    Retention bounds how much of a conversation the session holds, not how much a
-    provider can accept. A long session would otherwise grow every later prompt past
-    the model context window and fail the request outright.
-    """
-    return project_history(entries_from_legacy_history(history), max_chars).messages
-
-
 APP_EVENT_PREFIX = "[App event]"
 TIMEZONE_STATUS = "Workspace timezone: "
 INTERRUPTED_TOOL_RESULT = "No result provided. The tool exchange was interrupted."
@@ -157,11 +135,6 @@ def context_usage(
         if type(limit) is int and limit > 0:
             usage["max_tokens"] = limit
     return usage
-
-
-def history_context_chars(history: list[ChatMessage], max_chars: int) -> int:
-    """Measure the serialized conversation selected for the next turn's history budget."""
-    return history_chars(recent_history(history, max_chars))
 
 
 def build_provider_messages(
