@@ -2,25 +2,17 @@
 
 [Open Export Layout](https://nursescheduling.org/export-layout){ .md-button .md-button--primary }
 
-Export Layout controls workbook formatting and summaries when **Prettify XLSX**
-is enabled. The default layout already marks weekends, requests, history, and
-common counts. This page is optional. Skip it when the default workbook is
-sufficient.
+Export Layout controls workbook styles and count summaries. Style rules apply
+with **Prettify XLSX** on or off. When enabled, **Prettify XLSX** also adds
+history, shift request annotations, and count summaries. The default layout
+already covers weekends and common counts.
 
 ## Real scenario example
 
-The anonymized ward does not define a custom export layout. The app generates
-the default style rules for requested and unmet shifts, which are sufficient
-for its workbook.
+The anonymized ward uses the default layout. The workbook highlights
+requested and unmet shifts and includes counts for its shift types.
 
-![Generated default workbook style rules for the anonymized ward](../assets/images/user-guide/18-real-export-layout.png)
-
-!!! warning "Experimental"
-
-    Keep the default layout for the first run. Download a YAML backup before
-    making extensive changes. Saving any entry pins the layout, so the
-    auto-generated default stops updating as shift types and date groups
-    change. Use Clear All and Regenerate to restore auto-updates.
+![One Defaults entry in each section of the ward’s export layout](../assets/images/user-guide/18-real-export-layout.png)
 
 ## Customize the layout
 
@@ -34,11 +26,22 @@ earlier ones. In request annotations, `{shiftType}` uses the original target.
 Use `{shortShiftType}` to show `O` for `OFF` when no shift type or group uses
 `O` (case-insensitive).
 
-Select **Add Export Rule** to create a rule. Use the clear and regenerate
-controls to recover the default layout when an experiment is no longer useful.
-Renaming or deleting people, dates, or shifts updates layout references. For a
-custom summary, an **Extra Column** can count one shift across `ALL` dates for
-each person.
+Each section starts with one **Defaults** entry. The workbook generates its
+contents from the current Schedule Spec. Select **Add Export Rule** to add a
+custom entry, then move it before or after **Defaults**. Put a custom style
+after **Defaults** to override a property set by a default style.
+
+Remove **Defaults** to use only your own entries in that section. Select
+**Add Defaults** in the section header to restore it. The generated entries
+move together and cannot be edited individually.
+
+Renaming or deleting people, dates, or shifts updates references in custom
+entries. For example, an **Extra Column** can count one shift across `ALL`
+dates for each person.
+
+YAML omits `export` for the default layout. A custom layout can include
+`type: defaults` at any position in each list. Within an explicit `export`
+mapping, a missing or empty section has no entries.
 
 The solver model is unchanged by export layout rules. Continue with
 [Save and Load](save-and-load.md) or [Optimize and Export](optimize-and-export.md).

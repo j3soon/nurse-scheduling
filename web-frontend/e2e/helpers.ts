@@ -47,8 +47,8 @@ type StoredState = {
     groups: Array<{ id: string; members: string[]; description: string }>;
   };
   preferences: Array<Record<string, unknown>>;
-  export: {
-    formatting: Array<Record<string, unknown>>;
+  export?: {
+    formatting?: Array<Record<string, unknown>>;
     extraColumns?: Array<Record<string, unknown>>;
     extraRows?: Array<Record<string, unknown>>;
   };

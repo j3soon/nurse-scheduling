@@ -41,7 +41,7 @@ Fields:
 - required `preferences`
 - optional `appVersion`: string
 - optional `description`: string
-- optional `export`: mapping, default empty
+- optional `export`: mapping, defaults in all three sections when omitted
 
 Related paths:
 - dates

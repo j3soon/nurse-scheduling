@@ -2773,27 +2773,70 @@ describe('useScheduleSpec', () => {
     });
   });
 
-  it('generates compact request labels and keeps the unmet request color and note', () => {
-    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
-    const rules = result.current.effectiveExportData.formatting ?? [];
-    expect(rules.flatMap(rule => 'appendText' in rule && rule.appendText ? [rule.appendText] : []))
-      .toEqual([' [{shortShiftType}]']);
-    expect(rules.find(rule => 'note' in rule && rule.note)).toMatchObject({
-      fontColor: '#c00000',
-      when: { preference: { satisfied: false } },
-    });
+  it('preserves Defaults alongside custom rules across entity changes and history reload', () => {
+    const defaults = { type: 'defaults' } as const;
+    const layout = {
+      formatting: [{ type: 'row' as const, people: ['P1'], backgroundColor: '#ffffff' }, defaults],
+      extraColumns: [{ type: 'count' as const, header: 'Count', countShiftTypes: ['D'], countDates: ['01'] }, defaults],
+      extraRows: [defaults, { type: 'count' as const, header: 'Count', countShiftTypes: ['D'], countPeople: ['P1'] }],
+    };
+    const { result, unmount } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    act(() => result.current.loadFromYaml({
+      dates: { range: { startDate: '2026-01-01', endDate: '2026-01-03' } },
+      people: { items: [{ id: 'P1', description: '' }] },
+      shiftTypes: { items: [{ id: 'D', description: '' }] },
+      export: layout,
+    }));
+    act(() => result.current.updateExportExtraRows([defaults]));
+    unmount();
+
+    const { result: reloaded } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(reloaded.current.savedState.export?.extraRows).toEqual([defaults]);
+    act(() => reloaded.current.undo());
+    expect(reloaded.current.savedState.export).toEqual(layout);
+    act(() => reloaded.current.redo());
+    expect(reloaded.current.savedState.export?.extraRows).toEqual([defaults]);
+    act(() => reloaded.current.deleteItem(DataType.PEOPLE, reloaded.current.peopleData, 'P1'));
+    expect(reloaded.current.savedState.export?.formatting).toEqual([defaults]);
+    expect(reloaded.current.savedState.export?.extraColumns).toEqual(layout.extraColumns);
   });
 
-  it('keeps the generated export layout stable across renders', () => {
-    const { result, rerender } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+  it.each([
+    { section: 'default extra columns', keepEmptyColumns: false },
+    { section: 'empty extra columns', keepEmptyColumns: true },
+  ])('saves the layout after deleting the last custom rule with $section', ({ keepEmptyColumns }) => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const defaults = { type: 'defaults' } as const;
+    const custom = { type: 'row' as const, people: ['P1'], backgroundColor: '#ffffff' };
+    const layout = {
+      formatting: [defaults, custom],
+      extraColumns: keepEmptyColumns ? [] : [defaults],
+      extraRows: [defaults],
+    };
+    act(() => result.current.loadFromYaml({
+      people: { items: [{ id: 'P1', description: '' }] },
+      export: layout,
+    }));
 
-    const generated = result.current.effectiveExportData;
-    rerender();
+    act(() => result.current.deleteItem(DataType.PEOPLE, result.current.peopleData, 'P1'));
+    const expectedLayout = keepEmptyColumns ? { ...layout, formatting: [defaults] } : undefined;
+    expect(result.current.savedState.export).toEqual(expectedLayout);
+    expect(loadStateFromStorage().state.export).toEqual(expectedLayout);
 
-    // Consumers derive Schedule Spec YAML from this, so a new object per render would
-    // rebuild that YAML on every keystroke and every streamed chat token.
-    expect(result.current.exportData).toBeUndefined();
-    expect(result.current.effectiveExportData).toBe(generated);
+    act(() => result.current.undo());
+    expect(result.current.savedState.export).toEqual(layout);
+    act(() => result.current.redo());
+    expect(result.current.savedState.export).toEqual(expectedLayout);
+  });
+
+  it('rejects an invalid Defaults import without replacing the current Schedule Spec', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const saved = result.current.savedState;
+    const defaults = { type: 'defaults' };
+    expect(() => result.current.loadFromYaml({ export: { extraRows: [defaults, defaults] } })).toThrow(/Defaults entry/);
+    expect(() => result.current.loadFromYaml({ export: { extraColumns: [{ ...defaults, header: 'Custom' }] } }))
+      .toThrow(/Defaults entry/);
+    expect(result.current.savedState).toBe(saved);
   });
 
   it('preserves automatic and custom export layouts through saved schedule round trips', () => {

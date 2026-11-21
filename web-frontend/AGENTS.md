@@ -260,9 +260,10 @@ Replayable AI session events use `Last-Event-ID`, so include it in backend CORS
 preflight coverage. Keep object URLs for chat and workbook downloads alive until the
 download is replaced or the page unmounts.
 
-Use the shared `savedState` for AI input and Save and Load YAML. Omit automatically
-generated export defaults from both, while preserving explicit empty or custom
-layouts. Generate workbook defaults only at the optimizer submission boundary.
+Use the shared `savedState` for AI input, Save and Load YAML, and optimizer
+submissions. Keep export Defaults markers in list order. An omitted `export`
+uses all three sets of defaults. Within an explicit `export` mapping, omitted
+and empty lists have no entries. Generate workbook defaults in the backend.
 
 For reconnect tests, verify that the active HTTP stream actually closes. Browser
 offline emulation alone can leave an existing stream open. Assert that reconnect

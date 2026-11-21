@@ -23,12 +23,14 @@
 
 import { useI18n } from '@/i18n/I18nProvider';
 import { ReorderButtons } from './ReorderButtons';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useRef, useState } from 'react';
 import { ERROR_SHOULD_NOT_HAPPEN } from '../constants/errors';
 import { FiCopy, FiEdit2, FiTrash2 } from 'react-icons/fi';
 
 interface DraggableCardListProps<T> {
   title: string;
+  headerAction?: ReactNode;
+  isEditable?: (item: T) => boolean;
   items: T[];
   emptyMessage: string;
   renderContent: (item: T, index: number) => ReactNode;
@@ -40,6 +42,8 @@ interface DraggableCardListProps<T> {
 
 export function DraggableCardList<T>({
   title,
+  headerAction,
+  isEditable,
   items,
   emptyMessage,
   renderContent,
@@ -49,19 +53,23 @@ export function DraggableCardList<T>({
   onReorder,
 }: DraggableCardListProps<T>) {
   const { t } = useI18n();
+  const dragIndexRef = useRef<number | null>(null);
   const [dragOverState, setDragOverState] = useState<{ index: number; insertAfter: boolean } | null>(null);
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
+    dragIndexRef.current = index;
     e.dataTransfer.setData('text/plain', index.toString());
     e.currentTarget.classList.add('opacity-50');
   };
 
   const handleDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
+    dragIndexRef.current = null;
     e.currentTarget.classList.remove('opacity-50');
     setDragOverState(null);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>, index: number) => {
+    if (dragIndexRef.current === null) return;
     e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
     const insertAfter = e.clientY > rect.top + rect.height / 2;
@@ -76,7 +84,8 @@ export function DraggableCardList<T>({
     e.preventDefault();
     setDragOverState(null);
 
-    const dragIndex = parseInt(e.dataTransfer.getData('text/plain'));
+    const dragIndex = dragIndexRef.current;
+    if (dragIndex === null) return;
     if (!onReorder) {
       console.error(`onReorder is not defined. ${ERROR_SHOULD_NOT_HAPPEN}`);
       return;
@@ -95,8 +104,9 @@ export function DraggableCardList<T>({
 
   return (
     <div className="bg-white shadow-md rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-200">
         <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+        {headerAction}
       </div>
 
       {items.length === 0 ? (
@@ -107,6 +117,7 @@ export function DraggableCardList<T>({
         <div className="divide-y divide-gray-200">
           {items.map((item, index) => {
             const isDraggable = !!onReorder;
+            const showEditActions = isEditable?.(item) ?? true;
             return (
               <div
                 key={index}
@@ -140,13 +151,15 @@ export function DraggableCardList<T>({
                         }}
                       />
                     )}
-                    <button
-                      onClick={() => onEdit(index)}
-                      className="text-blue-600 hover:text-blue-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
-                    >
-                      <FiEdit2 className="h-4 w-4" />
-                      {t("Edit")}</button>
-                    {onDuplicate && (
+                    {showEditActions && (
+                      <button
+                        onClick={() => onEdit(index)}
+                        className="text-blue-600 hover:text-blue-900 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"
+                      >
+                        <FiEdit2 className="h-4 w-4" />
+                        {t("Edit")}</button>
+                    )}
+                    {showEditActions && onDuplicate && (
                       <button
                         onClick={() => onDuplicate(index)}
                         className="text-indigo-600 hover:text-indigo-800 flex min-h-11 sm:min-h-0 items-center gap-1 text-sm"

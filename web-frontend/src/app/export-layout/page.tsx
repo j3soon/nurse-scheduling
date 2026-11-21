@@ -24,8 +24,9 @@ import { translator, type Translator } from '@/i18n/messages';
 import { useI18n } from '@/i18n/I18nProvider';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { FiAlertCircle, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
+import { FiAlertCircle, FiPlus, FiRefreshCw, FiTrash2 } from 'react-icons/fi';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
+import { defaultExportEntry } from '@/hooks/schedulingExportConfig';
 import {
   ExportExtraColumn,
   ExportExtraRow,
@@ -82,6 +83,7 @@ interface DraftRule {
 interface EditingTarget {
   kind: RuleKind;
   index: number;
+  rule: ExportFormatting | ExportExtraColumn | ExportExtraRow;
 }
 
 interface ExportLayoutErrors {
@@ -197,9 +199,13 @@ export default function ExportFormattingPage() {
   const formattingRules = effectiveExportData.formatting || [];
   const extraColumns = effectiveExportData.extraColumns || [];
   const extraRows = effectiveExportData.extraRows || [];
+  const entriesByKind = { style: formattingRules, 'extra column': extraColumns, 'extra row': extraRows };
+  const editingTargetChanged = editingTarget !== null
+    && entriesByKind[editingTarget.kind][editingTarget.index] !== editingTarget.rule;
 
   const clearAllExportLayoutEntries = () => {
     if (confirm(t("Are you sure you want to clear ALL export layout entries?"))) {
+      dismissEditingDraft();
       updateExportConfig({
         formatting: [],
         extraColumns: [],
@@ -208,26 +214,30 @@ export default function ExportFormattingPage() {
     }
   };
 
-  const clearAllAndRegenerateExportLayoutEntries = () => {
-    if (confirm(t("Are you sure you want to clear ALL export layout entries and regenerate them?"))) {
+  const resetExportLayout = () => {
+    if (confirm(t("Reset all three export sections to Defaults?"))) {
+      dismissEditingDraft();
       updateExportConfig(undefined);
     }
   };
 
   const clearStyleRules = () => {
     if (confirm(t("Are you sure you want to clear all export style rules?"))) {
+      dismissEditingDraft();
       updateExportFormatting([]);
     }
   };
 
   const clearExtraColumns = () => {
     if (confirm(t("Are you sure you want to clear all export extra columns?"))) {
+      dismissEditingDraft();
       updateExportExtraColumns([]);
     }
   };
 
   const clearExtraRows = () => {
     if (confirm(t("Are you sure you want to clear all export extra rows?"))) {
+      dismissEditingDraft();
       updateExportExtraRows([]);
     }
   };
@@ -282,6 +292,30 @@ export default function ExportFormattingPage() {
     dismissEditingDraft();
     updateExportExtraRows(newItems);
   };
+
+  const renderAddDefaults = (
+    entries: { type: string }[],
+    onAdd: () => void
+  ) => entries.some(entry => entry.type === 'defaults') ? null : (
+    <button
+      type="button"
+      className="flex min-h-11 items-center gap-1 text-sm font-medium text-blue-700 hover:text-blue-900 sm:min-h-0"
+      onClick={() => {
+        dismissEditingDraft();
+        onAdd();
+      }}
+    >
+      <FiPlus aria-hidden="true" />
+      {t("Add Defaults")}
+    </button>
+  );
+
+  const defaultsContent = (
+    <>
+      <h4 className="font-medium text-gray-900">{t("Defaults")}</h4>
+      <p className="text-sm text-gray-600">{t("Generated from the current Schedule Spec when you export.")}</p>
+    </>
+  );
 
   const peopleOptions = [
     ...peopleData.items.map(person => ({ id: person.id, description: person.description })),
@@ -344,6 +378,7 @@ export default function ExportFormattingPage() {
 
   const handleStartEditStyle = (index: number) => {
     const rule = formattingRules[index];
+    if (rule.type === 'defaults') return;
     const weightRange = 'when' in rule ? rule.when?.preference.weightRange : undefined;
     const hasValidWeightRange = Array.isArray(weightRange) && weightRange.length === 2;
     setDraft({
@@ -370,7 +405,7 @@ export default function ExportFormattingPage() {
     setErrors(weightRange !== undefined && !hasValidWeightRange
       ? { weightRangeMin: t("Weight Range must contain exactly two values") }
       : {});
-    setEditingTarget({ kind: 'style', index });
+    setEditingTarget({ kind: 'style', index, rule });
     setIsFormVisible(true);
     saveScrollPosition();
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -378,6 +413,7 @@ export default function ExportFormattingPage() {
 
   const handleStartEditExtraColumn = (index: number) => {
     const rule = extraColumns[index];
+    if (rule.type === 'defaults') return;
     setDraft({
       ...createEmptyDraft(),
       description: rule.description || '',
@@ -392,7 +428,7 @@ export default function ExportFormattingPage() {
       countDates: rule.countDates,
       rightBorderColor: rule.rightBorderColor || '',
     });
-    setEditingTarget({ kind: 'extra column', index });
+    setEditingTarget({ kind: 'extra column', index, rule });
     setIsFormVisible(true);
     setErrors({});
     saveScrollPosition();
@@ -401,6 +437,7 @@ export default function ExportFormattingPage() {
 
   const handleStartEditExtraRow = (index: number) => {
     const rule = extraRows[index];
+    if (rule.type === 'defaults') return;
     setDraft({
       ...createEmptyDraft(),
       description: rule.description || '',
@@ -410,7 +447,7 @@ export default function ExportFormattingPage() {
       countPeople: rule.countPeople,
       bottomBorderColor: rule.bottomBorderColor || '',
     });
-    setEditingTarget({ kind: 'extra row', index });
+    setEditingTarget({ kind: 'extra row', index, rule });
     setIsFormVisible(true);
     setErrors({});
     saveScrollPosition();
@@ -765,6 +802,7 @@ export default function ExportFormattingPage() {
   };
 
   const handleSave = () => {
+    if (editingTargetChanged) return;
     const wasEditing = editingTarget !== null;
     const didSave = draft.kind === 'style'
       ? saveStyleRule()
@@ -1115,18 +1153,9 @@ export default function ExportFormattingPage() {
         />
       </div>
 
-      <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-        <div className="flex items-start gap-2">
-          <FiAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-          <p>
-            {t("This page is experimental. Saving any entry pins the layout, so the default layout stops auto-updating as shift types and date groups change. Use Clear All and Regenerate to restore auto-updates.")}</p>
-        </div>
-      </div>
-
       <div className="mb-6 bg-white shadow-md rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-800">{t("Clear Data")}</h3>
-          <p className="text-sm text-gray-600 mt-1">{t("Remove or regenerate export layout entries with targeted operations")}</p>
         </div>
         <div className="px-4 py-3">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1139,12 +1168,12 @@ export default function ExportFormattingPage() {
               {t("Clear All")}</button>
 
             <button
-              onClick={clearAllAndRegenerateExportLayoutEntries}
+              onClick={resetExportLayout}
               className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-md transition-colors flex items-center gap-2"
-              title={t("Clear all export layout entries and regenerate count entries from current shift types")}
+              title={t("Replace all export layout entries with Defaults")}
             >
               <FiRefreshCw className="h-4 w-4" />
-              {t("Clear All and Regenerate")}</button>
+              {t("Reset to Defaults")}</button>
 
             <button
               onClick={clearStyleRules}
@@ -1179,6 +1208,11 @@ export default function ExportFormattingPage() {
             <h2 className="text-lg font-semibold mb-4 text-gray-800">
               {editingTarget !== null ? t("Edit Export Rule") : t("Add Export Rule")}
             </h2>
+            {editingTargetChanged && (
+              <p role="alert" className="mb-4 text-sm text-red-700">
+                {t("The export layout changed while you were editing. Cancel and reopen the rule to edit it.")}
+              </p>
+            )}
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">{t("Description")}</label>
@@ -1352,7 +1386,8 @@ export default function ExportFormattingPage() {
                     {t("Cancel")}</button>
                   <button
                     onClick={handleSave}
-                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                    disabled={editingTargetChanged}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     {editingTarget !== null ? t("Update") : t("Add")}
                   </button>
@@ -1367,12 +1402,14 @@ export default function ExportFormattingPage() {
         <DraggableCardList
           title={t("Style Rules")}
           items={formattingRules}
+          headerAction={renderAddDefaults(formattingRules, () => updateExportFormatting([defaultExportEntry, ...formattingRules]))}
+          isEditable={rule => rule.type !== 'defaults'}
           emptyMessage={t("No style rules defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditStyle}
           onDuplicate={handleDuplicateStyleRule}
           onDelete={deleteStyleRule}
           onReorder={handleReorderStyleRules}
-          renderContent={(rule) => (
+          renderContent={(rule) => rule.type === 'defaults' ? defaultsContent : (
             <>
               {rule.description && (
                 <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>
@@ -1461,12 +1498,14 @@ export default function ExportFormattingPage() {
         <DraggableCardList
           title={t("Extra Columns")}
           items={extraColumns}
+          headerAction={renderAddDefaults(extraColumns, () => updateExportExtraColumns([defaultExportEntry, ...extraColumns]))}
+          isEditable={rule => rule.type !== 'defaults'}
           emptyMessage={t("No extra columns defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditExtraColumn}
           onDuplicate={handleDuplicateExtraColumn}
           onDelete={deleteExtraColumn}
           onReorder={handleReorderExtraColumns}
-          renderContent={(rule) => (
+          renderContent={(rule) => rule.type === 'defaults' ? defaultsContent : (
             <>
               {rule.description && (
                 <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>
@@ -1503,12 +1542,14 @@ export default function ExportFormattingPage() {
         <DraggableCardList
           title={t("Extra Rows")}
           items={extraRows}
+          headerAction={renderAddDefaults(extraRows, () => updateExportExtraRows([defaultExportEntry, ...extraRows]))}
+          isEditable={rule => rule.type !== 'defaults'}
           emptyMessage={t("No extra rows defined yet. Click \"Add Export Rule\" to get started.")}
           onEdit={handleStartEditExtraRow}
           onDuplicate={handleDuplicateExtraRow}
           onDelete={deleteExtraRow}
           onReorder={handleReorderExtraRows}
-          renderContent={(rule) => (
+          renderContent={(rule) => rule.type === 'defaults' ? defaultsContent : (
             <>
               {rule.description && (
                 <h4 className="font-medium text-gray-900 mb-3">{rule.description}</h4>

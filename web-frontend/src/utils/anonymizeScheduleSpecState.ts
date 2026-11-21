@@ -131,7 +131,7 @@ export function anonymizeScheduleSpecStateWithMapping(
             formatting: state.export.formatting?.map(rule =>
               'people' in rule ? { ...rule, people: anonymizeIds(rule.people) } : rule
             ),
-            extraRows: state.export.extraRows?.map(rule => ({
+            extraRows: state.export.extraRows?.map(rule => rule.type === 'defaults' ? rule : ({
               ...rule,
               countPeople: anonymizeIds(rule.countPeople)
             }))

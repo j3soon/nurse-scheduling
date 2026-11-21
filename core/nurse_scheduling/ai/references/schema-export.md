@@ -31,12 +31,43 @@ Fields:
 - optional `extraRows`: list, default []
 
 Rules:
-- If `export` is absent, add it as an optional top-level mapping. Its lists may be omitted when unused.
+- Omit `export` to use the current defaults in all three sections.
+- In an explicit `export` mapping, a missing or empty list has no entries.
+- To add custom rules while retaining defaults, include `{type: defaults}` in each section where defaults should still apply.
 
 Related paths:
+- export.defaults
 - export.formatting
 - export.extraColumns
 - export.extraRows
+
+---
+
+Path: export.defaults
+
+Include the live defaults in one section of a custom layout.
+
+Fields:
+- required `type`: defaults
+
+Rules:
+- Each section accepts at most one Defaults entry. The entry has no other fields.
+- Rules run in list order. The workbook expands the entry in place from the current Schedule Spec.
+- Insert a custom style after Defaults to override a default style property. Move count entries before or after Defaults to change their display order.
+
+Example:
+
+```yaml
+export:
+  formatting:
+    - type: defaults
+    - type: column
+      dates: [WEEKEND]
+      backgroundColor: "#ede9fe"
+  extraColumns:
+    - type: defaults
+  extraRows: []
+```
 
 ---
 
@@ -45,8 +76,8 @@ Path: export.formatting
 Formatting rules selected by their `type`.
 
 Fields:
-- all variants optionally accept `description`: string
-- all variants optionally accept `backgroundColor`, `bottomBorderColor`, `rightBorderColor`, and `fontColor`
+- all custom variants optionally accept `description`: string
+- all custom variants optionally accept `backgroundColor`, `bottomBorderColor`, `rightBorderColor`, and `fontColor`
 
 Rules:
 - Colors use six-digit #RRGGBB strings.

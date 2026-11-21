@@ -28,6 +28,7 @@ from typing_extensions import Self
 
 from .loader import _load_yaml
 from .models import (
+    ExportDefaults,
     Person,
     ScheduleSpec,
     ShiftAffinityPreference,
@@ -126,9 +127,13 @@ class _FrontendScheduleSpec(ScheduleSpec):
                         f"export.formatting[{rule_index}].{field_name}",
                     )
         for rule_index, rule in enumerate(self.export.extraColumns):
+            if isinstance(rule, ExportDefaults):
+                continue
             _require_flat_string_list(rule.countShiftTypes, f"export.extraColumns[{rule_index}].countShiftTypes")
             _require_flat_string_list(rule.countDates, f"export.extraColumns[{rule_index}].countDates")
         for rule_index, rule in enumerate(self.export.extraRows):
+            if isinstance(rule, ExportDefaults):
+                continue
             _require_flat_string_list(rule.countShiftTypes, f"export.extraRows[{rule_index}].countShiftTypes")
             _require_flat_string_list(rule.countPeople, f"export.extraRows[{rule_index}].countPeople")
         return self

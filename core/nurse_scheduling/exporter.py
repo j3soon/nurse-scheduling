@@ -59,10 +59,6 @@ def _build_custom_export_style_info(
     n_history_cols: int,
 ):
     """Build cell-level style overrides from the scenario export rules."""
-    export_config = ctx.scenario.export
-    if not export_config or not export_config.formatting:
-        return {}
-
     style_map = {}
 
     def set_style(
@@ -87,8 +83,8 @@ def _build_custom_export_style_info(
         if font_color:
             style_map[key]["fontColor"] = font_color
 
-    compiled_rules = ctx.compiled_schedule_spec.export.formatting
-    for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
+    for compiled_rule in ctx.compiled_schedule_spec.export.formatting:
+        rule = compiled_rule.rule
         target_people = set(compiled_rule.people)
         target_dates = set(compiled_rule.dates)
         target_shift_types = set(compiled_rule.shift_types)
@@ -259,13 +255,9 @@ def _render_export_template(
 
 
 def _build_cell_annotation_rules(ctx: Context):
-    export_config = ctx.scenario.export
-    if not export_config or not export_config.formatting:
-        return []
-
     annotation_rules = []
-    compiled_rules = ctx.compiled_schedule_spec.export.formatting
-    for rule, compiled_rule in zip(export_config.formatting, compiled_rules, strict=True):
+    for compiled_rule in ctx.compiled_schedule_spec.export.formatting:
+        rule = compiled_rule.rule
         if rule.type != "cell" or not rule.when or (not rule.appendText and not rule.note):
             continue
         annotation_rules.append(
@@ -352,7 +344,7 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     dates = ctx.compiled_schedule_spec.dates
     people = scenario.people.items
     shift_types = scenario.shiftTypes.items
-    export_config = scenario.export
+    export = ctx.compiled_schedule_spec.export
 
     # Initialize dataframe with size including leading rows and columns
     n_leading_rows, n_leading_cols = 2, 1
@@ -365,8 +357,8 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
     n_history_cols = int(has_history)
     layout = ScheduleSheetLayout(len(people), len(dates), has_history)
 
-    extra_column_rules = export_config.extraColumns if prettify and export_config else []
-    extra_row_rules = export_config.extraRows if prettify and export_config else []
+    extra_column_rules = export.extra_columns if prettify else ()
+    extra_row_rules = export.extra_rows if prettify else ()
     # Add extra columns and rows for prettify mode
     extra_cols = (1 + len(extra_column_rules)) if extra_column_rules else 0  # Empty separator + configured columns
     extra_rows = (1 + len(extra_row_rules)) if extra_row_rules else 0  # Empty separator + configured rows
@@ -488,11 +480,10 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
 
     if prettify:
         extra_col_start = n_leading_cols + n_history_cols + len(dates) + 1
-        compiled_extra_columns = ctx.compiled_schedule_spec.export.extra_columns
-        for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_column_rules, compiled_extra_columns, strict=True)):
+        for rule_idx, compiled_rule in enumerate(extra_column_rules):
             col_idx = extra_col_start + rule_idx
             coefficients = dict(compiled_rule.coefficients)
-            df.iloc[1, col_idx] = rule.header
+            df.iloc[1, col_idx] = compiled_rule.rule.header
             for p in range(len(people)):
                 df.iloc[n_leading_rows + p, col_idx] = _count_extra_column_for_person(
                     ctx,
@@ -503,10 +494,9 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
                 )
 
         extra_row_start = n_leading_rows + len(people) + n_trailing_rows + 1
-        compiled_extra_rows = ctx.compiled_schedule_spec.export.extra_rows
-        for rule_idx, (rule, compiled_rule) in enumerate(zip(extra_row_rules, compiled_extra_rows, strict=True)):
+        for rule_idx, compiled_rule in enumerate(extra_row_rules):
             row_idx = extra_row_start + rule_idx
-            df.iloc[row_idx, 0] = rule.header
+            df.iloc[row_idx, 0] = compiled_rule.rule.header
             for d in range(len(dates)):
                 df.iloc[row_idx, n_leading_cols + n_history_cols + d] = _count_extra_row_for_date(
                     ctx,
@@ -579,12 +569,14 @@ def get_people_versus_date_dataframe(ctx: Context, prettify: bool = False):
         style_info = _build_custom_export_style_info(
             ctx, len(df.index), len(df.columns), n_leading_rows, n_leading_cols, n_history_cols
         )
-        for rule_idx, rule in enumerate(extra_column_rules):
+        for rule_idx, compiled_rule in enumerate(extra_column_rules):
+            rule = compiled_rule.rule
             if rule.rightBorderColor:
                 col_idx = extra_col_start + rule_idx
                 for row_idx in range(len(df.index)):
                     style_info.setdefault((row_idx + 1, col_idx + 1), {})["rightBorderColor"] = rule.rightBorderColor
-        for rule_idx, rule in enumerate(extra_row_rules):
+        for rule_idx, compiled_rule in enumerate(extra_row_rules):
+            rule = compiled_rule.rule
             if rule.bottomBorderColor:
                 row_idx = extra_row_start + rule_idx
                 for col_idx in range(len(df.columns)):

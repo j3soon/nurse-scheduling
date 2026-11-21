@@ -61,7 +61,8 @@ def named_schedule() -> str:
     )
     payload["export"]["formatting"] = [{"type": "row", "people": ["Alice"], "description": "Private formatting note"}]
     payload["export"]["extraRows"] = [
-        {"type": "count", "header": "Count", "countShiftTypes": ["D"], "countPeople": ["Bob"]}
+        {"type": "defaults"},
+        {"type": "count", "header": "Count", "countShiftTypes": ["D"], "countPeople": ["Bob"]},
     ]
     return schedule_spec_yaml(payload)
 
@@ -79,26 +80,19 @@ def test_optimizer_submission_matches_frontend_basic_anonymization() -> None:
     assert outbound["preferences"][3]["people1"] == ["P2"]
     assert outbound["preferences"][3]["people2"] == ["P3"]
     assert outbound["export"]["formatting"][0]["people"] == ["P2"]
-    assert outbound["export"]["extraRows"][0]["countPeople"] == ["P3"]
+    assert outbound["export"]["extraRows"][0] == {"type": "defaults"}
+    assert outbound["export"]["extraRows"][1]["countPeople"] == ["P3"]
     assert "description" not in prepared.submission_yaml
     assert "Alice" not in prepared.submission_yaml
     assert "Bob" not in prepared.submission_yaml
 
 
-def test_optimizer_generates_default_layout_only_for_workbook_submission() -> None:
+def test_optimizer_preserves_omitted_and_explicit_export_layouts() -> None:
     payload = base_schedule_payload()
     del payload["export"]
-    payload["dates"]["groups"].append({"id": "FREEDAY", "members": ["2026-01-01"], "description": ""})
-    source = schedule_spec_yaml(payload)
-    outbound = parse_schedule(prepare_optimizer_spec(source, 1_000_000).submission_yaml)
-    assert "export" not in parse_schedule(source)
-    layout = outbound["export"]
-    assert [rule["appendText"] for rule in layout["formatting"] if "appendText" in rule] == [" [{shortShiftType}]"]
-    unmet_rule = next(rule for rule in layout["formatting"] if "note" in rule)
-    assert unmet_rule["fontColor"] == "#c00000"
-    assert any(rule.get("dates") == ["FREEDAY"] for rule in layout["formatting"])
-    assert [rule["header"] for rule in layout["extraRows"]] == ["D Count", "N Count", "WORK Count"]
-    assert "OFF (FREEDAY)" in [rule["header"] for rule in layout["extraColumns"]]
+    outbound = parse_schedule(prepare_optimizer_spec(schedule_spec_yaml(payload), 1_000_000).submission_yaml)
+    assert "export" not in outbound
+
     payload["export"] = {"formatting": []}
     custom = parse_schedule(prepare_optimizer_spec(schedule_spec_yaml(payload), 1_000_000).submission_yaml)
     assert custom["export"] == {"formatting": []}

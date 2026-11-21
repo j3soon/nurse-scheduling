@@ -118,6 +118,27 @@ def test_model_compiles_reusable_schedule_indices_for_runtime_phases():
         compiled.map_sid_s["work"] = (0,)
 
 
+def test_omitted_export_matches_explicit_defaults_without_materializing_rules():
+    payload = _base_payload()
+    omitted = ScheduleSpec.model_validate(payload)
+    defaults = [{"type": "defaults"}]
+    payload["export"] = {"formatting": defaults, "extraColumns": defaults, "extraRows": defaults}
+    explicit = ScheduleSpec.model_validate(payload)
+
+    assert "export" not in omitted.model_dump(exclude_unset=True)
+    assert explicit.model_dump(exclude_unset=True)["export"] == payload["export"]
+    assert omitted.compiled_schedule_spec.export == explicit.compiled_schedule_spec.export
+    assert explicit.compiled_schedule_spec.export.extra_rows[0].rule.header == "D Count"
+
+
+@pytest.mark.parametrize("section", ["formatting", "extraColumns", "extraRows"])
+def test_export_rejects_duplicate_defaults_entries(section):
+    payload = _base_payload()
+    payload["export"] = {section: [{"type": "defaults"}, {"type": "defaults"}]}
+    with pytest.raises(ValidationError, match="only one defaults entry"):
+        ScheduleSpec.model_validate(payload)
+
+
 def test_compiled_schedule_spec_supports_pickle_and_context_deepcopy():
     data = ScheduleSpec.model_validate(_base_payload())
     compiled = data.compiled_schedule_spec

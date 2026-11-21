@@ -57,7 +57,7 @@ function mapDateReferences(state: ScheduleSpecState, mapId: (id: string) => stri
         formatting: state.export.formatting?.map(rule => 'dates' in rule
           ? { ...rule, dates: mapIds(rule.dates) }
           : rule),
-        extraColumns: state.export.extraColumns?.map(rule => ({ ...rule, countDates: mapIds(rule.countDates) })),
+        extraColumns: state.export.extraColumns?.map(rule => rule.type === 'defaults' ? rule : ({ ...rule, countDates: mapIds(rule.countDates) })),
       },
     }),
   };
@@ -112,6 +112,7 @@ export function findDateReferenceIssue(state: ScheduleSpecState): DateReferenceI
     }
   }
   for (const [index, column] of (state.export?.extraColumns ?? []).entries()) {
+    if (column.type === 'defaults') continue;
     const found = find(column.countDates, `export.extraColumns[${index}].countDates`);
     if (found) return found;
   }

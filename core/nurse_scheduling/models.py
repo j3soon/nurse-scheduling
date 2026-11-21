@@ -29,6 +29,7 @@ from typing_extensions import Self
 
 from . import utils
 from .constants import ALL, MAP_DATE_KEYWORD_TO_FILTER, MAP_WEEKDAY_TO_STR, OFF, OFF_sid
+from .export_defaults import generate_export_defaults
 
 AT_MOST_ONE_SHIFT_PER_DAY = "at most one shift per day"
 SHIFT_TYPE_REQUIREMENT = "shift type requirement"
@@ -209,11 +210,31 @@ class ExportExtraRow(BaseModel):
     countPeople: list[int | str]
 
 
+class ExportDefaults(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["defaults"]
+
+
 class ExportConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    formatting: list[ExportFormattingRule] = Field(default_factory=list)
-    extraColumns: list[ExportExtraColumn] = Field(default_factory=list)
-    extraRows: list[ExportExtraRow] = Field(default_factory=list)
+    formatting: list[ExportFormattingRule | ExportDefaults] = Field(default_factory=list)
+    extraColumns: list[ExportExtraColumn | ExportDefaults] = Field(default_factory=list)
+    extraRows: list[ExportExtraRow | ExportDefaults] = Field(default_factory=list)
+
+    @field_validator("formatting", "extraColumns", "extraRows")
+    @classmethod
+    def validate_single_defaults_entry(cls, entries):
+        if sum(isinstance(entry, ExportDefaults) for entry in entries) > 1:
+            raise ValueError("Each export section can contain only one defaults entry")
+        return entries
+
+    @classmethod
+    def with_defaults(cls) -> Self:
+        return cls(
+            formatting=[ExportDefaults(type="defaults")],
+            extraColumns=[ExportDefaults(type="defaults")],
+            extraRows=[ExportDefaults(type="defaults")],
+        )
 
 
 class BasePreference(BaseModel):
@@ -434,6 +455,7 @@ CompiledPreference = (
 class CompiledExportFormattingRule:
     """Resolved selectors for one export formatting rule."""
 
+    rule: ExportFormattingRule
     people: tuple[int, ...] = ()
     dates: tuple[int, ...] = ()
     shift_types: tuple[int, ...] = ()
@@ -443,6 +465,7 @@ class CompiledExportFormattingRule:
 class CompiledExportExtraColumn:
     """Resolved selectors and coefficients for one extra column."""
 
+    rule: ExportExtraColumn
     dates: tuple[int, ...]
     shift_types: tuple[int, ...]
     coefficients: tuple[tuple[int, int], ...]
@@ -452,13 +475,14 @@ class CompiledExportExtraColumn:
 class CompiledExportExtraRow:
     """Resolved selectors for one extra row."""
 
+    rule: ExportExtraRow
     people: tuple[int, ...]
     shift_types: tuple[int, ...]
 
 
 @dataclass(frozen=True)
 class CompiledExport:
-    """Resolved export selectors aligned with the source export rules."""
+    """Workbook rules in display order with their resolved selectors."""
 
     formatting: tuple[CompiledExportFormattingRule, ...]
     extra_columns: tuple[CompiledExportExtraColumn, ...]
@@ -500,7 +524,7 @@ class ScheduleSpec(BaseModel):
         | ShiftCountPreference
         | ShiftAffinityPreference
     ]
-    export: ExportConfig = Field(default_factory=ExportConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig.with_defaults)
 
     @model_validator(mode="after")
     def validate_model(self) -> Self:
@@ -889,10 +913,32 @@ def _compile_preference(data, preference, people_map, shift_map, date_map, dates
     raise TypeError(f"Unsupported preference model: {type(preference).__name__}")
 
 
+def _expand_export_entries(entries, defaults):
+    for entry in entries:
+        if isinstance(entry, ExportDefaults):
+            yield from defaults
+        else:
+            yield entry.model_copy(deep=True)
+
+
 def _compile_export(data, people_map, shift_map, date_map):
-    """Validate and resolve export references against the validated Schedule Spec."""
+    """Expand defaults and resolve export references against the current Schedule Spec."""
+    export = data.export
+    defaults = ExportConfig()
+    if any(
+        isinstance(entry, ExportDefaults)
+        for section in (export.formatting, export.extraColumns, export.extraRows)
+        for entry in section
+    ):
+        defaults = ExportConfig.model_validate(
+            generate_export_defaults(
+                [item.id for item in data.shiftTypes.items],
+                [group.id for group in data.shiftTypes.groups],
+                {group.id for group in data.dates.groups},
+            )
+        )
     formatting = []
-    for rule in data.export.formatting:
+    for rule in _expand_export_entries(export.formatting, defaults.formatting):
         people = ()
         dates = ()
         shift_types = ()
@@ -920,13 +966,14 @@ def _compile_export(data, people_map, shift_map, date_map):
                 raise ValueError(
                     "export formatting preference weightRange minimum must be less than or equal to maximum"
                 )
-        formatting.append(CompiledExportFormattingRule(people, dates, shift_types))
+        formatting.append(CompiledExportFormattingRule(rule, people, dates, shift_types))
 
     extra_columns = []
-    for rule in data.export.extraColumns:
+    for rule in _expand_export_entries(export.extraColumns, defaults.extraColumns):
         shift_types = tuple(utils.parse_sids(rule.countShiftTypes, shift_map))
         extra_columns.append(
             CompiledExportExtraColumn(
+                rule=rule,
                 dates=tuple(utils.parse_dates(rule.countDates, date_map, data.dates.range)),
                 shift_types=shift_types,
                 coefficients=_compile_coefficients(
@@ -940,10 +987,11 @@ def _compile_export(data, people_map, shift_map, date_map):
         )
     extra_rows = tuple(
         CompiledExportExtraRow(
+            rule=rule,
             people=tuple(utils.parse_pids(rule.countPeople, people_map)),
             shift_types=tuple(utils.parse_sids(rule.countShiftTypes, shift_map)),
         )
-        for rule in data.export.extraRows
+        for rule in _expand_export_entries(export.extraRows, defaults.extraRows)
     )
     return CompiledExport(tuple(formatting), tuple(extra_columns), extra_rows)
 

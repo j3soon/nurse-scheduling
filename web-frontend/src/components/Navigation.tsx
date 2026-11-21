@@ -26,6 +26,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiChevronLeft, FiChevronRight, FiRotateCcw, FiRotateCw } from 'react-icons/fi';
 import { useScheduleSpec } from '@/hooks/useScheduleSpec';
+import { usesOnlyExportDefaults } from '@/hooks/schedulingExportConfig';
 import { useUnsavedEditingState } from '@/utils/unsavedEditingState';
 
 interface NavTab {
@@ -33,10 +34,6 @@ interface NavTab {
   path: string;
   exportLayout?: boolean;
 }
-
-const CUSTOM_EXPORT_LAYOUT_TOOLTIP =
-  'Custom export layout is saved, so the default layout no longer auto-updates as shift types or date groups change. '
-  + 'Use Clear All and Regenerate on the Export Layout page to restore auto-updates.';
 
 const TABS: NavTab[] = [
   { name: '0. Home', path: '/' },
@@ -61,7 +58,7 @@ export default function Navigation() {
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
   const { hasTabSwitchWarningActive } = useUnsavedEditingState();
   const { exportData, undo, redo, canUndo, canRedo } = useScheduleSpec();
-  const hasCustomExportLayout = exportData !== undefined;
+  const hasCustomExportLayout = exportData !== undefined && !usesOnlyExportDefaults(exportData);
 
   const navigateToTab = useCallback((index: number) => {
     if (index < 0 || index >= TABS.length || index === currentTabIndex) {
@@ -241,7 +238,7 @@ export default function Navigation() {
                     key={tab.path}
                     onClick={() => navigateToTab(index)}
                     aria-current={pathname === tab.path ? 'page' : undefined}
-                    title={showCustomExportIndicator ? t(CUSTOM_EXPORT_LAYOUT_TOOLTIP) : undefined}
+                    title={showCustomExportIndicator ? t("Custom export layout") : undefined}
                     className={`py-4 px-3 border-b-2 font-medium text-sm whitespace-nowrap ${
                       pathname === tab.path
                         ? 'border-blue-500 text-blue-600'
@@ -252,7 +249,7 @@ export default function Navigation() {
                       <span
                         aria-hidden="true"
                         data-testid="custom-export-layout-indicator"
-                        className="mr-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
+                        className="mr-1.5 inline-block h-2 w-2 rounded-full bg-blue-500 align-middle"
                       />
                     )}
                     {t(tab.name)}

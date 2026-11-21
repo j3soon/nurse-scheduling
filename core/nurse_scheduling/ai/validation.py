@@ -110,7 +110,7 @@ def _is_empty_schedule_spec(data: dict) -> bool:
     export = data.pop("export", {})
     if not isinstance(export, dict) or set(export) - {"formatting", "extraColumns", "extraRows"}:
         return False
-    if any(value != [] for value in export.values()):
+    if any(value not in ([], [{"type": "defaults"}]) for value in export.values()):
         return False
     return data == {
         "apiVersion": "alpha",

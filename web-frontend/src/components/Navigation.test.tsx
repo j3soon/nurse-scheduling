@@ -405,7 +405,7 @@ describe('Navigation', () => {
       expect(button).not.toBeNull();
       expect(button).toHaveTextContent('9. Export Layout');
       await waitFor(() => {
-        expect(button).toHaveAttribute('title', expect.stringContaining('Clear All and Regenerate'));
+        expect(button).toHaveAttribute('title', 'Custom export layout');
       });
     });
   });
