@@ -363,6 +363,8 @@ do not discard a feedback draft.
 - ESLint uses `next/core-web-vitals` plus TypeScript rules from
   `eslint.config.mjs`. Production TypeScript also checks for floating promises.
   Mark intentional background calls with `void` when they handle their own errors.
+  The Schedule Spec storage and AI API paths also check for unsafe use of
+  `any`. Treat external JSON as `unknown` and validate it where it enters the app.
 - Every frontend test file (`*.test.ts` and `*.test.tsx`) must include the AGPL
   header documented in `../docs/agent-license-headers.md`.
 

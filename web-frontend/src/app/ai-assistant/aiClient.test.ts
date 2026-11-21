@@ -31,6 +31,7 @@ import {
   getAiBaseUrl,
   getCapabilities,
   getBackendVersion,
+  getModels,
   getSessionStatus,
   getSessionModelSelection,
   updateSessionModelSelection,
@@ -160,6 +161,24 @@ describe('AI client', () => {
         max_bytes_per_session: 200_000_000,
       },
     });
+  });
+
+  it('validates the model catalog before handing it to model controls', async () => {
+    const model = {
+      id: 'fast',
+      name: 'Fast',
+      default_reasoning: 'default',
+      reasoning_options: [{ id: 'default', label: 'Default' }],
+    };
+    const catalog = { default_model: 'fast', models: [model] };
+    const signal = new AbortController().signal;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(catalog)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...catalog, models: [{ ...model, context_tokens: '32000' }] })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getModels(signal, null, '/ai')).resolves.toEqual(catalog);
+    await expect(getModels(signal, null, '/ai')).rejects.toThrow('invalid model list');
   });
 
   it('loads and saves the authenticated session model choice', async () => {

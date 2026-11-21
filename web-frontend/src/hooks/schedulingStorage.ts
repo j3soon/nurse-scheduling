@@ -31,8 +31,7 @@ const PLACEHOLDER_PATTERN = new RegExp(
 );
 
 // Helper function to convert infinity/-infinity values to safe string representations
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function replaceInfinityValues(obj: any): any {
+export function replaceInfinityValues(obj: unknown): unknown {
   if (obj === null || typeof obj !== 'object') {
     if (obj === Infinity) return INFINITY_PLACEHOLDER;
     if (obj === -Infinity) return NEGATIVE_INFINITY_PLACEHOLDER;
@@ -44,19 +43,12 @@ export function replaceInfinityValues(obj: any): any {
     return obj.map(replaceInfinityValues);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result: any = {};
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      result[key] = replaceInfinityValues(obj[key]);
-    }
-  }
-  return result;
+  const entries = Object.entries(obj as Record<string, unknown>);
+  return Object.fromEntries(entries.map(([key, value]) => [key, replaceInfinityValues(value)]));
 }
 
 // Helper function to restore infinity/-infinity values from safe string representations
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function restoreInfinityValues(obj: any): any {
+export function restoreInfinityValues(obj: unknown): unknown {
   if (obj === null || typeof obj !== 'object') {
     if (obj === INFINITY_PLACEHOLDER) return Infinity;
     if (obj === NEGATIVE_INFINITY_PLACEHOLDER) return -Infinity;
@@ -70,14 +62,8 @@ export function restoreInfinityValues(obj: any): any {
     return obj.map(restoreInfinityValues);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result: any = {};
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      result[key] = restoreInfinityValues(obj[key]);
-    }
-  }
-  return result;
+  const entries = Object.entries(obj as Record<string, unknown>);
+  return Object.fromEntries(entries.map(([key, value]) => [key, restoreInfinityValues(value)]));
 }
 
 export function loadStateFromStorage(): HistoryState {
