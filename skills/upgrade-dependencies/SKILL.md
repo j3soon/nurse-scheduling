@@ -137,8 +137,8 @@ same commit.
 
 Update every location that the inventory lists:
 
-- **Bun:** `bun-version` in the workflows and the installer in the dev
-  Dockerfiles. Pin the installer with `bash -s "bun-vX.Y.Z"`.
+- **Bun:** `bun-version` in the workflows, `BUN_VERSION` in `netlify.toml`,
+  and the installer in the dev Dockerfiles, which takes `bash -s "bun-vX.Y.Z"`.
 - **uv:** `version` in the workflows, the `ghcr.io/astral-sh/uv` tags in the
   Dockerfiles, and `uv==` in `netlify.toml`. Then run `uv lock` in `core/` and
   `docs/`. A newer uv can rewrite lock metadata. Commit that change with the

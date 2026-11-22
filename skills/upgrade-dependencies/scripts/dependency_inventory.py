@@ -40,6 +40,7 @@ FILE_RULES = [
         ["docker/Dockerfile*"],
         r"bun\.sh/install \| bash(?: -s \"?bun-v([\w.]+))?",
     ),
+    ("bun", ["netlify.toml"], r"BUN_VERSION\s*=\s*\"([\w.]+)\""),
     ("uv", ["docker/Dockerfile*"], r"ghcr\.io/astral-sh/uv:([\w.]+)"),
     ("uv", ["netlify.toml"], r"pip install uv==([\w.]+)"),
     ("python", ["docker/Dockerfile.api*"], r"^FROM python:(\d+\.\d+)"),

@@ -75,6 +75,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 )
 """,
     "netlify.toml": """[build.environment]
+  BUN_VERSION = "1.4.2"
   NODE_VERSION = "25"
   PYTHON_VERSION = "3.12"
 """,
@@ -107,6 +108,10 @@ class DependencyInventoryTests(unittest.TestCase):
             values,
         )
         self.assertEqual(sum(pin.surface == "uv" for pin in pins), 2)
+        self.assertIn(
+            ("bun", "1.4.2", "netlify.toml"),
+            {(p.surface, p.value, p.path) for p in pins},
+        )
         self.assertNotIn(
             "image ${COMPOSE_PROJECT_NAME", {pin.surface[:28] for pin in pins}
         )

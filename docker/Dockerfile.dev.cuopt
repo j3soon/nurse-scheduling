@@ -60,7 +60,7 @@ RUN --mount=type=cache,id=dev-uv,target=/root/.cache/uv,sharing=locked \
     && uv sync --active --project /tmp/core --locked --all-extras --link-mode copy
 
 # Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.5"
 ENV PATH="/root/.bun/bin:${PATH}"
 
 # Install the frontend's locked Playwright version and bake browser binaries into
