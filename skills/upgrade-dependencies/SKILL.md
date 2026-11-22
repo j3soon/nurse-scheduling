@@ -173,7 +173,8 @@ Update every location that the inventory lists:
   `thirdparty/opencc/README.md`.
 - **Taiwan holidays:** MODA publishes each new year's office calendar CSV. Add
   it to `thirdparty/moda-opendata/` and extend
-  `web-frontend/src/utils/taiwanHolidays.ts` in a separate pull request.
+  `web-frontend/src/utils/taiwanHolidays.ts` in a separate pull request. The
+  README in that directory gives the `uv run` commands.
   `git log -- thirdparty/moda-opendata` shows the previous additions.
 - **Dev image agent CLIs:** the dev Dockerfiles install the latest Codex,
   Claude Code, and opencode releases. A dev image rebuild updates them.

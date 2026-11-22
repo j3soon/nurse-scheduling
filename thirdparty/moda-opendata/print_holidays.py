@@ -17,6 +17,11 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["holidays"]
+# ///
+
 import holidays
 
 for year in range(2023, 2027):
