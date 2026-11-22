@@ -159,7 +159,8 @@ Update every location that the inventory lists:
 ### Container images
 
 - **Service images:** `docker/compose*.yml` sets PostgreSQL, Redis, NGINX,
-  pgAdmin, RedisInsight, and cloudflared. Update every Compose variant together.
+  pgAdmin, RedisInsight, and cloudflared. Update every Compose variant and
+  `scripts/pull_compose_base_images.sh` together.
   A PostgreSQL major version needs a data migration for the existing volume.
 - **Base images:** `python:3.12-slim` for the API, `ubuntu:24.04` for the dev
   image, and `e2bdev/base` for the E2B template.

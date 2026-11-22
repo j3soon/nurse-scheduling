@@ -64,8 +64,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
     "docker/compose.backend.yml": """services:
   tunnel:
     image: cloudflare/cloudflared:latest
+  redis:
+    image: redis:8.8
   api:
     image: ${COMPOSE_PROJECT_NAME:-backend}-api:local
+""",
+    "scripts/pull_compose_base_images.sh": """images=(
+  "python:3.12-slim"
+  "redis:8.10"
+)
 """,
     "netlify.toml": """[build.environment]
   NODE_VERSION = "25"
@@ -95,6 +102,7 @@ class DependencyInventoryTests(unittest.TestCase):
                 ("node (dev image CLIs)", "24"),
                 ("image nvidia/cuopt", "26.8.0a-cuda13.3-py3.14"),
                 ("action astral-sh/setup-uv", "v10.4.0"),
+                ("image python", "3.12-slim"),
             },
             values,
         )
@@ -112,6 +120,7 @@ class DependencyInventoryTests(unittest.TestCase):
             [
                 "action actions/checkout: conflicting pins v4, v5",
                 "bun: conflicting pins 1.4.2, 1.4.3",
+                "image redis: conflicting pins 8.10, 8.8",
             ],
         )
         joined = "\n".join(warnings)
@@ -128,6 +137,8 @@ class DependencyInventoryTests(unittest.TestCase):
 
     def test_consistent_pins_pass_the_check(self):
         (self.root / ".github/workflows/b.yaml").unlink()
+        script = self.root / "scripts/pull_compose_base_images.sh"
+        script.write_text(script.read_text().replace("redis:8.10", "redis:8.8"))
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
                 dependency_inventory.main(["--root", str(self.root), "--check"]), 0

@@ -4,6 +4,8 @@ set -euo pipefail
 
 # Keep this list aligned with docker/compose.backend*.yml and the Dockerfiles
 # selected by their default and staging API_DOCKERFILE settings.
+# skills/upgrade-dependencies/scripts/dependency_inventory.py --check rejects
+# a tag that differs from those files.
 images=(
   "python:3.12-slim"
   "redis:8.8"

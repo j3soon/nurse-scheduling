@@ -59,6 +59,7 @@ FILE_RULES = [
 IMAGE_RULES = [
     (["docker/Dockerfile*", "docker/**/*.Dockerfile"], r"^FROM\s+(\S+)"),
     (["docker/compose*.yml"], r"^\s+image:\s*(\S+)"),
+    (["scripts/pull_compose_base_images.sh"], r"^\s+\"(\S+)\"$"),
 ]
 PRERELEASE = re.compile(
     r"\d(?:a|b|rc)\d*(?:[-.]|$)|alpha|beta|canary|nightly", re.IGNORECASE
