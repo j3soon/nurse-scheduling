@@ -24,6 +24,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { selectLanguageInNewTab } from './helpers';
 
 const FRONTEND_TIMEZONE = 'America/Los_Angeles';
 test.use({ timezoneId: FRONTEND_TIMEZONE });
@@ -1972,9 +1973,7 @@ test('keeps pending reasoning when language changes in another tab', async ({ pa
   const started = page.waitForRequest(request => request.url().endsWith('/model-selection') && request.method() === 'PUT');
   await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
   await started;
-  const settings = await context.newPage();
-  await settings.goto('/');
-  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+  const settings = await selectLanguageInNewTab(context, 'zh-TW');
   await expect(page.getByLabel('推理', { exact: true })).toBeVisible();
   await settings.close();
   await expect(page.getByRole('button', { name: '傳送', exact: true })).toBeDisabled();

@@ -18,7 +18,7 @@
  */
 
 import { expect, test } from './test';
-import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState } from './helpers';
+import { disableModalDialogs, mockOptimizeAndExport, seedScheduleSpecState, selectLanguageInNewTab } from './helpers';
 
 const BACKEND_URL = 'http://localhost:8000';
 const BACKEND_TOKEN = 'e2e-shared-backend-token';
@@ -246,9 +246,7 @@ test('keeps backend authentication when language changes in another tab', async 
   await page.getByLabel(`Token for ${BACKEND_URL}`, { exact: true }).fill(BACKEND_TOKEN);
   await page.getByRole('button', { name: `Save token for ${BACKEND_URL}` }).click();
   await expect(page.getByText('Server: Online')).toBeVisible();
-  const settings = await context.newPage();
-  await settings.goto('/');
-  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+  const settings = await selectLanguageInNewTab(context, 'zh-TW');
   await expect(page.getByRole('heading', { name: '最佳化與匯出', exact: true })).toBeVisible();
   await settings.close();
   await expect(page.getByRole('button', { name: '最佳化並下載', exact: true })).toBeEnabled();

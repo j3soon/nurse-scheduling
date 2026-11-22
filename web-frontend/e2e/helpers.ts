@@ -19,7 +19,7 @@
 
 // This test is mostly AI generated.
 
-import { expect, Page, Route } from '@playwright/test';
+import { BrowserContext, expect, Page, Route } from '@playwright/test';
 import ExcelJS from 'exceljs';
 
 const STORAGE_KEY = 'nurse-scheduling-spec';
@@ -433,4 +433,15 @@ export async function setDateRange(
   await page.locator('#startDate').fill(startDate);
   await page.locator('#endDate').fill(endDate);
   await page.getByRole('button', { name: /Apply|Update/ }).click();
+}
+
+// Open the home page in another tab and select an interface language there.
+// Its static HTML already shows the select, so wait for the build label that
+// appears after hydration. A selection made before hydration is lost.
+export async function selectLanguageInNewTab(context: BrowserContext, locale: string) {
+  const settings = await context.newPage();
+  await settings.goto('/');
+  await expect(settings.getByRole('button', { name: /^Build:/ })).not.toContainText('loading...');
+  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption(locale);
+  return settings;
 }
