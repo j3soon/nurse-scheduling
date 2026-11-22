@@ -19,6 +19,23 @@
 
 // This code is mostly AI generated.
 
+import { SHIFT_REQUEST, type Preference } from '@/types/scheduling';
+
+export function recoverShiftRequestDescriptions(preferences: Preference[]): Preference[] {
+  return preferences.map(preference => {
+    const description: unknown = preference.description;
+    // YAML can parse unquoted descriptions as numbers, booleans, or timestamps.
+    if (preference.type !== SHIFT_REQUEST || description == null || typeof description === 'string') return preference;
+    if (description instanceof Date) {
+      return { ...preference, description: description.toISOString() };
+    }
+    return {
+      ...preference,
+      description: typeof description === 'object' ? JSON.stringify(description) : String(description),
+    };
+  });
+}
+
 export function loadLegacyScheduleSpec<T>(storage: Storage, key: string, decode: (raw: string) => T): T | null {
   const oldKey = key.replace('nurse-scheduling-spec', 'nurse-scheduling-data');
   const raw = storage.getItem(oldKey);

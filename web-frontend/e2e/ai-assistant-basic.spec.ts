@@ -621,7 +621,13 @@ for (const submission of ['Enter', 'button'] as const) {
       await selectionReady;
       await route.fallback();
     });
-    await page.goto('/ai-assistant');
+    const [modelsResponse] = await Promise.all([
+      page.waitForResponse(response =>
+        new URL(response.url()).pathname === '/ai/models' && response.request().method() === 'GET'
+      ),
+      page.goto('/ai-assistant'),
+    ]);
+    expect(modelsResponse.ok()).toBe(true);
     await expect(page.getByLabel('AI model')).toBeEnabled();
     const input = page.getByRole('textbox', { name: 'Ask about the current Schedule Spec' });
     await input.fill('First question');

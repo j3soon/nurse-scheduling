@@ -20,11 +20,29 @@
 // This test is mostly AI generated.
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import yaml from 'js-yaml';
 import { loadStateFromStorage, saveStateToStorage } from '@/hooks/schedulingStorage';
 import { createDefaultHistoryState } from '@/hooks/schedulingHistory';
-import { loadLegacyScheduleSpec } from './scheduleSpec';
+import type { Preference } from '@/types/scheduling';
+import { loadLegacyScheduleSpec, recoverShiftRequestDescriptions } from './scheduleSpec';
 
 beforeEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
+
+it('recovers unquoted YAML dates and timestamps as description text', () => {
+  const preferences = yaml.load(`
+- type: shift request
+  description: 2026-05-01
+- type: shift request
+  description: 2026-05-01T08:30:00+08:00
+- type: shift request
+  description: "2026-05-01"
+`) as Preference[];
+  expect(recoverShiftRequestDescriptions(preferences).map(preference => preference.description)).toEqual([
+    '2026-05-01T00:00:00.000Z',
+    '2026-05-01T00:30:00.000Z',
+    '2026-05-01',
+  ]);
+});
 
 function oldHistory() {
   const history = createDefaultHistoryState();
