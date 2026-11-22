@@ -143,8 +143,9 @@ Update every location that the inventory lists:
   Dockerfiles, and `uv==` in `netlify.toml`. Then run `uv lock` in `core/` and
   `docs/`. A newer uv can rewrite lock metadata. Commit that change with the
   version change.
-- **Node:** `NODE_VERSION` in `netlify.toml` and the NodeSource line in the dev
-  Dockerfiles. Use an LTS line, which has an even major version.
+- **Node:** `node-version` in the frontend workflows, `NODE_VERSION` in
+  `netlify.toml`, and the NodeSource line in the dev Dockerfiles. Use an LTS
+  line, which has an even major version.
 - **Python:** `python-version` in the workflows, the API base images,
   `PYTHON_VERSION` in `netlify.toml`, and `--python` in `scripts/setup_env.sh`
   and the READMEs. A new Python minor version needs its own pull request.

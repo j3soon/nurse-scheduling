@@ -50,12 +50,8 @@ FILE_RULES = [
         ["scripts/setup_env.sh", "README.md", "docs/README.md"],
         r"--python (\d+\.\d+)",
     ),
-    ("node (Netlify build)", ["netlify.toml"], r"NODE_VERSION\s*=\s*\"(\d+)\""),
-    (
-        "node (dev image CLIs)",
-        ["docker/Dockerfile*"],
-        r"nodesource\.com/setup_(\d+)\.x",
-    ),
+    ("node", ["netlify.toml"], r"NODE_VERSION\s*=\s*\"(\d+)\""),
+    ("node", ["docker/Dockerfile*"], r"nodesource\.com/setup_(\d+)\.x"),
 ]
 IMAGE_RULES = [
     (["docker/Dockerfile*", "docker/**/*.Dockerfile"], r"^FROM\s+(\S+)"),
@@ -102,6 +98,8 @@ def _workflow_pins(root: Path) -> list[Pin]:
             pins.append(Pin(f"action {action}", match.group(2), path, number))
         elif match := re.search(r"bun-version:\s*['\"]?([\w.]+)", line):
             pins.append(Pin("bun", match.group(1), path, number))
+        elif match := re.search(r"node-version:\s*['\"]?(\d+)", line):
+            pins.append(Pin("node", match.group(1), path, number))
         elif match := re.search(r"python-version:\s*\[?\s*['\"](\d+\.\d+)['\"]", line):
             pins.append(Pin("python", match.group(1), path, number))
         elif (
@@ -155,7 +153,7 @@ def problems(pins: list[Pin]) -> tuple[list[str], list[str]]:
                 warnings.append(f"{surface}: unpinned or latest at {where}")
             elif PRERELEASE.search(pin.value):
                 warnings.append(f"{surface}: prerelease {pin.value} at {where}")
-            elif surface.startswith("node") and int(pin.value) % 2:
+            elif surface == "node" and int(pin.value) % 2:
                 warnings.append(
                     f"{surface}: Node {pin.value} is not an LTS line at {where}"
                 )
@@ -204,7 +202,7 @@ def latest_versions(surfaces: set[str]) -> dict[str, str]:
     for surface in surfaces:
         if surface.startswith("action "):
             lookups[surface] = (_github_latest, surface.removeprefix("action "))
-        elif surface.startswith("node"):
+        elif surface == "node":
             lookups[surface] = (lambda _: _node_lts(), "")
     latest = {}
     for surface, (lookup, argument) in sorted(lookups.items()):

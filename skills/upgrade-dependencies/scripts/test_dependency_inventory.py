@@ -55,6 +55,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.3'
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
 """,
     "docker/Dockerfile.dev": """FROM nvidia/cuopt:26.8.0a-cuda13.3-py3.14
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /bin/
@@ -99,8 +102,9 @@ class DependencyInventoryTests(unittest.TestCase):
             {
                 ("uv", "0.13.9"),
                 ("python", "3.12"),
-                ("node (Netlify build)", "25"),
-                ("node (dev image CLIs)", "24"),
+                ("node", "25"),
+                ("node", "24"),
+                ("node", "26"),
                 ("image nvidia/cuopt", "26.8.0a-cuda13.3-py3.14"),
                 ("action astral-sh/setup-uv", "v10.4.0"),
                 ("image python", "3.12-slim"),
@@ -126,6 +130,7 @@ class DependencyInventoryTests(unittest.TestCase):
                 "action actions/checkout: conflicting pins v4, v5",
                 "bun: conflicting pins 1.4.2, 1.4.3",
                 "image redis: conflicting pins 8.10, 8.8",
+                "node: conflicting pins 24, 25, 26",
             ],
         )
         joined = "\n".join(warnings)
@@ -133,7 +138,7 @@ class DependencyInventoryTests(unittest.TestCase):
         self.assertIn("image cloudflare/cloudflared: unpinned or latest", joined)
         self.assertIn("image nvidia/cuopt: prerelease", joined)
         self.assertIn("Node 25 is not an LTS line", joined)
-        self.assertNotIn("dev image CLIs", joined)
+        self.assertNotIn("Node 24 is not", joined)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
                 dependency_inventory.main(["--root", str(self.root), "--check"]), 1
@@ -144,6 +149,10 @@ class DependencyInventoryTests(unittest.TestCase):
         (self.root / ".github/workflows/b.yaml").unlink()
         script = self.root / "scripts/pull_compose_base_images.sh"
         script.write_text(script.read_text().replace("redis:8.10", "redis:8.8"))
+        for name in ("docker/Dockerfile.dev", "netlify.toml"):
+            path = self.root / name
+            text = path.read_text().replace("setup_24.x", "setup_26.x")
+            path.write_text(text.replace('NODE_VERSION = "25"', 'NODE_VERSION = "26"'))
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(
                 dependency_inventory.main(["--root", str(self.root), "--check"]), 0

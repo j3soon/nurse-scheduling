@@ -29,6 +29,10 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.5'
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile
@@ -57,6 +61,10 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.5'
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile

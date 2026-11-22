@@ -78,7 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-co
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
 # Install Codex CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash -
 RUN apt-get update && apt-get install -y \
     nodejs \
     && rm -rf /var/lib/apt/lists/*
