@@ -40,41 +40,6 @@ sync_uv_project() {
   (cd "$project_dir" && uv sync --locked --python 3.12 "$@")
 }
 
-setup_python_project() {
-  local project_dir="$1"
-  local req_name="${2:-requirements.txt}"
-  local req_file="$project_dir/$req_name"
-
-  if [[ ! -d "$project_dir" ]]; then
-    echo "Error: project directory not found: $project_dir"
-    exit 1
-  fi
-
-  if [[ ! -f "$req_file" ]]; then
-    echo "Error: requirements file not found: $req_file"
-    exit 1
-  fi
-
-  (
-    cd "$project_dir"
-
-    if [[ -x .venv/bin/python ]] && \
-      .venv/bin/python -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' >/dev/null 2>&1; then
-      echo "Reusing Python 3.12 virtual environment in $project_dir/.venv ..."
-    else
-      echo "Creating virtual environment in $project_dir/.venv ..."
-      uv venv --python 3.12 --clear
-    fi
-
-    echo "Activating virtual environment ..."
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
-
-    echo "Installing dependencies from $req_file ..."
-    uv pip install -r "$req_name"
-  )
-}
-
 echo
 echo "==> Setting up web frontend"
 if [[ ! -d "$FRONTEND_DIR" ]]; then
@@ -93,7 +58,7 @@ sync_uv_project "$CORE_DIR" --all-extras
 
 echo
 echo "==> Setting up docs"
-setup_python_project "$DOCS_DIR"
+sync_uv_project "$DOCS_DIR"
 
 echo
 echo "Done."

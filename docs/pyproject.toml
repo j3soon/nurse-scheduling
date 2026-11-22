@@ -1,0 +1,9 @@
+[project]
+name = "nurse-scheduling-docs"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "zensical==0.0.53",
+    # Preserve the existing nested-list rendering behavior.
+    "mdx_truly_sane_lists==1.3",
+]
