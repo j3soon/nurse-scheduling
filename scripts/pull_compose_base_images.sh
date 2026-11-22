@@ -8,10 +8,10 @@ set -euo pipefail
 # a tag that differs from those files.
 images=(
   "python:3.14-slim"
-  "redis:8.8"
-  "redis/redisinsight:3.8.0"
+  "redis:8.10"
+  "redis/redisinsight:3.10.1"
   "postgres:18-alpine"
-  "dpage/pgadmin4:9.17"
+  "dpage/pgadmin4:9.19"
   "nginx:1.31-alpine"
   "cloudflare/cloudflared:latest"
 )

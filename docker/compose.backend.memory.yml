@@ -31,7 +31,7 @@ services:
 
   pgadmin:
     profiles: ["inspection"]
-    image: dpage/pgadmin4:9.17
+    image: dpage/pgadmin4:9.19
     restart: "no"
     networks:
       - postgres
