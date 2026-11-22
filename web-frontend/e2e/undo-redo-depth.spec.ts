@@ -20,7 +20,7 @@
 // This test is mostly AI generated.
 
 import { expect, test } from './test';
-import { disableModalDialogs } from './helpers';
+import { disableModalDialogs, seedScheduleSpecState } from './helpers';
 
 test('multi-step undo and redo preserve history after loading an invalid index', async ({ page }) => {
   await disableModalDialogs(page);
@@ -82,4 +82,58 @@ test('multi-step undo and redo preserve history after loading an invalid index',
   await page.keyboard.press('Control+y');
   await expect(page.getByText('Night Owl', { exact: true })).toBeVisible();
   await expect(page.getByText('Early Bird', { exact: true })).toBeVisible();
+});
+
+test('leaving an unchanged inline description keeps the undo and redo history', async ({ page }) => {
+  const personDescription = '  Primary nurse  ';
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'inline description history seed',
+    dates: { range: {}, groups: [] },
+    people: {
+      items: [{ id: 'P1', description: personDescription, history: [] }],
+      groups: [{ id: 'Team A', members: ['P1'], description: 'Original team' }],
+      history: [],
+    },
+    shiftTypes: { items: [], groups: [] },
+    preferences: [],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/people');
+  const heading = page.getByRole('heading', { name: 'People Management', exact: true });
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  const redo = page.getByRole('button', { name: 'Redo', exact: true });
+  const editor = page.getByPlaceholder('Enter description...', { exact: true });
+  const originalTeam = page.getByText('Original team', { exact: true });
+  const updatedTeam = page.getByText('Updated team', { exact: true });
+  const person = page.getByText('Primary nurse', { exact: true });
+
+  await expect(originalTeam).toBeVisible();
+  await expect(undo).toBeDisabled();
+  await originalTeam.dblclick();
+  await expect(editor).toBeFocused();
+  await heading.click();
+  await expect(editor).toHaveCount(0);
+  await expect(undo).toBeDisabled();
+
+  await originalTeam.dblclick();
+  await editor.fill('Updated team');
+  await heading.click();
+  await expect(updatedTeam).toBeVisible();
+
+  await person.dblclick();
+  await expect(editor).toHaveValue(personDescription);
+  await heading.click();
+  await expect(editor).toHaveCount(0);
+  await expect(person).toHaveAttribute('title', personDescription);
+  await undo.click();
+  await expect(originalTeam).toBeVisible();
+
+  await originalTeam.dblclick();
+  await editor.fill('  Original team  ');
+  await heading.click();
+  await expect(editor).toHaveCount(0);
+  await redo.click();
+  await expect(updatedTeam).toBeVisible();
 });

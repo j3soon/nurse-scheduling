@@ -1931,6 +1931,7 @@ export default function ShiftRequestsPage() {
                             placeholder={t("Enter description...")}
                             ariaLabel={t("Request description for all listed dates")}
                             multiline
+                            skipUnchanged
                           />
                           {person?.description && (
                             <div className="text-xs text-blue-500 mt-1 max-w-[150px] truncate">{person.description}</div>

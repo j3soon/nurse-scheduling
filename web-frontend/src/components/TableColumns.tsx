@@ -141,6 +141,7 @@ function IdColumn({
         editClassName="text-xs mt-1 w-full"
         emptyText={t("Add description...")}
         placeholder={t("Enter description...")}
+        skipUnchanged
       />
     </div>
   );

@@ -37,6 +37,7 @@ interface InlineEditProps {
   tapToEdit?: boolean; // Start editing on a single touch or pen tap
   multiline?: boolean;
   ariaLabel?: string;
+  skipUnchanged?: boolean;
 }
 
 export function InlineEdit({
@@ -55,6 +56,7 @@ export function InlineEdit({
   tapToEdit = true,
   multiline = false,
   ariaLabel,
+  skipUnchanged = false,
 }: InlineEditProps) {
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
@@ -67,7 +69,16 @@ export function InlineEdit({
 
   const handleSave = () => {
     const draft = inputRef.current?.value ?? value;
-    onSave(multiline ? draft : draft.trim());
+    const nextValue = multiline ? draft : draft.trim();
+    if (skipUnchanged) {
+      // Match the browser's line ending handling and the editor's trimming.
+      const originalValue = multiline ? value.replace(/\r\n?/g, '\n') : value.replace(/[\r\n]/g, '').trim();
+      if (nextValue === originalValue) {
+        onCancel();
+        return;
+      }
+    }
+    onSave(nextValue);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
