@@ -65,6 +65,50 @@ request description.
 Commit each area after its checks pass. Update all locations of a version in the
 same commit.
 
+Change each manifest and lock with the tool that owns it, because a hand edit
+can leave the two out of step. Use `uv add`, `uv remove`, and `uv lock` for
+`pyproject.toml` and `uv.lock`. Use `bun add`, `bun remove`, `bun update`, and
+`bun pm pkg set` for `package.json` and `bun.lock`. Edit a file by hand only
+when no tool writes the value, such as a comment, `[tool.uv]` constraints, a
+workflow tag, a Dockerfile, a Compose file, or `netlify.toml`.
+
+### Record the tool commands
+
+End the body of each commit that changes a lock with a record of the bun and uv
+commands, before the attribution line. Write one line for each command, in the
+order that you ran them from the repository root. Name each file that the
+command wrote, with `generates` for a new file and `updates` for a changed
+file. `uv add` and `bun update` also update the lock. Write a single line
+without a bullet:
+
+```text
+`cd core && uv lock` generates `core/uv.lock`.
+```
+
+Write two or more lines as a bullet list. Shorten a long command with short
+options, such as `-P` for `--upgrade-package`.
+
+Do not record hand edits of files that no tool owns, such as workflow tags,
+Dockerfiles, Compose files, `netlify.toml`, or comments. The diff shows them.
+Do not repeat what the body already says. Add a hand edit line only when you
+change a version in `package.json` or `pyproject.toml` by hand, because no tool
+writes that value. Give the reason after `because`:
+
+```text
+- A hand edit updates `core/pyproject.toml`, because no uv command edits `[tool.uv] constraint-dependencies`.
+- `cd core && uv lock -P pandas` updates `core/uv.lock`.
+```
+
+Check the records before you push:
+
+```bash
+python skills/upgrade-dependencies/scripts/check_upgrade_commits.py FETCH_HEAD..HEAD
+```
+
+The script reports a changed lock that no bun or uv line names, and a named
+file that the commit does not change. It also reports a hand edit line for a
+file that no tool owns.
+
 ### Core Python packages
 
 - Run `uv lock --upgrade` in `core/`. Use `uv lock --upgrade-package NAME` for
@@ -74,7 +118,11 @@ same commit.
   Find the reason for each pin with
   `git log -G'NAME==' -- core/pyproject.toml core/requirements.txt core/requirements-optional.txt`.
   Keep a pin only when it has a reason, and state that reason in a comment.
-  Replace the other pins with a lower bound, such as `>=3.3.5`.
+  Replace the other pins with a lower bound through `uv add`, such as
+  `uv add --no-sync --group sandbox 'pypdf>=7.1.1'`. Pass `--optional EXTRA`,
+  `--group GROUP`, or `--dev` for the table that holds the package. A lower
+  bound keeps the locked version, so then run `uv lock -P NAME`. `uv add` does
+  not write comments, so add the reason comment by hand.
 - These pins have known reasons:
   - `ortools` keeps solver results deterministic. Review the changed expected
     results when you upgrade it.
@@ -112,16 +160,17 @@ same commit.
 
 ### Docs Python packages
 
-- Run `uv lock --upgrade --project docs`. Zensical is a pre-1.0 package, so
-  read its release notes.
+- Run `uv lock --upgrade --project docs`. Change an exact pin with
+  `uv add --project docs --no-sync 'zensical==X.Y.Z'`. Zensical is a pre-1.0
+  package, so read its release notes.
 - Build the site and check its links with the commands in `docs/AGENTS.md`.
 
 ### Frontend packages
 
 - `bun outdated` shows the newest version inside each `package.json` range and
   the latest release. `bun update` stays inside the ranges, so it does not
-  change exact pins. Set an exact pin with `bun add NAME@VERSION`, or
-  `bun add -d` for a development dependency.
+  change exact pins. Set an exact pin with `bun add --exact NAME@VERSION`, or
+  `bun add --exact -d` for a development dependency.
 - Keep `next` and `eslint-config-next` at the same version. Keep `react` and
   `react-dom` at the same version. Keep the `@types/react` and
   `@types/react-dom` overrides equal to their development dependencies.
@@ -132,11 +181,11 @@ same commit.
 - Run `bun audit` again. The site is a static export, so Next.js server
   advisories do not reach production. Still upgrade to the fixed version.
 - When a parent's range blocks the fixed version of a transitive package, add
-  a nested entry to `overrides` in `package.json`, such as
-  `"exceljs": { "uuid": "^11.1.1" }`. A top-level entry also replaces the
-  package for other parents that need an older major. Exercise the parent's
-  code path that uses the package. Remove the entry when `bun why NAME` shows
-  that the parent accepts a fixed version.
+  a nested entry to `overrides` with
+  `bun pm pkg set 'overrides.exceljs.uuid=^11.1.1'`, then run `bun install`.
+  A top-level entry also replaces the package for other parents that need an
+  older major. Exercise the parent's code path that uses the package. Remove
+  the entry when `bun why NAME` shows that the parent accepts a fixed version.
 - Run the lint, build, unit, and E2E commands in `web-frontend/AGENTS.md`.
 
 ### Toolchain versions
@@ -200,7 +249,8 @@ Update every location that the inventory lists:
 ## 4. Finish
 
 1. Run the full local CI with `skills/run-ci`.
-2. Run the inventory with `--check`, and `git diff --check FETCH_HEAD`.
+2. Run the inventory with `--check`, `check_upgrade_commits.py FETCH_HEAD..HEAD`,
+   and `git diff --check FETCH_HEAD`.
 3. Write the pull request description. List the old and new versions for each
    area, the fixed advisories, and the deferred majors with their reasons. Name
    the checks that the user must run on the host: image builds, the live E2B

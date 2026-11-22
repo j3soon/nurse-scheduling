@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Test the dependency inventory
+      - name: Test the dependency upgrade scripts
         run: python3 -m unittest discover -s skills/upgrade-dependencies/scripts -p 'test_*.py'
       - name: Reject conflicting toolchain, action, and image pins
         run: python3 skills/upgrade-dependencies/scripts/dependency_inventory.py --check

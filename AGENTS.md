@@ -182,6 +182,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
+- A commit that changes a lock names each bun or uv command and the files that
+  it wrote, such as `` `cd core && uv lock` updates `core/uv.lock`. `` Give a
+  reason only for a version changed by hand in `package.json` or
+  `pyproject.toml`. Omit hand edits of files that no tool owns, because the
+  diff shows them. Follow the format in `skills/upgrade-dependencies`, and
+  check it with that skill's `check_upgrade_commits.py`.
 - Make commit descriptions understandable without chat history or discarded
   revisions. Name previous scripts or explain previous behavior when comparing
   implementations. After amending, folding, or rewriting history, check affected
@@ -273,6 +279,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   change needs no installer edits. When a package moves between the runtime
   set, an extra, and a dependency group, check the `uv sync` flags in the
   `docker/` images, the GitHub workflows, and `scripts/setup_env.sh`.
+- Change frontend dependencies, including `overrides`, with `bun add`,
+  `bun remove`, `bun update`, or `bun pm pkg set` in `web-frontend/`. Commit
+  `package.json` with its `bun.lock`.
 - Toolchain versions, action tags, and image tags repeat across files. Update
   every location that `skills/upgrade-dependencies/scripts/dependency_inventory.py`
   lists. CI rejects conflicting pins.
