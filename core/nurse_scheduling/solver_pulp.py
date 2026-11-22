@@ -302,15 +302,12 @@ class BasePuLPSolver(SolverInterface):
 
         try:
             if self.engine == "cbc":
-                solver_kwargs["msg"] = 0
-                solver_options = []
-                if deterministic:
-                    solver_options.append("randomS 0")
-                    solver_options.append("threads 1")
-                if solver_options:
-                    self.solver = pulp.PULP_CBC_CMD(options=solver_options, **solver_kwargs)
-                else:
-                    self.solver = pulp.PULP_CBC_CMD(**solver_kwargs)
+                self.solver = pulp.PULP_CBC_CMD(
+                    msg=False,
+                    timeLimit=timeout,
+                    logPath=str(log_path) if log_path is not None else None,
+                    options=["randomS 0", "threads 1"] if deterministic else None,
+                )
             elif self.engine == "cuopt":
                 if not hasattr(pulp, "CUOPT"):
                     raise RuntimeError(
@@ -415,7 +412,10 @@ class BasePuLPSolver(SolverInterface):
 
     def get_value(self, var: Any) -> int | float:
         """Get the value of a variable in the solution."""
-        return self._normalize_numeric_value(pulp.value(var))
+        value = self._normalize_numeric_value(pulp.value(var))
+        if value is None:
+            raise ValueError("The solver has no value for this variable")
+        return value
 
     def get_objective_value(self) -> int:
         """Get the objective value of the solution."""
@@ -433,8 +433,9 @@ class BasePuLPSolver(SolverInterface):
 
     def get_statistics(self) -> dict[str, Any]:
         """Get solver statistics."""
+        status = self.status if self.status is not None else pulp.LpStatusNotSolved
         return {
-            "status": pulp.LpStatus[self.status],
+            "status": pulp.LpStatus[status],
             "wall_time": self.solve_time,
             "engine": self.engine,
             "solver": str(self.solver) if self.solver else "None",

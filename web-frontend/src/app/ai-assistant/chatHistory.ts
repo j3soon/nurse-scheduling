@@ -100,19 +100,21 @@ export function readChatHistory(now?: number): RecentChat[] {
 
 function parseChatHistory(raw: string | null, now: number): RecentChat[] {
   if (!raw) return [];
-  let stored: { appVersion?: string; entries?: unknown[]; clearGeneration?: unknown };
+  let stored: unknown;
   try { stored = JSON.parse(raw); } catch { return []; }
-  if (typeof stored?.appVersion !== 'string' || !stored.appVersion.trim() || !Array.isArray(stored.entries)) return [];
-  if (stored.clearGeneration !== undefined && typeof stored.clearGeneration !== 'string') return [];
+  if (typeof stored !== 'object' || stored === null) return [];
+  const { appVersion, entries: rawEntries, clearGeneration } = stored as Record<string, unknown>;
+  if (typeof appVersion !== 'string' || !appVersion.trim() || !Array.isArray(rawEntries)) return [];
+  if (clearGeneration !== undefined && typeof clearGeneration !== 'string') return [];
   const seen = new Set<string>();
   const entries: RecentChat[] = [];
-  for (const entry of stored.entries) {
+  for (const entry of rawEntries as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
     const candidate = entry as Partial<RecentChat>;
     const conversation = parseStoredConversation(candidate.conversation);
     const activity = candidate.lastActivityAt;
     if (!conversation || typeof activity !== 'number' || !Number.isFinite(activity)
-      || (conversation.historyGeneration ?? '') !== (stored.clearGeneration ?? '')
+      || (conversation.historyGeneration ?? '') !== (clearGeneration ?? '')
       || activity > now || activity + HISTORY_RETENTION_MS <= now || seen.has(chatKey(conversation))) continue;
     seen.add(chatKey(conversation));
     entries.push({ conversation, lastActivityAt: activity });

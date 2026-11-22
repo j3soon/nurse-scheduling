@@ -80,9 +80,10 @@ def _duration(start, end) -> str:
 def _markdown():
     parser = MarkdownIt("gfm-like2", {"html": True, "alerts": False})
     # Parse unsafe links as links, then apply react-markdown's protocol allowlist.
-    parser.validateLink = lambda _url: True
+    parser.validateLink = lambda url: True
     # Match react-markdown with remark-gfm: autolink scheme URLs and emails only.
     # Bare domains would swallow filenames and doc paths (icon128.png, get-started.md).
+    assert parser.linkify is not None
     parser.linkify.set({"fuzzy_link": False})
     return parser
 
@@ -532,8 +533,13 @@ def _display_messages(messages):
         counts.extend(part_counts)
     active = set()
     for index, bubble in enumerate(bubbles):
-        if bubble.get("presentation") == "summary" and not bubble["compaction"].get("invalidated"):
-            keep = bubble["compaction"].get("keepMessages", 0)
+        compaction = bubble.get("compaction")
+        if (
+            bubble.get("presentation") == "summary"
+            and isinstance(compaction, dict)
+            and not compaction.get("invalidated")
+        ):
+            keep = compaction.get("keepMessages", 0)
             retained = set()
             # Keep the newest messages. The new summary replaces the earlier one, so it never counts as kept.
             for prior in sorted(active, reverse=True):

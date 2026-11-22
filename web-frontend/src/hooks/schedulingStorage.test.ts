@@ -44,4 +44,9 @@ describe('infinity placeholders', () => {
   it('leaves other values untouched', () => {
     expect(roundTrip({ id: 'Night', weight: 3, note: null })).toEqual({ id: 'Night', weight: 3, note: null });
   });
+
+  it('round-trips JSON keys that also exist on Object.prototype', () => {
+    const value = { hasOwnProperty: Infinity, ['__proto__']: -Infinity };
+    expect(roundTrip(value)).toEqual(value);
+  });
 });

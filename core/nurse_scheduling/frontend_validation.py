@@ -20,7 +20,7 @@
 # This code is mostly AI generated.
 
 from datetime import date
-from typing import Any
+from typing import Any, LiteralString, cast
 
 from pydantic import ValidationError, model_validator
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -48,7 +48,7 @@ def _require_string(value: Any, path: str) -> None:
         raise ValueError(f"{path} must be a string for the web frontend")  # noqa: TRY004
 
 
-def _require_flat_string_list(value: Any, path: str) -> None:
+def _require_flat_string_list(value: object, path: str) -> list[str]:
     """Require the flat string-reference lists used by frontend state."""
     if not isinstance(value, list):
         raise ValueError(f"{path} must be a list for the web frontend")  # noqa: TRY004
@@ -56,6 +56,7 @@ def _require_flat_string_list(value: Any, path: str) -> None:
         raise ValueError(f"{path} must not contain nested references for the web frontend")
     for index, item in enumerate(value):
         _require_string(item, f"{path}[{index}]")
+    return cast(list[str], value)
 
 
 class _FrontendScheduleSpec(ScheduleSpec):
@@ -88,12 +89,12 @@ class _FrontendScheduleSpec(ScheduleSpec):
         for preference_index, preference in enumerate(self.preferences):
             path = f"preferences[{preference_index}]"
             if isinstance(preference, ShiftRequestPreference):
-                _require_flat_string_list(preference.person, f"{path}.person")
+                people = _require_flat_string_list(preference.person, f"{path}.person")
                 _require_flat_string_list(preference.date, f"{path}.date")
-                _require_flat_string_list(preference.shiftType, f"{path}.shiftType")
-                if len(preference.person) != 1:
+                shifts = _require_flat_string_list(preference.shiftType, f"{path}.shiftType")
+                if len(people) != 1:
                     raise ValueError(f"{path}.person must contain exactly one person for the web frontend")
-                if len(preference.shiftType) != 1:
+                if len(shifts) != 1:
                     raise ValueError(f"{path}.shiftType must contain exactly one shift type for the web frontend")
             elif isinstance(preference, ShiftTypeSuccessionsPreference):
                 _require_flat_string_list(preference.person, f"{path}.person")
@@ -142,7 +143,7 @@ class _FrontendScheduleSpec(ScheduleSpec):
 def _find_date_reference_error(data: dict[str, Any]) -> InitErrorDetails | None:
     """Find the first unsupported date reference, even in an incomplete payload."""
 
-    def issue(value: Any, path: tuple[str | int, ...], message: str) -> InitErrorDetails:
+    def issue(value: Any, path: tuple[str | int, ...], message: LiteralString) -> InitErrorDetails:
         return InitErrorDetails(
             type=PydanticCustomError(FRONTEND_DATE_REFERENCE_ERROR, message),
             loc=path,
@@ -207,7 +208,13 @@ def _validate_frontend_payload(data: dict[str, Any]) -> ScheduleSpec:
             raise
         # AI edits compare validation errors before and after a repair.
         # Keep preexisting errors visible alongside the date reference error.
-        raise ValidationError.from_exception_data(error.title, [date_error, *error.errors()]) from error
+        errors = [date_error]
+        for details in error.errors(include_url=False):
+            previous_error = InitErrorDetails(type=details["type"], loc=details["loc"], input=details["input"])
+            if "ctx" in details:
+                previous_error["ctx"] = details["ctx"]
+            errors.append(previous_error)
+        raise ValidationError.from_exception_data(error.title, errors) from error
     if date_error is not None:
         raise ValidationError.from_exception_data(_FrontendScheduleSpec.__name__, [date_error])
     return spec

@@ -33,6 +33,9 @@ from .anonymize_schedule_spec import anonymize_schedule_spec_in_yaml
 from .server.auth import describe_stream_token, extract_bearer_token
 
 if TYPE_CHECKING:
+    from sentry_sdk._types import Event as SentryEvent
+    from sentry_sdk._types import LogLevelStr
+
     from .server.jobs.models import Job
     from .server.suspicion import SuspicionCount
 
@@ -102,7 +105,7 @@ def init_sentry(
         sentry_sdk.set_attribute("api_version", api_version)
 
 
-def _redact_stream_token(event: dict, _hint: dict) -> dict:
+def _redact_stream_token(event: "SentryEvent", _hint: dict[str, Any]) -> "SentryEvent":
     """Remove a stream credential from reported query strings and trace URLs.
 
     Sentry scrubs sensitive headers, cookies, and body fields, but not a query string, and a
@@ -128,8 +131,10 @@ def _redact_stream_token(event: dict, _hint: dict) -> dict:
             data["url.full"] = f"{prefix}?{redact_query(query)}"
 
     request = event.get("request")
-    if isinstance(request, dict) and isinstance(request.get("query_string"), str):
-        request["query_string"] = redact_query(request["query_string"])
+    if isinstance(request, dict):
+        query = request.get("query_string")
+        if isinstance(query, str):
+            request["query_string"] = redact_query(query)
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
         trace = contexts.get("trace")
@@ -262,7 +267,7 @@ STREAM_ROUTE_SUFFIX = "/events"
 """Route suffix of the only endpoint accepting a stream token."""
 SUBJECT_SIGNALS = frozenset({"job_id_probe", "foreign_job_access", "forged_stream_token"})
 """Signals whose every request names a job, so spread is what makes them deliberate."""
-INVALID_REASON_LEVELS = {"yaml_expansion_bomb": "error"}
+INVALID_REASON_LEVELS: dict[str, "LogLevelStr"] = {"yaml_expansion_bomb": "error"}
 """Levels for a signal a route names directly, defaulting to a warning."""
 
 
@@ -301,7 +306,7 @@ def classify_suspicious_request(
     request: Request,
     status_code: int,
     error_code: str | None,
-) -> tuple[str, str] | None:
+) -> tuple[str, "LogLevelStr"] | None:
     """Return a suspicious request's signal name and Sentry level, or `None` when it is noise.
 
     Internet background traffic probes paths that do not exist and endpoints it cannot
@@ -362,7 +367,7 @@ def capture_invalid_request(
 def report_suspicious_request(
     request: Request,
     signal_name: str,
-    level: str,
+    level: "LogLevelStr",
     *,
     invalid_request: dict | None = None,
 ) -> None:
@@ -385,7 +390,7 @@ def report_suspicious_request(
 def _report_suspicious_request(
     request: Request,
     signal_name: str,
-    level: str,
+    level: "LogLevelStr",
     *,
     invalid_request: dict | None = None,
 ) -> None:

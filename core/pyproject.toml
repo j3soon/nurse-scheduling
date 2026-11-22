@@ -13,3 +13,23 @@ line-length = 120
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.ruff.lint]
+extend-select = ["B904", "B905"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+# Remove this exception with the legacy AI evaluation suite.
+"tests/ai_eval/**" = ["B905"]
+
+[tool.ty.environment]
+# Include platform-specific types even when running on Linux.
+python-platform = "all"
+
+[tool.ty.src]
+include = ["nurse_scheduling"]
+exclude = [
+    # The MPSolver bindings omit the overloaded operators used by linear expressions.
+    "nurse_scheduling/solver_ortools_linear.py",
+    # MathOpt shares the linear encodings but uses different native variable and status types.
+    "nurse_scheduling/solver_ortools_mathopt.py",
+]

@@ -268,7 +268,7 @@ def test_cli_logs_database_failure_and_preserves_exit_message(monkeypatch, capsy
     def fail_connect(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(psycopg, "connect", fail_connect)
+    monkeypatch.setattr(psycopg.Connection, "connect", classmethod(fail_connect))
     with pytest.raises(SystemExit) as result:
         _main()
     assert result.value.code == 1

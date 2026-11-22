@@ -56,9 +56,10 @@ class ProviderCapacity:
     @property
     def configured_limit(self) -> int | None:
         """Total configured capacity, independent of health or current occupancy."""
-        if not self.deployments or any(item.limit is None for item in self.deployments):
+        limits = [item.limit for item in self.deployments if item.limit is not None]
+        if not limits or len(limits) != len(self.deployments):
             return None
-        return sum(item.limit for item in self.deployments)
+        return sum(limits)
 
     def select_jobs(self, requested: int | None, attempts: int) -> int:
         """Bound case jobs by provider capacity, sandbox capacity, and queued work."""
@@ -130,11 +131,11 @@ def discover_capacity(
             return ProviderCapacity(model, (), FALLBACK_CONCURRENCY, "conflicting deployment metadata; fallback")
         deployments[deployment_id] = deployment
     values = tuple(deployments.values())
-    healthy = [item for item in values if item.health == "healthy" and item.limit is not None]
+    healthy_limits = [item.limit for item in values if item.health == "healthy" and item.limit is not None]
     if not values:
         limit, reason = 0, "no deployments configured for the selected model"
-    elif healthy:
-        limit = sum(item.limit for item in healthy)
+    elif healthy_limits:
+        limit = sum(healthy_limits)
         reason = "sum of confirmed healthy deployment limits"
     elif values and all(item.health == "unhealthy" for item in values):
         limit, reason = 0, "all deployments are unhealthy"

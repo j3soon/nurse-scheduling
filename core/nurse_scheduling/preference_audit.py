@@ -27,6 +27,8 @@ from .models import (
     CompiledShiftTypeRequirements,
     CompiledShiftTypeSuccessions,
     ScheduleSpec,
+    ShiftTypeRequirementsPreference,
+    ShiftTypeSuccessionsPreference,
 )
 from .preference_types import iter_succession_patterns, staffing_expression
 
@@ -51,6 +53,7 @@ def audit_staffing_and_successions(data: ScheduleSpec, assignments: Mapping[tupl
     staffing, successions = [], []
     for index, (pref, resolved) in enumerate(zip(data.preferences, compiled.preferences, strict=True)):
         if isinstance(resolved, CompiledShiftTypeRequirements):
+            assert isinstance(pref, ShiftTypeRequirementsPreference)
             row = {
                 "preference_index": index,
                 "weight": _weight(pref.weight),
@@ -82,7 +85,10 @@ def audit_staffing_and_successions(data: ScheduleSpec, assignments: Mapping[tupl
                     row["checks"] += 1
                     row["hard_unmet"] += int(hard_unmet or unqualified)
             staffing.append(row)
-        elif isinstance(resolved, CompiledShiftTypeSuccessions) and pref.weight != 0:
+        elif isinstance(resolved, CompiledShiftTypeSuccessions):
+            assert isinstance(pref, ShiftTypeSuccessionsPreference)
+            if pref.weight == 0:
+                continue
             row = {
                 "preference_index": index,
                 "weight": _weight(pref.weight),

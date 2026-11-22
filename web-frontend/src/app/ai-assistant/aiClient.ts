@@ -170,9 +170,18 @@ export async function updateSessionModelSelection(
 export interface AvailableModel {
   id: string;
   name: string;
-  context_tokens: number | null;
+  context_tokens?: number | null;
   default_reasoning: string;
   reasoning_options: { id: string; label: string }[];
+}
+
+function isAvailableModel(value: unknown): value is AvailableModel {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string'
+    || (value.context_tokens != null && typeof value.context_tokens !== 'number')
+    || typeof value.default_reasoning !== 'string' || !Array.isArray(value.reasoning_options)) return false;
+  const options: unknown[] = value.reasoning_options;
+  return options.every(option => isRecord(option) && typeof option.id === 'string' && typeof option.label === 'string')
+    && options.some(option => isRecord(option) && option.id === value.default_reasoning);
 }
 
 export async function getModels(signal: AbortSignal, authToken: string | null, endpoint: string): Promise<{
@@ -182,16 +191,12 @@ export async function getModels(signal: AbortSignal, authToken: string | null, e
     signal, credentials: 'include', headers: authorizedHeaders(authToken),
   });
   if (!response.ok) throw await responseError(response);
-  const body = await response.json();
-  if (typeof body.default_model !== 'string' || !Array.isArray(body.models)
-    || !body.models.every((model: AvailableModel) => model && typeof model.id === 'string'
-      && typeof model.name === 'string' && Array.isArray(model.reasoning_options)
-      && typeof model.default_reasoning === 'string'
-      && model.reasoning_options.some(option => option?.id === model.default_reasoning)
-      && model.reasoning_options.every(option => option && typeof option.id === 'string' && typeof option.label === 'string'))) {
+  const body: unknown = await response.json();
+  if (!isRecord(body) || typeof body.default_model !== 'string' || !Array.isArray(body.models)
+    || !body.models.every(isAvailableModel)) {
     throw new Error('The AI backend returned an invalid model list.');
   }
-  return body;
+  return { default_model: body.default_model, models: body.models };
 }
 
 export interface UploadedFile {
@@ -1161,7 +1166,10 @@ export async function uploadFile(
 }
 
 function parseUploadList(files: unknown): UploadedFile[] {
-  if (!Array.isArray(files) || files.some(file => typeof file.id !== 'string' || typeof file.filename !== 'string' || typeof file.media_type !== 'string' || !Number.isSafeInteger(file.bytes) || file.bytes < 0)) {
+  if (!Array.isArray(files) || !files.every((file: unknown): file is UploadedFile =>
+    isRecord(file) && typeof file.id === 'string' && typeof file.filename === 'string'
+    && typeof file.media_type === 'string' && typeof file.bytes === 'number'
+    && Number.isSafeInteger(file.bytes) && file.bytes >= 0)) {
     throw new Error('The AI backend returned an invalid upload list.');
   }
   return files;

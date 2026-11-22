@@ -23,7 +23,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -263,10 +263,13 @@ class RedisUsageMetrics:
     def load_week(self, week_id: str) -> WeeklyUsageReport:
         """Load the latest telemetry rows associated with one week."""
         starts_at, ends_at = week_bounds(week_id, self._timezone)
-        raw_ids = self._redis.zrangebyscore(
-            self._week_jobs_key(week_id),
-            starts_at.timestamp(),
-            f"({ends_at.timestamp()}",
+        raw_ids = cast(
+            list[bytes | str],
+            self._redis.zrangebyscore(
+                self._week_jobs_key(week_id),
+                starts_at.timestamp(),
+                f"({ends_at.timestamp()}",
+            ),
         )
         job_ids = sorted(_decode(raw_id) for raw_id in raw_ids)
         with self._redis.pipeline() as transaction:
@@ -427,7 +430,7 @@ class RedisUsageMetrics:
                         return False
                     delivery_key = self._delivery_key(week_id)
                     transaction.multi()
-                    transaction.hset(delivery_key, mapping=mapping)
+                    transaction.hset(delivery_key, mapping={**mapping})
                     transaction.hincrby(delivery_key, "attempts", 1)
                     transaction.expireat(delivery_key, self._week_expires_at(week_id))
                     transaction.delete(lock_key)

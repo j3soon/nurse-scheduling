@@ -202,6 +202,7 @@ def main():
         status = schedule_result.solver_status
         cell_export_info = schedule_result.cell_export_info
         if progress_output_file is not None and df is not None:
+            assert progress_callback is not None and score is not None
             progress_callback(
                 SolverProgress(
                     source="cli:final-result",

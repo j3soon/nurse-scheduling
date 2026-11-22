@@ -45,7 +45,8 @@ def _boot_marker() -> str:
 def get_deployment_id() -> str:
     """Derive one opaque identity shared by workers from the same server launch."""
     supervisor = parent_process()
-    launch_process_id = supervisor.pid if supervisor is not None else os.getpid()
+    supervisor_pid = supervisor.pid if supervisor is not None else None
+    launch_process_id = supervisor_pid if supervisor_pid is not None else os.getpid()
     seed = ":".join(
         (
             socket.gethostname(),

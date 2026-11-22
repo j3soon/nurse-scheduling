@@ -57,7 +57,7 @@ import math
 import os
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -318,7 +318,7 @@ class PublicDiagnostic:
                 self.request_errors.append(detail)
 
     @contextmanager
-    def _measure_phase(self, name: str) -> Iterator[None]:
+    def _measure_phase(self, name: str) -> Generator[None]:
         """Accumulate elapsed time for one diagnostic phase."""
         started = time.monotonic()
         try:

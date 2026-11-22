@@ -45,19 +45,19 @@ class ORToolsSolver(SolverInterface):
 
     def new_bool_var(self, name: str) -> cp_model.IntVar:
         """Create a new boolean variable."""
-        return self.model.NewBoolVar(name)
+        return self.model.new_bool_var(name)
 
     def new_int_var(self, lb: int, ub: int, name: str) -> cp_model.IntVar:
         """Create a new integer variable."""
-        return self.model.NewIntVar(lb, ub, name)
+        return self.model.new_int_var(lb, ub, name)
 
     def add_constraint(self, constraint) -> None:
         """Add a constraint to the model."""
-        self.model.Add(constraint)
+        self.model.add(constraint)
 
     def add_bool_or(self, literals: list[Any]) -> None:
         """Add a boolean OR constraint."""
-        self.model.AddBoolOr(literals)
+        self.model.add_bool_or(literals)
 
     def create_bool_and_var(self, name: str, literals: list[Any]) -> Any:
         """Create a boolean variable equivalent to the AND of the literals."""
@@ -75,8 +75,8 @@ class ORToolsSolver(SolverInterface):
         # could still remain false. The OR constraint adds the reverse:
         #   OR(NOT literal_1, ..., NOT literal_n, var)
         # which forces var to true when no literal is false.
-        self.model.AddBoolAnd(literals).OnlyEnforceIf(var)
-        self.model.AddBoolOr([self.negate(literal) for literal in literals] + [var])
+        self.model.add_bool_and(literals).only_enforce_if(var)
+        self.model.add_bool_or([self.negate(literal) for literal in literals] + [var])
         return var
 
     def should_use_bool_and_var(self, n_literals: int) -> bool:
@@ -88,9 +88,9 @@ class ORToolsSolver(SolverInterface):
         self.objective_expr = expression
         self.maximize = maximize
         if maximize:
-            self.model.Maximize(expression)
+            self.model.maximize(expression)
         else:
-            self.model.Minimize(expression)
+            self.model.minimize(expression)
 
     def solve(
         self,
@@ -131,7 +131,7 @@ class ORToolsSolver(SolverInterface):
         stop_watcher_done = threading.Event()
         stop_watcher = None
 
-        if should_stop is not None:
+        if should_stop is not None and should_stop_lock is not None:
 
             def watch_stop_request():
                 while not stop_watcher_done.wait(0.2):
@@ -195,7 +195,7 @@ class ORToolsSolver(SolverInterface):
 
     def validate_model(self) -> str:
         """Validate the model."""
-        return self.model.Validate()
+        return self.model.validate()
 
     def negate(self, var: Any) -> Any:
         """Negate a boolean variable."""
@@ -207,36 +207,36 @@ class ORToolsSolver(SolverInterface):
         """Create a boolean variable with a constraint."""
         # Ref: https://stackoverflow.com/a/70571397
         # Ref: https://github.com/google/or-tools/blob/master/ortools/sat/docs/channeling.md
-        var = self.model.NewBoolVar(name)
+        var = self.model.new_bool_var(name)
         if operator == Operator.EQ:
-            self.model.Add(source_expr == target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr != target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr == target_value).only_enforce_if(var)
+            self.model.add(source_expr != target_value).only_enforce_if(var.Not())
         elif operator == Operator.NE:
-            self.model.Add(source_expr != target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr == target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr != target_value).only_enforce_if(var)
+            self.model.add(source_expr == target_value).only_enforce_if(var.Not())
         elif operator == Operator.GE:
-            self.model.Add(source_expr >= target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr < target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr >= target_value).only_enforce_if(var)
+            self.model.add(source_expr < target_value).only_enforce_if(var.Not())
         elif operator == Operator.GT:
-            self.model.Add(source_expr > target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr <= target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr > target_value).only_enforce_if(var)
+            self.model.add(source_expr <= target_value).only_enforce_if(var.Not())
         elif operator == Operator.LE:
-            self.model.Add(source_expr <= target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr > target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr <= target_value).only_enforce_if(var)
+            self.model.add(source_expr > target_value).only_enforce_if(var.Not())
         elif operator == Operator.LT:
-            self.model.Add(source_expr < target_value).OnlyEnforceIf(var)
-            self.model.Add(source_expr >= target_value).OnlyEnforceIf(var.Not())
+            self.model.add(source_expr < target_value).only_enforce_if(var)
+            self.model.add(source_expr >= target_value).only_enforce_if(var.Not())
         else:
             raise NotImplementedError(f"Operator {operator} not implemented for OR-Tools solver.")
         return var
 
     def add_abs_equality(self, target_var: Any, source_expr, source_expr_range: tuple[int, int]) -> None:
         """Add a constraint that target_var = |source_expr|."""
-        self.model.AddAbsEquality(target_var, source_expr)
+        self.model.add_abs_equality(target_var, source_expr)
 
     def add_squared_equality(self, target_var: Any, source_var: Any, source_var_range: tuple[int, int]) -> None:
         """Add a constraint that target_var = source_var^2."""
-        self.model.AddMultiplicationEquality(target_var, [source_var, source_var])
+        self.model.add_multiplication_equality(target_var, [source_var, source_var])
 
     def get_status_name(self) -> str:
         """Get the generic solver status name."""

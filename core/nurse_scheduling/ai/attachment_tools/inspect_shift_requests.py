@@ -24,10 +24,11 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING or __package__:
     from .inspect_optimizer_result import _weight, _weight_arguments
-except ImportError:
+else:  # Standalone copy in /reference/tools.
     from inspect_optimizer_result import _weight, _weight_arguments
 
 

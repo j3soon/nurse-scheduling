@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 from ruamel.yaml.error import YAMLError
 
 from ..frontend_validation import FRONTEND_DATE_REFERENCE_ERROR, load_frontend_data
@@ -132,7 +133,7 @@ def _invalid(issues: list[ScheduleSpecIssue]) -> ScheduleSpecValidationResult:
     return ScheduleSpecValidationResult(valid=False, issues=bounded, omitted_issues=len(issues) - len(kept))
 
 
-def _issue_from_error(entry: dict) -> ScheduleSpecIssue:
+def _issue_from_error(entry: ErrorDetails) -> ScheduleSpecIssue:
     """Convert one Pydantic error entry into a located Schedule Spec issue."""
     return ScheduleSpecIssue(
         format_schedule_spec_location(entry.get("loc", ())), str(entry.get("msg", "Invalid value.")), entry.get("type")

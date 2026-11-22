@@ -37,6 +37,7 @@ from .provider import (
     tool_result_message,
 )
 from .schedule_context import describe_schedule_spec
+from .session_events import ContextUsageFields, ModelInputFields, ModelInputMessage
 from .transcript import (
     STATUS_PREFIX,
     AgentMessage,
@@ -61,6 +62,14 @@ SANDBOX_COMMAND_TIMEOUT_ERROR = (
 )
 SANDBOX_TURN_TIMEOUT_ERROR = "The AI response timed out. Please try again."
 STALE_TURN_ERROR = "The Schedule Spec changed while this response was generated, so the response was discarded."
+_NATIVE_REASONING_FIELDS = (
+    "reasoning",
+    "reasoning_content",
+    "reasoning_text",
+    "reasoning_details",
+    "thinking_blocks",
+    "provider_specific_fields",
+)
 
 
 def recent_history(history: list[ChatMessage], max_chars: int) -> list[ChatMessage]:
@@ -140,18 +149,19 @@ def context_usage(
     provider: ToolCapableChatProvider | None = None,
     *,
     estimated_tokens: int | None = None,
-) -> dict[str, int | bool]:
+) -> ContextUsageFields:
     """Report retained history size and the latest request's tokens with the provider's context limit.
 
     The latest provider call holds the whole conversation that the model saw, so its prompt and
     completion tokens show how full the context window is. A sum over a turn's calls would count
     the same prompt several times.
     """
-    usage = {"used_chars": used_chars, "max_chars": settings.max_history_chars}
-    if last_call is not None or estimated_tokens is not None:
-        usage["used_tokens"] = (
-            estimated_tokens if estimated_tokens is not None else last_call.prompt_tokens + last_call.completion_tokens
-        )
+    usage: ContextUsageFields = {"used_chars": used_chars, "max_chars": settings.max_history_chars}
+    used_tokens = estimated_tokens
+    if used_tokens is None and last_call is not None:
+        used_tokens = last_call.prompt_tokens + last_call.completion_tokens
+    if used_tokens is not None:
+        usage["used_tokens"] = used_tokens
         usage["estimated"] = estimated_tokens is not None
         limit = getattr(provider, "context_tokens", None)
         if type(limit) is int and limit > 0:
@@ -209,13 +219,19 @@ def message_title(kind: str, content: str) -> str | None:
 QuestionKind = Literal["question", "optimizer"]
 
 
+def _model_input_text(message: ChatMessage) -> str:
+    content = message["content"]
+    assert isinstance(content, str)
+    return content
+
+
 def model_input(
     messages: Sequence[ChatMessage],
     history_indices: Sequence[int],
     question_kind: QuestionKind,
     *,
     app_indices: set[int] | None = None,
-) -> dict[str, object]:
+) -> ModelInputFields:
     """Describe a provider request for the chat: its system message and the messages added since the last reply.
 
     History messages after the last assistant reply are app events. Each one carries its absolute
@@ -224,18 +240,18 @@ def model_input(
     history_count = len(history_indices)
     history = messages[1 : 1 + history_count]
     last_reply = max((index for index, message in enumerate(history) if message["role"] == "assistant"), default=-1)
-    added: list[dict[str, object]] = [
-        {"kind": "app", "index": history_indices[index], "content": message["content"]}
+    added: list[ModelInputMessage] = [
+        {"kind": "app", "index": history_indices[index], "content": _model_input_text(message)}
         for index, message in enumerate(history)
         if index > last_reply
         and message["role"] == "user"
         and (app_indices is None or history_indices[index] in app_indices)
     ]
-    added.append({"kind": question_kind, "content": messages[1 + history_count]["content"]})
+    added.append({"kind": question_kind, "content": _model_input_text(messages[1 + history_count])})
     for entry in added:
-        if title := message_title(str(entry["kind"]), str(entry["content"])):
+        if title := message_title(entry["kind"], entry["content"]):
             entry["title"] = title
-    return {"system": messages[0]["content"], "messages": added}
+    return {"system": _model_input_text(messages[0]), "messages": added}
 
 
 def prepare_provider_request(
@@ -284,7 +300,9 @@ def prepare_provider_request(
             if entry.provider is not None:
                 message["_provider"] = asdict(entry.provider)
                 if entry.stop_reason != "length":
-                    message.update(entry.native_reasoning)
+                    for field in _NATIVE_REASONING_FIELDS:
+                        if field in entry.native_reasoning:
+                            message[field] = entry.native_reasoning[field]
             if entry.usage is not None:
                 message["_usage"] = entry.usage
             if entry.reasoning:
@@ -321,7 +339,7 @@ def _recent_messages(projected: list[tuple[bool, ChatMessage]], count: int) -> l
             count -= 1
     tail = []
     for prompt, original in projected[start:]:
-        message = dict(original)
+        message = original.copy()
         message.pop("_usage", None)
         tail.append((prompt, message))
     return tail
@@ -358,7 +376,7 @@ def compatible_provider_messages(
     result = []
     ids = {}
     for original in messages:
-        message = dict(original)
+        message = original.copy()
         source = message.pop("_provider", None)
         message.pop("_usage", None)
         message.pop("_tool_image", None)
@@ -367,14 +385,7 @@ def compatible_provider_messages(
         message.pop("_compaction_files", None)
         compatible = provider is not None and source == asdict(provider)
         if message["role"] == "assistant" and not compatible:
-            for name in (
-                "reasoning",
-                "reasoning_content",
-                "reasoning_text",
-                "reasoning_details",
-                "thinking_blocks",
-                "provider_specific_fields",
-            ):
+            for name in _NATIVE_REASONING_FIELDS:
                 message.pop(name, None)
             if "tool_calls" in message:
                 calls = []

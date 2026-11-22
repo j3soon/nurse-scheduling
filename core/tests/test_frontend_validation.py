@@ -186,4 +186,7 @@ def test_frontend_rejects_date_shaped_group_id_before_compiling_its_references(g
     ) as error:
         load_frontend_data(json.dumps(payload).encode())
 
-    assert error.value.errors()[0]["loc"] == ("dates", "groups", 0, "id")
+    date_error, backend_error = error.value.errors()
+    assert date_error["loc"] == ("dates", "groups", 0, "id")
+    assert backend_error["type"] == "value_error"
+    assert f"Date group ID {group_id!r} cannot look like a date" in backend_error["msg"]

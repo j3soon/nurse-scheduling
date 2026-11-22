@@ -547,7 +547,9 @@ def main() -> None:
                 parser.error("--sheet conflicts with the sheet name in --range")
             args.sheet = sheet
     else:
-        window = tuple(value if value is not None else default for value, default in zip(window, (1, 1, 200, 50)))
+        window = tuple(
+            value if value is not None else default for value, default in zip(window, (1, 1, 200, 50), strict=True)
+        )
     if args.summary:
         try:
             result = summarize_workbook(

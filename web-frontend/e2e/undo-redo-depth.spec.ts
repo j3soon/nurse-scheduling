@@ -22,14 +22,7 @@
 import { expect, test } from './test';
 import { disableModalDialogs } from './helpers';
 
-test('multi-step undo and redo restore intermediate people-page states', async ({ page }) => {
-  /*
-   * Steps:
-   * 1. Reset to a new schedule and confirm the target people are absent.
-   * 2. Add two people through two separate page actions.
-   * 3. Undo twice and confirm each intermediate state is restored.
-   * 4. Redo twice and confirm both additions return in order.
-   */
+test('multi-step undo and redo preserve history after loading an invalid index', async ({ page }) => {
   await disableModalDialogs(page);
 
   await page.goto('/');
@@ -51,6 +44,26 @@ test('multi-step undo and redo restore intermediate people-page states', async (
   await page.getByPlaceholder('Enter person ID').fill('Early Bird');
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText('Night Owl', { exact: true })).toBeVisible();
+  await expect(page.getByText('Early Bird', { exact: true })).toBeVisible();
+
+  await page.evaluate(() => {
+    const namespace = window.__PLAYWRIGHT_WORKER_NAMESPACE__;
+    const key = namespace ? `nurse-scheduling-spec__${namespace}` : 'nurse-scheduling-spec';
+    const saved = JSON.parse(localStorage.getItem(key)!);
+    localStorage.setItem(key, JSON.stringify({ ...saved, currentHistoryIndex: 'invalid' }));
+  });
+  await page.reload();
+  await expect(page.getByText('Early Bird', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Add Person' }).click();
+  await page.getByPlaceholder('Enter person ID').fill('Weekend Nurse');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('Weekend Nurse', { exact: true })).toBeVisible();
+
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  await expect(undo).toBeEnabled();
+  await undo.click();
+  await expect(page.getByText('Weekend Nurse', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Early Bird', { exact: true })).toBeVisible();
 
   await page.getByRole('heading', { name: 'People Management', exact: true }).click();

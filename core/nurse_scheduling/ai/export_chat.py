@@ -58,7 +58,7 @@ def _main() -> None:
                 mode="w+b", dir=output.parent, prefix=".chat-export-", delete=False
             ) as archive:
                 temporary = Path(archive.name)
-                write_chat_archive(history, str(args.session_id), archive)
+                write_chat_archive(history, str(args.session_id), archive.file)
             temporary.replace(output)
             temporary = None
     except (psycopg.Error, OSError, ChatSessionNotFoundError) as exc:

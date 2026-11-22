@@ -22,7 +22,7 @@
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Protocol
@@ -126,7 +126,7 @@ async def managed_sandbox(
     *,
     cleanup_timeout_seconds: float = 10.0,
     envs: dict[str, str] | None = None,
-) -> AsyncIterator[SandboxBackend]:
+) -> AsyncGenerator[SandboxBackend]:
     """Create one sandbox and destroy it without masking a turn failure."""
     if cleanup_timeout_seconds <= 0:
         raise ValueError("cleanup_timeout_seconds must be positive")
@@ -152,7 +152,7 @@ async def managed_sandbox(
 
 
 @asynccontextmanager
-async def managed_sandbox_factory(factory: SandboxFactory) -> AsyncIterator[SandboxFactory]:
+async def managed_sandbox_factory(factory: SandboxFactory) -> AsyncGenerator[SandboxFactory]:
     """Run optional provider cleanup supervision around a factory's lifetime."""
     start_cleanup = getattr(factory, "start_cleanup", None)
     stop_cleanup = getattr(factory, "stop_cleanup", None)
