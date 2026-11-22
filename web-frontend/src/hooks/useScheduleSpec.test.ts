@@ -2236,7 +2236,52 @@ describe('useScheduleSpec', () => {
     });
   });
 
-  it('logs and skips sorting checks for invalid SHIFT_REQUEST person/shiftType shapes', async () => {
+  it('restores the Schedule Spec and Undo history with a numeric request description', () => {
+    const saved = createPopulatedHistoryState();
+    const request = { type: SHIFT_REQUEST, person: ['Person 1'], date: ['01'], shiftType: ['D'], weight: 2 };
+    const previous = {
+      ...saved.state,
+      description: 'Previous Schedule Spec',
+      preferences: [{ ...request, description: 'Appointment' }, { ...request, description: 123 }],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      state: { ...saved.state, description: 'Current Schedule Spec' },
+      history: [previous, saved.state],
+      currentHistoryIndex: 1,
+    }));
+
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    expect(result.current.descriptionData).toBe('Current Schedule Spec');
+    act(() => result.current.undo());
+    expect(result.current.descriptionData).toBe('Previous Schedule Spec');
+    expect(result.current.preferences.map(pref => pref.description)).toEqual(['123', 'Appointment']);
+  });
+
+  it('orders tied shift requests by description, including requests with infinite weight', () => {
+    const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
+    const request = { type: SHIFT_REQUEST, person: ['P1'], date: ['01'], shiftType: ['D'], weight: Infinity } as const;
+
+    act(() => {
+      result.current.loadFromYaml({
+        preferences: [
+          { ...request, description: 'Zebra' },
+          { ...request, description: 'appointment' },
+          { ...request },
+          { ...request, weight: 2, description: 'Weekend' },
+        ],
+      });
+    });
+
+    const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST);
+    expect(requests.map(pref => [pref.weight, pref.description])).toEqual([
+      [2, 'Weekend'],
+      [Infinity, undefined],
+      [Infinity, 'appointment'],
+      [Infinity, 'Zebra'],
+    ]);
+  });
+
+  it('accepts SHIFT_REQUEST entries with multiple people or shift types', async () => {
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
@@ -2273,9 +2318,13 @@ describe('useScheduleSpec', () => {
     await waitFor(() => {
       const requests = result.current.preferences.filter(pref => pref.type === SHIFT_REQUEST);
       expect(requests).toHaveLength(2);
+      expect(requests).toEqual(expect.arrayContaining([
+        expect.objectContaining({ person: ['Person 1', 'Person 2'], shiftType: ['D'] }),
+        expect.objectContaining({ person: ['Person 1'], shiftType: ['D', 'N'] }),
+      ]));
     });
 
-    expect(errorSpy).toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('clears person history entries before a position when shiftTypeId is undefined', async () => {

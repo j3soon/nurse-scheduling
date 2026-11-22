@@ -35,6 +35,8 @@ interface InlineEditProps {
   emptyText?: string; // Text to show when value is empty
   emptyClassName?: string;
   tapToEdit?: boolean; // Start editing on a single touch or pen tap
+  multiline?: boolean;
+  ariaLabel?: string;
 }
 
 export function InlineEdit({
@@ -51,22 +53,25 @@ export function InlineEdit({
   emptyText,
   emptyClassName = 'text-gray-300 italic',
   tapToEdit = true,
+  multiline = false,
+  ariaLabel,
 }: InlineEditProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (isEditing && inputRef.current) {
-      inputRef.current.focus();
+      inputRef.current.focus({ preventScroll: multiline });
       inputRef.current.select();
     }
-  }, [isEditing]);
+  }, [isEditing, multiline]);
 
   const handleSave = () => {
-    onSave((inputRef.current?.value ?? value).trim());
+    const draft = inputRef.current?.value ?? value;
+    onSave(multiline ? draft : draft.trim());
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !(multiline && e.shiftKey) && !isImeCompositionKeyEvent(e)) {
       e.preventDefault();
       handleSave();
     } else if (e.key === 'Escape') {
@@ -76,26 +81,36 @@ export function InlineEdit({
   };
 
   if (isEditing) {
-    return (
-      <input
-        key={value}
-        ref={inputRef}
-        type="text"
-        defaultValue={value}
-        onKeyDown={handleKeyDown}
-        onBlur={handleSave}
-        placeholder={placeholder}
-        className={`px-2 py-1 border rounded ${error ? 'border-red-500' : ''} ${editClassName}`}
-      />
-    );
+    const editorProps = {
+      ref: (element: HTMLInputElement | HTMLTextAreaElement | null) => { inputRef.current = element; },
+      defaultValue: value,
+      onKeyDown: handleKeyDown,
+      onBlur: handleSave,
+      placeholder,
+      'aria-label': ariaLabel,
+      className: `px-2 py-1 border rounded ${error ? 'border-red-500' : ''} ${editClassName}`,
+    };
+    return multiline
+      ? <textarea key={value} rows={2} {...editorProps} />
+      : <input key={value} type="text" {...editorProps} />;
   }
 
   const valueToDisplay = displayValue || value;
   const hasValue = valueToDisplay.trim().length > 0;
   const isReadOnly = !onDoubleClick;
+  const keyboardEditable = !isReadOnly && Boolean(ariaLabel);
 
   return (
     <div
+      role={keyboardEditable ? 'button' : undefined}
+      tabIndex={keyboardEditable ? 0 : undefined}
+      aria-label={ariaLabel}
+      onKeyDown={keyboardEditable ? event => {
+        if ((event.key === 'Enter' || event.key === ' ') && !isImeCompositionKeyEvent(event)) {
+          event.preventDefault();
+          onDoubleClick?.();
+        }
+      } : undefined}
       onDoubleClick={onDoubleClick}
       onPointerUp={event => {
         if (onDoubleClick && tapToEdit && (event.pointerType === 'touch' || event.pointerType === 'pen')) {

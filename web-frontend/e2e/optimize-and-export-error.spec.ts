@@ -144,7 +144,8 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\)/i)).toHaveCount(0);
   expect(optimizationOptionsRequested).toBe(true);
 
-  await page.getByLabel('Select http://localhost:8000').check({ force: true });
+  await page.getByText('http://localhost:8000', { exact: true }).click();
+  await expect(page.getByLabel('Select http://localhost:8000')).toBeChecked();
 
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\).*Frontend version:/i)).toBeVisible();
   await expect(page.getByText('Incompatible backend. The request may fail.')).toBeVisible();

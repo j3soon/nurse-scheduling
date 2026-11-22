@@ -21,21 +21,30 @@
 'use client';
 
 import { useI18n } from '@/i18n/I18nProvider';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { FiX, FiInfo } from 'react-icons/fi';
 import { Item } from '@/types/scheduling';
 import { getWeightDisplayLabel, getWeightColor, isValidWeightValue } from '@/utils/numberParsing';
 import WeightInput from '@/components/WeightInput';
 import { isImeCompositionKeyEvent } from '@/utils/keyboardEvents';
 
+export interface ShiftPreferenceEdit {
+  shiftTypeId: string;
+  weight: number;
+  description?: string;
+}
+
+type ShiftPreferenceDraft = Omit<ShiftPreferenceEdit, 'weight'> & { weight: number | string };
+
 interface ShiftPreferenceEditorProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (preferences: { shiftTypeId: string; weight: number }[]) => void;
+  onSave: (preferences: ShiftPreferenceEdit[]) => void;
   personId: string;
   dateId: string;
   shiftTypes: Item[];
-  initialPreferences: { shiftTypeId: string; weight: number }[];
+  initialPreferences: ShiftPreferenceEdit[];
+  hasOtherRequests?: boolean;
 }
 
 export default function ShiftPreferenceEditor({
@@ -45,39 +54,58 @@ export default function ShiftPreferenceEditor({
   personId,
   dateId,
   shiftTypes,
-  initialPreferences
+  initialPreferences,
+  hasOtherRequests,
 }: ShiftPreferenceEditorProps) {
   const { t } = useI18n();
-  const [draftPreferences, setDraftPreferences] = useState<{ shiftTypeId: string; weight: number | string }[] | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [draftPreferences, setDraftPreferences] = useState<ShiftPreferenceDraft[] | null>(null);
   const preferences = draftPreferences ?? initialPreferences;
 
-  const handleWeightChange = (shiftTypeId: string, weight: number | string) => {
-    const weightValue = weight as number;
+  useLayoutEffect(() => {
+    if (!isOpen) return;
 
+    const root = document.documentElement;
+    const { overflow, overflowAnchor, scrollbarGutter } = root.style;
+    const { scrollX, scrollY } = window;
+    const previousFocus = document.activeElement;
+    const restoreScroll = () => {
+      if (window.scrollX !== scrollX || window.scrollY !== scrollY) {
+        window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+      }
+    };
+    // Prevent the browser from moving the scroll position when the scrollbar
+    // styles change the layout beneath the dialog.
+    root.style.overflowAnchor = 'none';
+    root.style.scrollbarGutter = 'stable';
+    root.style.overflow = 'hidden';
+    dialogRef.current?.focus({ preventScroll: true });
+    restoreScroll();
+
+    return () => {
+      root.style.overflow = overflow;
+      root.style.scrollbarGutter = scrollbarGutter;
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+        previousFocus.focus({ preventScroll: true });
+      }
+      restoreScroll();
+      root.style.overflowAnchor = overflowAnchor;
+    };
+  }, [isOpen]);
+
+  const handleWeightChange = (shiftTypeId: string, index: number, weight: number | string) => {
     setDraftPreferences(prev => {
       const current = prev ?? initialPreferences;
-      const existing = current.find(p => p.shiftTypeId === shiftTypeId);
-      if (existing) {
-        if (weightValue === 0) {
-          // Remove preference if weight is 0
-          return current.filter(p => p.shiftTypeId !== shiftTypeId);
-        } else {
-          // Update existing preference
-          return current.map(p =>
-            p.shiftTypeId === shiftTypeId ? { ...p, weight: weightValue } : p
-          );
-        }
-      } else if (weightValue !== 0) {
-        // Add new preference
-        return [...current, { shiftTypeId, weight: weightValue }];
-      }
-      return current;
+      if (weight === 0) return current.filter((_, i) => i !== index);
+      if (index === -1) return [...current, { shiftTypeId, weight }];
+      return current.map((pref, i) => i === index ? { ...pref, weight } : pref);
     });
   };
 
-  const getWeight = (shiftTypeId: string): number | string => {
-    const preference = preferences.find(p => p.shiftTypeId === shiftTypeId);
-    return preference ? preference.weight : 0;
+  const handleDescriptionChange = (index: number, description: string) => {
+    setDraftPreferences(prev => (prev ?? initialPreferences).map((pref, i) =>
+      i === index ? { ...pref, description } : pref
+    ));
   };
 
   const validateForm = (): boolean => {
@@ -96,7 +124,12 @@ export default function ShiftPreferenceEditor({
   function handleSave() {
     if (!validateForm()) return;
     // Convert all weights to numbers
-    onSave(preferences.map(p => ({ shiftTypeId: p.shiftTypeId, weight: p.weight as number })));
+    onSave(preferences.map(p => ({
+      shiftTypeId: p.shiftTypeId,
+      weight: p.weight as number,
+      ...(p.description ? { description: p.description } : {}),
+    })));
+    setDraftPreferences(null);
     onClose();
   }
 
@@ -110,7 +143,7 @@ export default function ShiftPreferenceEditor({
     if (!isOpen) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !isImeCompositionKeyEvent(e)) {
+      if (e.key === 'Enter' && !(e.target instanceof HTMLTextAreaElement) && !isImeCompositionKeyEvent(e)) {
         e.preventDefault();
         handleSave();
       } else if (e.key === 'Escape') {
@@ -133,11 +166,11 @@ export default function ShiftPreferenceEditor({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="shift-preference-matrix-title" className="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
           <div>
-            <h2 className="text-xl font-bold text-gray-800">
+            <h2 id="shift-preference-matrix-title" className="text-xl font-bold text-gray-800">
               {t("Shift Preference Matrix")}</h2>
             <p className="text-sm text-gray-600 mt-1">
               {t("Person: ")}<span className="font-medium text-blue-600">{personId}</span>{t(" • Date: ")}<span className="font-medium text-blue-600">{dateId}</span>
@@ -152,7 +185,7 @@ export default function ShiftPreferenceEditor({
         </div>
 
         {/* Content */}
-        <div className="overflow-y-auto max-h-[calc(90vh-200px)]">
+        <div className="overflow-y-auto overscroll-contain max-h-[calc(90vh-200px)]">
           <div className="p-6">
             {/* Info Box */}
             <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -168,6 +201,12 @@ export default function ShiftPreferenceEditor({
                 </div>
               </div>
             </div>
+
+            {hasOtherRequests && (
+              <p className="mb-4 text-sm text-gray-700">
+                {t("Edit descriptions for requests with multiple selectors in Current Shift Requests.")}
+              </p>
+            )}
 
             {/* Preferences Table */}
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
@@ -193,49 +232,51 @@ export default function ShiftPreferenceEditor({
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {shiftTypes.map((shiftType, index) => {
-                      const weight = getWeight(shiftType.id);
+                    {shiftTypes.flatMap((shiftType, index) => {
+                      const indices = preferences.flatMap((pref, i) => pref.shiftTypeId === shiftType.id ? [i] : []);
+                      return (indices.length ? indices : [-1]).map((preferenceIndex, rowIndex) => {
+                        const weight = preferences[preferenceIndex]?.weight ?? 0;
+                        return (
+                          <tr
+                            key={`${shiftType.id}-${rowIndex}`}
+                            className={`hover:bg-gray-50 transition-colors ${
+                              index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                            }`}
+                          >
+                            {/* Shift Type */}
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <div className="font-medium text-sm text-gray-900">
+                                {shiftType.id}
+                              </div>
+                            </td>
 
-                      return (
-                        <tr
-                          key={shiftType.id}
-                          className={`hover:bg-gray-50 transition-colors ${
-                            index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
-                          }`}
-                        >
-                          {/* Shift Type */}
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="font-medium text-sm text-gray-900">
-                              {shiftType.id}
-                            </div>
-                          </td>
+                            {/* Description */}
+                            <td className="px-6 py-4">
+                              <div className="text-sm text-gray-600">
+                                {shiftType.description ? shiftType.description : <span className="italic text-gray-400">{t("No description")}</span>}
+                              </div>
+                            </td>
 
-                          {/* Description */}
-                          <td className="px-6 py-4">
-                            <div className="text-sm text-gray-600">
-                              {shiftType.description ? shiftType.description : <span className="italic text-gray-400">{t("No description")}</span>}
-                            </div>
-                          </td>
+                            {/* Weight Input */}
+                            <td className="px-6 py-4 text-center whitespace-nowrap">
+                              <WeightInput
+                                value={weight}
+                                onChange={(value) => handleWeightChange(shiftType.id, preferenceIndex, value)}
+                                compact={true}
+                                label=""
+                                placeholder=""
+                              />
+                            </td>
 
-                          {/* Weight Input */}
-                          <td className="px-6 py-4 text-center whitespace-nowrap">
-                            <WeightInput
-                              value={weight}
-                              onChange={(value) => handleWeightChange(shiftType.id, value)}
-                              compact={true}
-                              label=""
-                              placeholder=""
-                            />
-                          </td>
-
-                          {/* Status Indicator */}
-                          <td className="px-6 py-4 text-center whitespace-nowrap">
-                            <div className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getWeightColor(weight)}`}>
-                              {weight === 0 ? '—' : getWeightDisplayLabel(weight)}
-                            </div>
-                          </td>
-                        </tr>
-                      );
+                            {/* Status Indicator */}
+                            <td className="px-6 py-4 text-center whitespace-nowrap">
+                              <div className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${getWeightColor(weight)}`}>
+                                {weight === 0 ? '—' : getWeightDisplayLabel(weight)}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      });
                     })}
                   </tbody>
                 </table>
@@ -252,17 +293,26 @@ export default function ShiftPreferenceEditor({
                   </span>
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {preferences
-                    .filter(p => typeof p.weight === 'number')
-                    .sort((a, b) => (b.weight as number) - (a.weight as number))
-                    .map((pref) => (
-                      <div key={pref.shiftTypeId} className="flex items-center justify-between bg-white px-3 py-2 rounded-md shadow-sm">
-                        <span className="text-sm font-medium text-gray-700">{pref.shiftTypeId}</span>
-                        <span className={`text-sm font-bold ${
-                          (pref.weight as number) > 0 ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {getWeightDisplayLabel(pref.weight)}
-                        </span>
+                  {preferences.map((pref, index) => ({ pref, index }))
+                    .sort((a, b) => Number(b.pref.weight) - Number(a.pref.weight))
+                    .map(({ pref, index }) => (
+                      <div key={index} className="rounded-md bg-white px-3 py-2 shadow-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium text-gray-700">{pref.shiftTypeId}</span>
+                          <span className={`text-sm font-bold ${Number(pref.weight) > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                            {getWeightDisplayLabel(pref.weight)}
+                          </span>
+                        </div>
+                        <label className="mt-2 block text-xs font-medium text-gray-700">
+                          {t("Request description (optional)")}
+                          <textarea
+                            aria-label={t("Request description for {value0}", { value0: pref.shiftTypeId })}
+                            value={pref.description ?? ''}
+                            onChange={event => handleDescriptionChange(index, event.target.value)}
+                            rows={2}
+                            className="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm"
+                          />
+                        </label>
                       </div>
                     ))}
                 </div>
@@ -272,7 +322,7 @@ export default function ShiftPreferenceEditor({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-between items-center p-6 border-t border-gray-200 bg-gray-50 gap-3">
+        <div className="flex flex-wrap justify-between items-center p-4 sm:p-6 border-t border-gray-200 bg-gray-50 gap-3">
           <button
             onClick={clearAllPreferences}
             className="px-4 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
@@ -281,12 +331,12 @@ export default function ShiftPreferenceEditor({
           <div className="flex gap-3">
             <button
               onClick={handleCancel}
-              className="px-6 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
+              className="px-3 sm:px-6 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors font-medium"
             >
               {t("Cancel")}</button>
             <button
               onClick={handleSave}
-              className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
+              className="px-3 sm:px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
             >
               {t("Save Preferences")}</button>
           </div>

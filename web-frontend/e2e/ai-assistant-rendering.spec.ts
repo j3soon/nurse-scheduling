@@ -254,10 +254,17 @@ async function startBackend(origin: string, snapshot: Snapshot) {
   };
 }
 
-async function replay(page: Page, snapshot: Snapshot, backend: Awaited<ReturnType<typeof startBackend>>) {
+async function replay(
+  page: Page,
+  snapshot: Snapshot,
+  backend: Awaited<ReturnType<typeof startBackend>>,
+  { waitForEveryEvent = true } = {},
+) {
   let sent = 0;
   for (const event of snapshot.events) {
-    await page.clock.setFixedTime(event.occurred_at);
+    if (waitForEveryEvent || event.type === 'run_start' || event.type === 'done') {
+      await page.clock.setFixedTime(event.occurred_at);
+    }
     if (event.type === 'run_start') {
       const run = snapshot.runs.find(run => run.id === event.data.run_id)!;
       if (run.kind === 'compaction') {
@@ -275,6 +282,7 @@ async function replay(page: Page, snapshot: Snapshot, backend: Awaited<ReturnTyp
       await expect.poll(() => backend.connected).toBe(true);
     }
     const id = backend.publish(event);
+    if (!waitForEveryEvent && event.type !== 'done') continue;
     // Cursor-only events need not rerender or schedule another debounced save.
     // Flush through the real page-hide path before checking browser persistence.
     await page.waitForFunction(({ storageKey, id }) => {
@@ -406,7 +414,9 @@ test('persists many questions with one unchanged large Schedule Spec', async ({ 
       preferences: [], export: { formatting: [] },
     });
     await page.goto('/ai-assistant');
-    await replay(page, snapshot, backend);
+    // This case checks storage across completed turns. Let each turn's events
+    // arrive together and wait for its saved cursor before sending the next.
+    await replay(page, snapshot, backend, { waitForEveryEvent: false });
     expect((snapshot.events.find(event => event.type === 'model_input')!.data.schedule_spec_yaml as string).length).toBeGreaterThan(100_000);
     const lastSavedAnswer = await page.evaluate(() => {
       const history = JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!);
