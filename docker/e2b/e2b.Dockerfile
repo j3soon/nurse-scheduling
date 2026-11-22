@@ -19,8 +19,8 @@ RUN python3 -m pip install --no-cache-dir \
         'openpyxl==3.1.5' \
         'defusedxml==0.7.1' \
         'Pillow==13.0.0' \
-        'pypdf==6.19.0' \
-        'pypdfium2==5.13.0' \
+        'pypdf==7.1.1' \
+        'pypdfium2==5.15.2' \
         'ruamel.yaml==0.19.1'
 
 RUN mkdir -p /workspace /reference/tools \

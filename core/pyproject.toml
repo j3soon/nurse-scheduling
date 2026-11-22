@@ -13,15 +13,16 @@ dependencies = [
     "defusedxml", # For parsing untrusted XLSX XML safely
     "Pillow", # For Pi-compatible image reads
     "jinja2", # For prettifying output
-    "markdown-it-py[linkify]==4.2.0", # For safe GFM chat export rendering
+    "markdown-it-py[linkify]>=4.2.0", # For safe GFM chat export rendering
     # PuLP is pure Python with a bundled CBC binary, so it stays in the minimal set.
-    "pulp==3.3.2",
+    # PuLP 4 rebuilds the HiGHS model path, so upgrade it with a solver review.
+    "pulp>=3.3.2,<4",
     # For web backend
     "fastapi[standard]",
     "httpx",
     "python-multipart",
     "redis",
-    "psycopg[binary]==3.3.5", # For durable AI chat history
+    "psycopg[binary]>=3.3.5", # For durable AI chat history
     "e2b==2.46.0", # For isolated AI sandbox execution and template builds
     # For error tracking
     "sentry-sdk",
@@ -33,7 +34,11 @@ dependencies = [
 # Keep this aligned with the HiGHS ABI bundled by OR-Tools 9.15.
 # highspy 1.12.0 has no CPython 3.14 wheel, so Python 3.14 omits PuLP/HiGHS.
 highs = ["highspy==1.12.0; python_version < '3.14'"]
-scip = ["pyscipopt==6.2.1"]
+# pyscipopt bundles SCIP. Pin it because the pulp/scip regression tests
+# compare exact schedules.
+scip = [
+    "pyscipopt==6.3.0",
+]
 
 [dependency-groups]
 # The E2B template installs these for sandbox scripts and attachment tools.
@@ -43,8 +48,8 @@ sandbox = [
     "openpyxl",
     "defusedxml",
     "Pillow",
-    "pypdf==6.19.0", # For PDF text and embedded-image inspection
-    "pypdfium2==5.13.0", # For bounded PDF page rendering in the sandbox
+    "pypdf>=7.1.1", # For PDF text and embedded-image inspection
+    "pypdfium2>=5.13.0", # For bounded PDF page rendering in the sandbox
     "ruamel.yaml",
 ]
 lint = ["ruff"]
@@ -52,7 +57,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "fakeredis",
-    "PyYAML==6.0.3", # For tests that read YAML with PyYAML
+    "pyyaml>=6.0.3", # For tests that read YAML with PyYAML
     "ty==0.0.107",
     { include-group = "lint" },
     { include-group = "sandbox" },

@@ -78,12 +78,17 @@ same commit.
 - These pins have known reasons:
   - `ortools` keeps solver results deterministic. Review the changed expected
     results when you upgrade it.
+  - `pyscipopt` bundles the SCIP version behind `pulp/scip`, whose regression
+    tests compare exact schedules.
   - `highspy` must match the HiGHS version that OR-Tools bundles. Upgrade it
     with `ortools`.
   - `e2b` was verified live for the timeout and pause behavior that
     `docker/e2b/README.md` describes. Upgrade it only with the live E2B check.
   - `ty` adds diagnostics in new pre-1.0 releases. Fix its new findings in the
     same commit.
+- The compact core suite skips the optional solvers. After a solver pin
+  changes, also run
+  `pytest -q --solver-profile=all tests/test_schedule_pulp_*.py tests/test_schedule_ortools_*.py`.
 - The E2B template installs the `sandbox` group. Copy the locked versions of
   those packages into `docker/e2b/e2b.Dockerfile`, then run
   `pytest -q tests/test_dependency_lock.py` in `core/`.
