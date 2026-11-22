@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Bun
@@ -37,7 +37,7 @@ jobs:
         run: bun run test:coverage
       - name: Upload frontend coverage to Codecov
         if: github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./web-frontend/coverage/lcov.info
@@ -50,7 +50,7 @@ jobs:
       E2E_COVERAGE: ${{ inputs.bundle_coverage && '1' || '0' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Bun
@@ -83,7 +83,7 @@ jobs:
         run: bun run coverage:e2e:report
       - name: Upload Playwright coverage to Codecov
         if: inputs.bundle_coverage && github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./web-frontend/coverage-e2e/lcov.info
@@ -91,7 +91,7 @@ jobs:
           name: web-frontend-playwright-macos
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-macos
           path: |

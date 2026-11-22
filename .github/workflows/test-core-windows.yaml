@@ -28,7 +28,7 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up uv and Python ${{ matrix.python-version }}
@@ -50,7 +50,7 @@ jobs:
         run: pytest --cov=nurse_scheduling --durations=20 --solver-profile=${{ github.event_name == 'schedule' && 'all' || inputs.solver_profile || 'primary' }} tests --ignore=tests/test_schedule_pulp_cuopt.py
       - name: Upload coverage to Codecov
         if: github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: core-windows

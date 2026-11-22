@@ -14,7 +14,7 @@
   pushes in the primary repository. Fork pull requests run offline validation only.
 - Reference actions by release tag, not by commit SHA. This project does not
   need the extra supply-chain protection of a SHA pin. Use the major-version
-  tag, such as `actions/checkout@v4`, when the action publishes one. Otherwise
+  tag, such as `actions/checkout@v7`, when the action publishes one. Otherwise
   use the exact release tag, such as `astral-sh/setup-uv@v10.4.0`.
 - Install core Python dependencies with `astral-sh/setup-uv` and
   `uv sync --locked`. Pin uv to the version that the Dockerfiles copy.
