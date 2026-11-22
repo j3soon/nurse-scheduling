@@ -41,6 +41,8 @@ jobs:
           cache-suffix: all-extras
       - name: Test documentation link checker
         run: python -m unittest discover -s scripts -p test_check_docs_links.py
+      - name: Test agent worktree helpers
+        run: python -m unittest discover -s scripts -p test_add_worktree.py
       - name: Install workbook print test tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-calc poppler-utils fonts-noto-cjk
       - name: Install GLPK

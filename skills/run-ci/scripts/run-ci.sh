@@ -19,6 +19,7 @@ set -x
   python -m unittest discover -s scripts -p test_check_vendor.py
   python scripts/check_vendor.py
   python -m unittest discover -s scripts -p test_check_docs_links.py
+  python -m unittest discover -s scripts -p test_add_worktree.py
 )
 
 (

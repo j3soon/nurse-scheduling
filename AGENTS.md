@@ -64,9 +64,15 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   checkout alone, because its shared Git metadata lives outside that mount.
   Each agent owns its branch and worktree. The coordinating agent reviews and
   integrates completed commits, then removes clean checkouts with
-  `git worktree remove`. Do not reset another agent's branch or delete its work.
-  Keep dependencies and build output separate per worktree, choose distinct
-  service ports, and load shared secrets from the main clone's ignored env file.
+  `scripts/remove_worktree.sh TYPE/NAME`. Do not reset another agent's branch
+  or delete its work. Keep dependencies and build output separate per
+  worktree, choose distinct service ports, and load shared secrets from the
+  main clone's ignored env file.
+- The worktree helpers copy the main clone's `docker/.env.staging` into new
+  checkouts. When `scripts/remove_worktree.sh` stops with exit code 3, the
+  checkout changed that file. Show the user the listed setting names and ask
+  whether to update the main copy. Then rerun with `--update-env-staging` or
+  `--keep-env-staging`. Never choose for the user.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat

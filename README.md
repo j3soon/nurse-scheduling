@@ -300,16 +300,26 @@ older Git clients cannot use the repository until they are upgraded.
 Use one agent per worktree. Install frontend dependencies inside each checkout
 with `bun install --frozen-lockfile`. Core packages are already installed in
 the dev container. Keep build output separate and use distinct ports for local
-servers. Load credentials from the main clone's ignored `docker/.env`.
+servers. Load credentials from the main clone's ignored `docker/.env`. The
+helper copies the main clone's ignored `docker/.env.staging` into the new
+checkout when that file exists.
 
 Review the agent's commits before integrating them. From the main clone:
 
 ```sh
 git merge --no-ff fix/api -m "Merge reviewed API fix"
-git worktree remove .worktrees/fix/api
+./scripts/remove_worktree.sh fix/api
 # Delete the branch only after its changes have been integrated.
 git branch -d fix/api
 ```
+
+`remove_worktree.sh` removes a clean checkout only when `dev` contains every
+commit of its branch. Pass `--base REF` to check another ref, such as
+`FETCH_HEAD` after a fetch. The script also compares the checkout's
+`docker/.env.staging` with the main clone. If the checkout changed that file,
+the script lists the changed setting names without their values and stops with
+exit code 3. Rerun it with `--update-env-staging` to copy the checkout's file to
+the main clone, or with `--keep-env-staging` to leave the main copy unchanged.
 
 ### Web Frontend
 
