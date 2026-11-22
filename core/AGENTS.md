@@ -7,7 +7,7 @@ Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
 section. In a dev container the main clone mounts at `/app`. Resolve the
 current checkout with `git rev-parse --show-toplevel` and use its `core/`
 directory. Project packages are installed system-wide, so run `python`,
-`pytest`, and `ruff` directly. On a host checkout, run commands below from your local
+`pytest`, `ruff`, and `ty` directly. On a host checkout, run commands below from your local
 `core/` clone and create the virtual environment once with
 `uv venv --python 3.12 && source .venv/bin/activate`.
 - `uv pip install -r requirements-optional.txt`: the development install. See
@@ -15,8 +15,8 @@ directory. Project packages are installed system-wide, so run `python`,
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
-- `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
-  pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
+- `../scripts/test_core_affected.sh`: run full Ruff and ty checks and compact
+  affected pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
   primary solver suite with CP-SAT and CBC regression sweeps. Other backend

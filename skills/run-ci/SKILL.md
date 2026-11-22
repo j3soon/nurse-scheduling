@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs offline vendor integrity checks, documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs offline vendor integrity checks, documentation link-checker tests, core lint and type checks, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -31,8 +31,8 @@ The script intentionally:
   fixture sweeps, CP-SAT workbook fixtures, and low-level OR-Tools adapters.
   Other backend sweeps remain available with `--solver-profile=all`.
 - Does not explicitly run the three `core/tests/real/schedule_*.py` scenarios.
-- Runs core Ruff format checking, Ruff lint, and the remaining normal pytest
-  suite with coverage.
+- Runs core Ruff format checking, Ruff lint, the ty type check, and the
+  remaining normal pytest suite with coverage.
 - Uses compact test output flags to keep CI output small. pytest uses the
   flags from `scripts/test_core_affected.sh`
   (`-q --tb=short --disable-warnings --maxfail=1`). Playwright uses
