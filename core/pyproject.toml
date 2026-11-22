@@ -23,8 +23,9 @@ extend-select = ["B904", "B905"]
 
 [tool.ty.src]
 include = ["nurse_scheduling"]
-# Remove each temporary exclusion as the file passes type checking.
 exclude = [
+    # The MPSolver bindings omit the overloaded operators used by linear expressions.
     "nurse_scheduling/solver_ortools_linear.py",
+    # MathOpt shares the linear encodings but uses different native variable and status types.
     "nurse_scheduling/solver_ortools_mathopt.py",
 ]

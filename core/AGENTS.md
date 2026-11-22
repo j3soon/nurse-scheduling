@@ -33,8 +33,10 @@ directory. Project packages are installed system-wide, so run `python`,
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
 - `ty check --python "$(command -v python)"`: type-check production Python
-  using the same Python environment as the tests. Remove file exclusions from
-  `pyproject.toml` as their diagnostics are resolved.
+  using the same Python environment as the tests. Keep type fixes small and
+  testable. Use a file-specific exclusion when a fix needs a major refactor or
+  depends on behavior that cannot be tested adequately. Record the reason in
+  `pyproject.toml` and remove the exclusion when it can be resolved.
 
 After modifying core code, run Ruff, ty, and affected pytest suites before finishing.
 Prefer `../scripts/test_core_affected.sh` for routine validation. Pass explicit
