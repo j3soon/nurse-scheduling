@@ -4178,7 +4178,7 @@ describe('useScheduleSpec', () => {
     expect(errorSpy).toHaveBeenCalled();
   });
 
-  it('clamps malformed stored currentHistoryIndex values to the last valid entry', async () => {
+  it.each([999, 'invalid', 0.5, undefined])('loads stored currentHistoryIndex %s at the last entry', async (index) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       state: {
         apiVersion: 'alpha',
@@ -4209,7 +4209,7 @@ describe('useScheduleSpec', () => {
           export: { formatting: [] },
         },
       ],
-      currentHistoryIndex: 999,
+      currentHistoryIndex: index,
     }));
 
     const { result } = renderHook(() => useScheduleSpec(), { wrapper: ScheduleSpecProvider });

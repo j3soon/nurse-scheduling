@@ -81,7 +81,9 @@ export function loadStateFromStorage(): HistoryState {
 }
 
 function decodeHistoryState(stored: string): HistoryState {
-  const parsedHistoryState = restoreInfinityValues(JSON.parse(stored)) as HistoryState;
+  const parsedHistoryState = restoreInfinityValues(JSON.parse(stored)) as Omit<HistoryState, 'currentHistoryIndex'> & {
+    currentHistoryIndex?: unknown;
+  };
 
   for (const state of [...parsedHistoryState.history, parsedHistoryState.state]) {
     state.dates.range.startDate = state.dates.range.startDate ? new Date(state.dates.range.startDate) : undefined;
@@ -89,11 +91,16 @@ function decodeHistoryState(stored: string): HistoryState {
   }
 
   const currentState = normalizeStateForFrontend(parsedHistoryState.state);
+  const lastIndex = Math.max(0, parsedHistoryState.history.length - 1);
+  const storedIndex = parsedHistoryState.currentHistoryIndex;
+  const currentHistoryIndex = typeof storedIndex === 'number' && Number.isInteger(storedIndex)
+    ? Math.max(0, Math.min(storedIndex, lastIndex))
+    : lastIndex;
 
   return {
     state: currentState,
     history: parsedHistoryState.history.map(normalizeStateForFrontend),
-    currentHistoryIndex: Math.max(0, Math.min(parsedHistoryState.currentHistoryIndex || 0, parsedHistoryState.history.length - 1))
+    currentHistoryIndex
   };
 }
 
