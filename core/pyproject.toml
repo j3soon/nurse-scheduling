@@ -21,6 +21,10 @@ extend-select = ["B904", "B905"]
 # Remove this exception with the legacy AI evaluation suite.
 "tests/ai_eval/**" = ["B905"]
 
+[tool.ty.environment]
+# Include platform-specific types even when running on Linux.
+python-platform = "all"
+
 [tool.ty.src]
 include = ["nurse_scheduling"]
 exclude = [
