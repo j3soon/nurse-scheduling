@@ -81,7 +81,7 @@ def build_groups(schedule_spec: dict, calendar: Path, *, start: str | None = Non
         [
             {
                 "id": "WORKDAY",
-                "description": "Taiwan workdays imported from the current holiday calendar",
+                "description": "Imported from Taiwan calendar",
                 "members": workdays,
             },
             {

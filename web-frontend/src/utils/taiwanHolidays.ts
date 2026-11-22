@@ -222,7 +222,7 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
   return [
     {
       id: TAIWAN_WORKDAY_GROUP_ID,
-      description: 'Taiwan workdays imported from the current holiday calendar',
+      description: 'Imported from Taiwan calendar',
       members: workdayMembers,
     },
     {

@@ -43,7 +43,7 @@ def test_calendar_groups_include_holidays_and_makeup_workdays_without_mutating_i
         custom,
         {
             "id": "WORKDAY",
-            "description": "Taiwan workdays imported from the current holiday calendar",
+            "description": "Imported from Taiwan calendar",
             "members": ["01", "02", "05", "06", "07", "15", "16", "17"],
         },
         {

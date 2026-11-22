@@ -116,7 +116,7 @@ describe('taiwanHolidays', () => {
     expect(groups).toEqual([
       {
         id: TAIWAN_WORKDAY_GROUP_ID,
-        description: 'Taiwan workdays imported from the current holiday calendar',
+        description: 'Imported from Taiwan calendar',
         members: ['04'],
       },
       {
