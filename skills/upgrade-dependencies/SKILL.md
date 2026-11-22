@@ -125,6 +125,12 @@ same commit.
   CI and the dev image install the matching browser.
 - Run `bun audit` again. The site is a static export, so Next.js server
   advisories do not reach production. Still upgrade to the fixed version.
+- When a parent's range blocks the fixed version of a transitive package, add
+  a nested entry to `overrides` in `package.json`, such as
+  `"exceljs": { "uuid": "^11.1.1" }`. A top-level entry also replaces the
+  package for other parents that need an older major. Exercise the parent's
+  code path that uses the package. Remove the entry when `bun why NAME` shows
+  that the parent accepts a fixed version.
 - Run the lint, build, unit, and E2E commands in `web-frontend/AGENTS.md`.
 
 ### Toolchain versions
