@@ -71,7 +71,7 @@ elif [[ "$run_full_suite" == false ]]; then
         ai_changed=true
         ai_eval_changed=true
         ;;
-      nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
+      nurse_scheduling/* | tests/* | pyproject.toml | uv.lock)
         run_full_suite=true
         ;;
       AGENTS.md | *.md | .gitignore)
@@ -166,7 +166,7 @@ elif broken:
     if os.path.exists("/.dockerenv"):
         print("Fix the dev image installation. Pass --skip-unavailable-solvers to skip their tests.", file=sys.stderr)
     else:
-        print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
+        print("From core/, run: uv sync --locked --all-extras", file=sys.stderr)
     raise SystemExit(2)
 PY
 fi

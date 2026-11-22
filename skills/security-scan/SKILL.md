@@ -124,20 +124,20 @@ mismatches are documentation gaps.
 
 ## 5. Audit dependencies
 
-`core/requirements.txt` leaves most packages unpinned, so a deployed image has
-the versions available on its build date. Audit both a fresh resolution and the
-installed development versions, which approximate an older image:
+Deployment images install the runtime set from `core/uv.lock`, and the E2B
+template installs the same versions as its `sandbox` group. Audit those locked
+versions:
 
 ```bash
-python -m pip install -q --dry-run --ignore-installed -r core/requirements.txt --report "$SCRATCH/fresh.json"
-python -c 'import json, sys
-for item in json.load(open(sys.argv[1]))["install"]:
-    print(item["metadata"]["name"] + "==" + item["metadata"]["version"])' "$SCRATCH/fresh.json" >"$SCRATCH/fresh-pins.txt"
-python -m pip freeze | grep -v '^-e\|@ file' >"$SCRATCH/dev-pins.txt"
-for pins in fresh-pins dev-pins; do
-  PYTHONPATH="$SCRATCH/scan-tools" python -m pip_audit -r "$SCRATCH/$pins.txt" --no-deps --disable-pip
-done
+uv export --project core --locked --no-dev --group sandbox --no-hashes \
+  --no-emit-project --quiet -o "$SCRATCH/deployed-pins.txt"
+(cd "$SCRATCH" && PYTHONPATH="$SCRATCH/scan-tools" python -m pip_audit \
+  -r "$SCRATCH/deployed-pins.txt" --no-deps --disable-pip)
 ```
+
+Fix an advisory with `uv lock --upgrade-package NAME` in `core/`, or by raising
+the pin in `core/pyproject.toml`. A sandbox package also needs the same pin in
+`docker/e2b/e2b.Dockerfile`.
 
 `pip-audit` exits 1 when it finds an advisory. For the frontend, run
 `bun audit` in `web-frontend/`. The site is a static

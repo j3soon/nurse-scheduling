@@ -12,12 +12,18 @@
   instead of the whole workflow.
 - Keep live AI behavior checks on trusted same-repository pull requests and
   pushes in the primary repository. Fork pull requests run offline validation only.
-- Cache Python dependency downloads with `actions/setup-python`. Jobs that
-  install `requirements-optional.txt` must include both core requirements files
-  in `cache-dependency-path`. Keep installation steps so caches do not replace
-  dependency resolution.
-- Lint-only jobs install only the tools they run. Keep their download caches
-  separate from runtime and test dependency caches.
+- Reference actions by release tag, not by commit SHA. This project does not
+  need the extra supply-chain protection of a SHA pin. Use the major-version
+  tag, such as `actions/checkout@v4`, when the action publishes one. Otherwise
+  use the exact release tag, such as `astral-sh/setup-uv@v10.4.0`.
+- Install core Python dependencies with `astral-sh/setup-uv` and
+  `uv sync --locked`. Pin uv to the version that the Dockerfiles copy.
+  Set `working-directory: core` and `activate-environment: true`, so later
+  steps run `python` and the tools from `core/.venv`.
+- Give each install set its own `cache-suffix`: `all-extras` for core tests,
+  `runtime` for `--no-dev`, and `lint` for lint-only jobs. Jobs with the same
+  cache key share one saved cache, so a smaller set must not save it first.
+- Lint-only jobs install only the tools they run, with `--only-group lint`.
 - Keep the full solver profile and a bounded new real-scenario search in weekly
   checks on Linux, macOS, and Windows. Routine checks use the primary profile
   and the fixed-assignment replay. Scheduled checks run on the default branch.

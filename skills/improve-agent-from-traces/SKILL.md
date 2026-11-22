@@ -16,7 +16,7 @@ the test, fix, and validation. Follow the repository's commit policy.
 
 Check `test -f /.dockerenv` and follow the root `AGENTS.md` environment rules
 when reproducing failures: a dev container mounts the checkout at
-`/app` with system-wide packages, while a host checkout needs the
+`/app` with the locked packages in `/opt/venv`, while a host checkout needs the
 module setup commands.
 
 ## AI test migration

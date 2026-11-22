@@ -38,11 +38,11 @@ choice.
 🐧 is Linux, 🍎 is macOS, and 🪟 is Windows. Only validated platforms are
 shown.
 
-`core/requirements.txt` is the minimal runtime set that the deployment images
-install. It covers every OR-Tools selector plus PuLP with its bundled CBC.
-`pulp/highs` and `pulp/scip` need `highspy` and `pyscipopt` from
-`core/requirements-optional.txt`, so a deployment that advertises either one
-must install that file as well. `pulp/glpk` and `pulp/cuopt` additionally need
+The `core/pyproject.toml` runtime dependencies are the minimal set that the
+deployment images install. They cover every OR-Tools selector plus PuLP with
+its bundled CBC. `pulp/highs` and `pulp/scip` need `highspy` and `pyscipopt`
+from the `highs` and `scip` extras, so a deployment that advertises either one
+must install that extra as well. `pulp/glpk` and `pulp/cuopt` additionally need
 their external runtimes.
 
 Recommended is the default. Experimental is tested but not recommended.

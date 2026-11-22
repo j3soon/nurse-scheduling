@@ -13,12 +13,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Detect the session location first:
   `test -f /.dockerenv && echo container || echo host`.
 - Dev container (`/.dockerenv` exists, built from `docker/Dockerfile.dev*`):
-  the main clone mounts at `/app`, and module dependencies come
-  preinstalled system-wide. Do not run `./scripts/setup_env.sh`, install
-  `uv`, or create a virtual environment. Run `python`, `pytest`, and `ruff`
-  directly. In the cuOpt image, `python3` is the base 3.10 interpreter
-  without project packages, so use `python`, which is Python 3.14 while CI
-  uses 3.12.
+  the main clone mounts at `/app`. The image installs the locked core
+  packages in `/opt/venv`, which is active and first on `PATH`. Run `python`,
+  `pytest`, `ruff`, and `ty` directly. Do not run `./scripts/setup_env.sh` or
+  create another virtual environment. After `core/uv.lock` changes, run
+  `uv sync --active --locked --all-extras` in `core/`. Pass `--active` to
+  `uv sync` and `uv run`, because otherwise uv creates `core/.venv` in the
+  host checkout. The cuOpt image runs Python 3.14 while CI uses 3.12.
 - Prefer APT packages from the distribution or the tool project's documented
   package repository over custom source builds in development images.
 - Host checkout (no `/.dockerenv`): the repository lives wherever the user
@@ -258,11 +259,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
-- When adding, moving, or removing a dependency, update every installer in the
-  same commit: the `docker/` images, the GitHub workflows, `scripts/setup_env.sh`,
-  the affected-test selection in `scripts/`, and the `README.md` and `docs/`
-  install commands. Grep for the file name rather than the package name, since
-  an installer usually names only the requirements file.
+- Change Python dependencies with `uv add`, `uv remove`, or
+  `uv lock --upgrade-package NAME` in the module directory. Commit
+  `pyproject.toml` with its `uv.lock`. Installers read the lock, so a version
+  change needs no installer edits. When a package moves between the runtime
+  set, an extra, and a dependency group, check the `uv sync` flags in the
+  `docker/` images, the GitHub workflows, and `scripts/setup_env.sh`.
 
 ## Pull Requests
 - Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.

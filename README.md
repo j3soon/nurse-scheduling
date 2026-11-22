@@ -132,10 +132,9 @@ In a new terminal, start backend:
 
 ```powershell
 cd core
+uv sync --locked --no-dev --python 3.12
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-uv venv --python 3.12
 .venv\Scripts\Activate.ps1
-uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 

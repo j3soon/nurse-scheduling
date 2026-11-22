@@ -18,8 +18,8 @@ working directory.
 
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
 rules. Pass the repository root from `git rev-parse --show-toplevel`
-(`/app` in a dev container), and never create a virtual environment
-inside a dev container, where project packages are installed system-wide.
+(`/app` in a dev container), and never create another virtual environment
+inside a dev container, where the active `/opt/venv` holds the locked packages.
 
 The script intentionally:
 

@@ -150,10 +150,10 @@ assert_line "$output" 'tests: none'
 output="$("$fixture_root/scripts/test_core_affected.sh" --list --base HEAD^)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 
-write_fixture core/requirements.txt
+write_fixture core/uv.lock
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
-rm -- "$fixture_root/core/requirements.txt"
+rm -- "$fixture_root/core/uv.lock"
 
 rm -- "$fixture_root/core/tests/test_ai_provider.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
