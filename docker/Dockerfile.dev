@@ -52,12 +52,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # dependency change, `uv sync --active --locked --all-extras` in core/ updates it.
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /uvx /usr/local/bin/
 COPY core/pyproject.toml core/uv.lock /tmp/core/
+# Ubuntu 24.04 has no Python 3.14 package, so uv installs its managed build.
 ENV VIRTUAL_ENV=/opt/venv \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python \
     PATH="/opt/venv/bin:${PATH}"
 # The BuildKit uv cache keeps downloads across lock changes. It sits on another
 # file system, so uv copies files instead of hard-linking them.
 RUN --mount=type=cache,id=dev-uv,target=/root/.cache/uv,sharing=locked \
-    uv sync --active --python "$(command -v python)" --project /tmp/core \
+    uv sync --active --managed-python --python 3.14 --project /tmp/core \
     --locked --all-extras --link-mode copy
 
 # Install Bun

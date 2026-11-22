@@ -67,8 +67,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Windows CI Timing
 
-- Windows core CI uses Python 3.12. Its asyncio deadline timers can fire before
-  a coarse monotonic clock reaches the deadline. Include this condition in
+- On Windows core CI, asyncio deadline timers can fire before a coarse
+  monotonic clock reaches the deadline. Include this condition in
   deadline tests instead of relying only on Linux runs with real timers.
 - Treat `asyncio.Timeout.expired()` as final when it owns the overall retry
   budget. Stop retries at `now >= deadline`. Keep individual request timeouts
@@ -105,9 +105,13 @@ stderr. Do not replace an explicitly selected file with a fallback.
   inside the E2B image, which installs its own pinned copies, and only the
   tests import them here. `tests/test_dependency_lock.py` checks that
   `docker/e2b/e2b.Dockerfile` pins the `sandbox` group at the locked versions.
-- Python 3.14 runs only in the cuOpt dev image. The `highspy` marker and the
-  `[tool.uv]` constraints in `pyproject.toml` target that image. Update them
-  when its base image changes.
+- The `[tool.uv]` constraints in `pyproject.toml` hold NumPy and pandas at the
+  versions that the cuOpt dev image accepts. Update them when its base image
+  changes.
+- `highspy` must match the HiGHS release that OR-Tools bundles. Another
+  version in the same process crashes OR-Tools MathOpt HiGHS solves. The
+  matching release has no CPython 3.14 wheel, so Python 3.14 skips
+  `pulp/highs`.
 - Verify sandbox dependency changes in a rebuilt image with a synthetic script.
   A successful host import or fake-backend test does not prove availability in
   the deployed template. State which template was tested and whether production

@@ -12,7 +12,7 @@ replaces symlinks with plain text does not render those pages correctly.
 
 ```sh
 # create docs/.venv with the locked dependencies
-uv sync --locked --project docs --python 3.12
+uv sync --locked --project docs --python 3.14
 # activate virtual environment
 source docs/.venv/bin/activate
 # preview documentation on the port used by local page-help links

@@ -7,7 +7,7 @@ set -euo pipefail
 # skills/upgrade-dependencies/scripts/dependency_inventory.py --check rejects
 # a tag that differs from those files.
 images=(
-  "python:3.12-slim"
+  "python:3.14-slim"
   "redis:8.8"
   "redis/redisinsight:3.8.0"
   "postgres:18-alpine"

@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS source
+FROM python:3.14-slim AS source
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git \
@@ -16,7 +16,7 @@ RUN git clone --branch dev https://github.com/j3soon/nurse-scheduling.git /app/n
     && rm -rf /app/nurse-scheduling/.git
 
 
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl redis-tools \

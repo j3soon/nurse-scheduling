@@ -37,7 +37,7 @@ sync_uv_project() {
   fi
 
   echo "Syncing the locked environment in $project_dir/.venv ..."
-  (cd "$project_dir" && uv sync --locked --python 3.12 "$@")
+  (cd "$project_dir" && uv sync --locked --python 3.14 "$@")
 }
 
 echo

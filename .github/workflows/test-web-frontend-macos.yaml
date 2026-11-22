@@ -68,11 +68,11 @@ jobs:
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile
-      - name: Set up uv and Python 3.12
+      - name: Set up uv and Python 3.14
         uses: astral-sh/setup-uv@v10.4.0
         with:
           version: "0.13.9"
-          python-version: "3.12"
+          python-version: "3.14"
           working-directory: core
           activate-environment: true
           cache-suffix: runtime

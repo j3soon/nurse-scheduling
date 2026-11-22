@@ -47,7 +47,12 @@ FILE_RULES = [
     ("python", ["netlify.toml"], r"PYTHON_VERSION\s*=\s*\"(\d+\.\d+)\""),
     (
         "python",
-        ["scripts/setup_env.sh", "README.md", "docs/README.md"],
+        [
+            "docker/Dockerfile.dev",
+            "scripts/setup_env.sh",
+            "README.md",
+            "docs/README.md",
+        ],
         r"--python (\d+\.\d+)",
     ),
     ("node", ["netlify.toml"], r"NODE_VERSION\s*=\s*\"(\d+)\""),

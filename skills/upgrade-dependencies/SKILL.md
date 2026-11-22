@@ -51,7 +51,7 @@ conflicting pins.
 List the package updates and advisories:
 
 ```bash
-(cd core && uv tree --outdated --depth 1 --all-groups --python-version 3.12)
+(cd core && uv tree --outdated --depth 1 --all-groups --python-version 3.14)
 (cd docs && uv tree --outdated --depth 1)
 (cd web-frontend && bun outdated && bun audit)
 ```
@@ -80,8 +80,9 @@ same commit.
     results when you upgrade it.
   - `pyscipopt` bundles the SCIP version behind `pulp/scip`, whose regression
     tests compare exact schedules.
-  - `highspy` must match the HiGHS version that OR-Tools bundles. Upgrade it
-    with `ortools`.
+  - `highspy` must match the HiGHS version that OR-Tools bundles. Another
+    version in the same process crashes OR-Tools MathOpt HiGHS solves.
+    Upgrade it with `ortools`.
   - `e2b` was verified live for the timeout and pause behavior that
     `docker/e2b/README.md` describes. Upgrade it only with the live E2B check.
   - `ty` adds diagnostics in new pre-1.0 releases. Fix its new findings in the
@@ -94,13 +95,13 @@ same commit.
   `pytest -q tests/test_dependency_lock.py` in `core/`.
 - The `[tool.uv]` constraints hold NumPy and pandas back for the cuOpt image.
   Change them only with the cuOpt base image.
-- Test in a temporary Python 3.12 environment, which matches CI. Do not sync the
+- Test in a temporary Python 3.14 environment, which matches CI. Do not sync the
   dev container's `/opt/venv` from an upgrade worktree. All worktrees in the
   container share it.
 
   ```bash
   venv="$(mktemp -d)/venv"
-  (cd core && UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --all-extras --python 3.12)
+  (cd core && UV_PROJECT_ENVIRONMENT="$venv" uv sync --locked --all-extras --python 3.14)
   (cd core && PATH="$venv/bin:$PATH" VIRTUAL_ENV="$venv" ../scripts/test_core_affected.sh --base FETCH_HEAD)
   ```
 
@@ -152,8 +153,8 @@ Update every location that the inventory lists:
   `netlify.toml`, and the NodeSource line in the dev Dockerfiles. Use an LTS
   line, which has an even major version.
 - **Python:** `python-version` in the workflows, the API base images,
-  `PYTHON_VERSION` in `netlify.toml`, and `--python` in `scripts/setup_env.sh`
-  and the READMEs. A new Python minor version needs its own pull request.
+  `PYTHON_VERSION` in `netlify.toml`, and `--python` in `docker/Dockerfile.dev`,
+  `scripts/setup_env.sh`, and the READMEs. A new Python minor version needs its own pull request.
 
 ### GitHub Actions
 
@@ -168,7 +169,7 @@ Update every location that the inventory lists:
   pgAdmin, RedisInsight, and cloudflared. Update every Compose variant and
   `scripts/pull_compose_base_images.sh` together.
   A PostgreSQL major version needs a data migration for the existing volume.
-- **Base images:** `python:3.12-slim` for the API, `ubuntu:24.04` for the dev
+- **Base images:** `python:3.14-slim` for the API, `ubuntu:24.04` for the dev
   image, and `e2bdev/base` for the E2B template.
 - A rebuild with `--pull` refreshes `latest` tags and the APT packages, even
   when no tag changes. Ask the user to rebuild on the host, for example

@@ -19,7 +19,7 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   create another virtual environment. After `core/uv.lock` changes, run
   `uv sync --active --locked --all-extras` in `core/`. Pass `--active` to
   `uv sync` and `uv run`, because otherwise uv creates `core/.venv` in the
-  host checkout. The cuOpt image runs Python 3.14 while CI uses 3.12.
+  host checkout. CI, the dev images, and the API images run Python 3.14.
 - Prefer APT packages from the distribution or the tool project's documented
   package repository over custom source builds in development images.
 - Host checkout (no `/.dockerenv`): the repository lives wherever the user

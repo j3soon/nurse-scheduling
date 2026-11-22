@@ -59,6 +59,7 @@ Limited is intended only for small or bounded cases.
 - PuLP/GLPK requires `glpsol`.
 - PuLP/GLPK uses smoke coverage because some full regression models take
   several minutes without proving optimality.
+- PuLP/HiGHS needs Python 3.13 or earlier. Its `highspy` must match the HiGHS release that OR-Tools bundles, and that release has no CPython 3.14 wheel.
 - PuLP/HiGHS is skipped on macOS because its native library may conflict with the HiGHS library bundled with OR-Tools in the same Python process. Observed failure in GitHub runners, should investigate further in the future.
 - PuLP/SCIP validation on macOS is pending.
 - MPSolver/BOP is a legacy engine intended only for small cases.

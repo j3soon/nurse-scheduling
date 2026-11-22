@@ -132,7 +132,7 @@ In a new terminal, start backend:
 
 ```powershell
 cd core
-uv sync --locked --no-dev --python 3.12
+uv sync --locked --no-dev --python 3.14
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .venv\Scripts\Activate.ps1
 fastapi dev nurse_scheduling\serve.py
@@ -209,8 +209,10 @@ GPU image with cuOpt support:
 docker build -f docker/Dockerfile.dev.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
-The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
-wheel. Use another environment for the `pulp/highs` solver.
+Python 3.14 environments, including both development images, omit `highspy`.
+The release that matches the HiGHS library in OR-Tools has no CPython 3.14
+wheel. For the `pulp/highs` solver, use a host checkout with Python 3.13 or
+earlier.
 
 ```sh
 # persist Codex/Claude Code/OpenCode/Pi/Antigravity CLI auth/config across containers
@@ -280,7 +282,7 @@ docker run --rm -it --network=host \
 
 Use Git 2.48 or newer on the host and in the container. Both Ubuntu development
 images install Git through APT from `ppa:git-core/ppa`. The CPU image uses
-Ubuntu 24.04 and Python 3.12. Rebuild older images before using this workflow.
+Ubuntu 24.04 and a uv-managed Python 3.14. Rebuild older images before using this workflow.
 
 Create a branch and checkout for each agent from the main clone. Use a prefix
 that describes the change, such as `fix/`, `feat/`, or `docs/`.
