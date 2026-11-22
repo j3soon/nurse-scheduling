@@ -1,0 +1,25 @@
+# This file is mostly AI generated.
+name: Check Dependency Pins
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-dependency-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test the dependency inventory
+        run: python3 -m unittest discover -s skills/upgrade-dependencies/scripts -p 'test_*.py'
+      - name: Reject conflicting toolchain, action, and image pins
+        run: python3 skills/upgrade-dependencies/scripts/dependency_inventory.py --check

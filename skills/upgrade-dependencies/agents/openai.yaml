@@ -1,0 +1,4 @@
+interface:
+  display_name: "Upgrade Dependencies"
+  short_description: "Upgrade packages, toolchains, actions, and images in a dedicated PR"
+  default_prompt: "Use $upgrade-dependencies to upgrade the repository dependencies in a new worktree and pull request."

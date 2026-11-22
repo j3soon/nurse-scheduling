@@ -134,6 +134,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   suite to diagnose its failure.
 - Run security scans with `skills/security-scan` against an isolated loopback
   copy of the services. Never scan the public domain or the running deployment.
+- Upgrade dependencies with `skills/upgrade-dependencies`. Unless the user says
+  otherwise, give each upgrade its own worktree and pull request.
 - Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
   CORS error for the APIs can mean the origin never responded, so isolate the
   hop before changing CORS or proxy configuration.
@@ -271,6 +273,9 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   change needs no installer edits. When a package moves between the runtime
   set, an extra, and a dependency group, check the `uv sync` flags in the
   `docker/` images, the GitHub workflows, and `scripts/setup_env.sh`.
+- Toolchain versions, action tags, and image tags repeat across files. Update
+  every location that `skills/upgrade-dependencies/scripts/dependency_inventory.py`
+  lists. CI rejects conflicting pins.
 
 ## Pull Requests
 - Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.
