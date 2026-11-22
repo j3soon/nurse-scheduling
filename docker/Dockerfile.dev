@@ -54,8 +54,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /uvx /usr/local/bin/
 COPY core/pyproject.toml core/uv.lock /tmp/core/
 ENV VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:${PATH}"
-RUN uv sync --active --python "$(command -v python)" --project /tmp/core \
-    --locked --all-extras --no-cache
+# The BuildKit uv cache keeps downloads across lock changes. It sits on another
+# file system, so uv copies files instead of hard-linking them.
+RUN --mount=type=cache,id=dev-uv,target=/root/.cache/uv,sharing=locked \
+    uv sync --active --python "$(command -v python)" --project /tmp/core \
+    --locked --all-extras --link-mode copy
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash
