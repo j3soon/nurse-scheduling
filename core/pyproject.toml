@@ -67,7 +67,9 @@ dev = [
 [tool.uv]
 # The cuOpt dev image venv also reads the base image's cuOpt stack. Keep the
 # NumPy and pandas versions that its Numba and cuDF accept on every Python
-# version, so CI tests the versions that the cuOpt image runs.
+# version, so CI tests the versions that the cuOpt image runs. cuOpt 26.8
+# installs Numba 0.64, which needs NumPy below 2.5, and cuDF 26.8, which needs
+# pandas below 3.0.4.
 constraint-dependencies = [
     "numpy<2.5",
     "pandas<3.0.4",

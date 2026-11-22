@@ -179,6 +179,9 @@ Update every location that the inventory lists:
   change the Python, NumPy, pandas, and Numba versions. Update the `highspy`
   marker and the `[tool.uv]` constraints in `core/pyproject.toml` to match.
   Then ask the user to rebuild the image and run the cuOpt tests on a GPU host.
+  Stay on cuOpt 26.8.0 until a release fixes the status bug in 26.10.1. When
+  presolve removes the whole problem, 26.10.1 reports `FeasibleFound` instead
+  of `Optimal`, so `tests/test_schedule_pulp_cuopt.py` fails.
 
 ### Vendored code and data
 
