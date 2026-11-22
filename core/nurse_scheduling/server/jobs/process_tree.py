@@ -56,10 +56,12 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass
-from multiprocessing.connection import Connection
 from multiprocessing.context import SpawnContext
 from multiprocessing.process import BaseProcess
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from multiprocessing.connection import _ConnectionBase
 
 PR_SET_PDEATHSIG = 1
 """Linux prctl operation that configures a signal for parent process death."""
@@ -134,7 +136,7 @@ def kill_process_tree(process: BaseProcess) -> None:
 
 
 def _guard_process_tree(
-    connection: Connection,
+    connection: "_ConnectionBase",
     child_process_id: int,
     process_tree_cleaned_event: Any,
 ) -> None:
@@ -156,7 +158,7 @@ class ProcessTreeGuard:
     """Guard that survives abrupt supervisor death long enough to clean a tree."""
 
     process: BaseProcess
-    send_connection: Connection
+    send_connection: "_ConnectionBase"
     process_tree_cleaned_event: Any
 
     @property

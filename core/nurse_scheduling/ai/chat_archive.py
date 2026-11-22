@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from time import monotonic
-from typing import IO, BinaryIO
+from typing import IO, BinaryIO, cast
 from urllib.parse import quote
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
@@ -255,7 +255,8 @@ def create_chat_archive(history: ChatHistory, session_id: str, *, owner: str | N
     try:
         write_chat_archive(history, session_id, output, owner=owner)
         output.seek(0)
-        return output
+        # Windows TemporaryFile wraps the binary stream and forwards its methods.
+        return cast(BinaryIO, output)
     except BaseException:
         output.close()
         raise
