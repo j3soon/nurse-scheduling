@@ -980,7 +980,70 @@ describe('AiAssistantPage', () => {
     expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves stopping state when session_reset replays an active background run', async () => {
+    const user = userEvent.setup();
+    let streamCallbacks: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockStopSession.mockResolvedValue(undefined);
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
 
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Working...' });
+    });
+    const stopButton = await screen.findByRole('button', { name: 'Stop' });
+    await user.click(stopButton);
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+
+    act(() => {
+      streamCallbacks?.onEvent({
+        type: 'session_reset',
+        reset: { runIds: ['bg-run'], activeRunId: 'bg-run', terminalRunIds: [], incomplete: false },
+      });
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+    });
+
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+  });
+
+
+  it('fails a background answer that a session_reset no longer lists', async () => {
+    const user = userEvent.setup();
+    let streamCallbacks: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Working...' });
+    });
+    await screen.findByRole('button', { name: 'Stop' });
+
+    act(() => {
+      streamCallbacks?.onEvent({
+        type: 'session_reset',
+        reset: { runIds: [], activeRunId: null, terminalRunIds: [], incomplete: true },
+      });
+    });
+
+    await expect(screen.findByText('This response expired from event replay. Start a new question.'))
+      .resolves.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
 
   it('marks the conversation unavailable when manual compaction returns 404', async () => {
     const user = userEvent.setup();

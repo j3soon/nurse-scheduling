@@ -707,7 +707,15 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           });
         });
         setActiveOptimization(null);
-        lifecycle.finish(lifecycle.current('background'));
+        const background = lifecycle.current('background');
+        // Keep a replayed active run, including its pending Stop request.
+        if (background && reset.activeRunId !== background.id
+          && !(reset.runIds.includes(background.id) && !reset.terminalRunIds.includes(background.id))) {
+          if (!reset.runIds.includes(background.id) && !reset.terminalRunIds.includes(background.id)) {
+            updateBackgroundMessage(entry => failResponse(entry, 'This response expired from event replay. Start a new question.'));
+          }
+          lifecycle.finish(background);
+        }
         const foreground = eventRouterRef.current.foreground;
         if (foreground?.runId && !reset.runIds.includes(foreground.runId) && !reset.terminalRunIds.includes(foreground.runId)
           && reset.activeRunId !== foreground.runId) {
