@@ -898,6 +898,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           ...(resume?.recover && original ? {
             content: original.content, activity: original.activity, runId: original.runId,
             scheduleSpecYaml: original.scheduleSpecYaml,
+            truncated: original.truncated, downloadId: original.downloadId,
             modelSelection: original.modelSelection, providerCalls: original.providerCalls, costSummary: original.costSummary,
           } : {}),
         };

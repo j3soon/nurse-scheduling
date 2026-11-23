@@ -1045,6 +1045,42 @@ describe('AiAssistantPage', () => {
     expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
   });
 
+  it('keeps the truncation notice and ZIP download when a reload recovers a request', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'session-recover',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 600_000,
+      retentionSeconds: 3600,
+      sessionEventId: 5,
+      syncedScheduleSpec: 'people: []\n',
+      messages: [
+        {
+          id: 'q1', role: 'user', content: 'Generate files', requestId: 'req-1',
+          request: { id: 'req-1', question: 'Generate files', questionId: 'q1', assistantId: 'a1', activeAssistantId: 'a1', active: true },
+        },
+        {
+          id: 'a1', role: 'assistant', content: 'Partial output', status: 'pending', requestId: 'req-1',
+          truncated: true, downloadId: 'dl-123',
+        },
+      ],
+    }));
+    mockSendMessage.mockImplementationOnce(async () => 'run-1');
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      await new Promise<void>(() => {
+        setTimeout(() => {
+          callbacks.onEvent({ type: 'done', runId: 'run-1' });
+        }, 10);
+      });
+    });
+
+    render(<AiAssistantPage />);
+
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeInTheDocument();
+    expect(screen.getByText(/output token limit/i)).toBeInTheDocument();
+  });
+
   it('marks the conversation unavailable when manual compaction returns 404', async () => {
     const user = userEvent.setup();
     mockCompactSession.mockRejectedValueOnce(new MockAiHttpError('Session not found', 404));
