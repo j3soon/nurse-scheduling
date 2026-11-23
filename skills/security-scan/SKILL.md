@@ -90,11 +90,11 @@ When a scan finds a new issue, add a check here as its regression record.
 
 ## 4. Fuzz the HTTP schemas
 
-Set `SCRATCH` to a temporary directory outside the repository. Install the tools
-there instead of the system environment:
+Set `SCRATCH` to a temporary directory outside the repository. Use uv to install
+the tools there for the active Python interpreter.
 
 ```bash
-python -m pip install --target "$SCRATCH/scan-tools" schemathesis pip-audit
+uv pip install --python "$(command -v python)" --target "$SCRATCH/scan-tools" schemathesis pip-audit
 set -a; . artifacts/security-scan/stack/stack.env; set +a
 (cd "$SCRATCH" && PYTHONPATH="$SCRATCH/scan-tools" "$SCRATCH/scan-tools/bin/st" run \
   "$API_OPEN_URL/openapi.json" -n 40 --checks all --generation-deterministic)
