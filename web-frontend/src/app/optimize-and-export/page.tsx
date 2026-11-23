@@ -49,6 +49,7 @@ import {
   normalizeEndpoint,
   parseAuthRequirement,
   selectPreferredServer,
+  SUPPORTED_AUTH_SCHEME,
   SUPPORTED_BACKEND_API_VERSION,
   type OptimizationOptionsResponse,
   type ServerInfoResponse,
@@ -403,6 +404,9 @@ async function fetchServerInfo(
   }
 
   const auth = parseAuthRequirement(info.auth);
+  if (auth?.required && auth.scheme !== SUPPORTED_AUTH_SCHEME) {
+    incompatibilities.push(`Unsupported authentication scheme "${auth.scheme}". Expected "${SUPPORTED_AUTH_SCHEME}".`);
+  }
   const health: ServerInfoResponse = {
     status: typeof info.status === 'string' ? info.status : 'missing',
     service_name: typeof info.service_name === 'string' ? info.service_name : 'missing',

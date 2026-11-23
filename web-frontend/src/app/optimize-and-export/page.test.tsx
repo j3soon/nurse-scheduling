@@ -2377,6 +2377,23 @@ describe('OptimizeAndExportPage backend authentication', () => {
     await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: 'http://localhost:9000' }]));
   });
 
+  it('marks a backend that requires an unsupported authentication scheme as incompatible', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/info')
+        ? healthyResponse({ auth: { required: true, scheme: 'basic' } })
+        : unauthorizedResponse()
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      expect.stringContaining('Unsupported authentication scheme "basic"')
+    );
+  });
+
   it('opens with default backends when device storage is blocked', async () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
