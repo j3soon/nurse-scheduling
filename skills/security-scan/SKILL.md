@@ -124,20 +124,28 @@ mismatches are documentation gaps.
 
 ## 5. Audit dependencies
 
-Deployment images install the runtime set from `core/uv.lock`, and the E2B
-template installs the same versions as its `sandbox` group. Audit those locked
-versions:
+The API images install the runtime dependencies from `core/uv.lock`. Export
+the pins from the revision used to build the image.
 
 ```bash
-uv export --project core --locked --no-dev --group sandbox --no-hashes \
-  --no-emit-project --quiet -o "$SCRATCH/deployed-pins.txt"
+uv export --project core --locked --no-dev --no-hashes \
+  --no-emit-project --quiet -o "$SCRATCH/api-pins.txt"
 (cd "$SCRATCH" && PYTHONPATH="$SCRATCH/scan-tools" python -m pip_audit \
-  -r "$SCRATCH/deployed-pins.txt" --no-deps --disable-pip)
+  -r "$SCRATCH/api-pins.txt" --no-deps --disable-pip)
 ```
 
-Fix an advisory with `uv lock --upgrade-package NAME` in `core/`, or by raising
-the pin in `core/pyproject.toml`. A sandbox package also needs the same pin in
-`docker/e2b/e2b.Dockerfile`.
+The E2B template pins its direct sandbox dependencies in
+`docker/e2b/e2b.Dockerfile`. pip resolves their transitive dependencies during
+the build. Run `python3 -m pip list --format=freeze` in a disposable sandbox
+from the template revision under review. Save the output locally as
+`$SCRATCH/sandbox-pins.txt` and run the same `pip-audit` command with that file.
+
+For a package managed by `core`, run `uv lock --upgrade-package NAME` in
+`core/` to apply a fix. If an exact pin or constraint blocks the update,
+edit `core/pyproject.toml` first, then run the lock command. Commit the manifest
+and lockfile together when both change. If a direct sandbox pin changes,
+match the new locked version in `docker/e2b/e2b.Dockerfile` and audit the rebuilt
+template.
 
 `pip-audit` exits 1 when it finds an advisory. For the frontend, run
 `bun audit` in `web-frontend/`. The site is a static
