@@ -19,12 +19,13 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as renderWithoutProviders, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { act } from 'react';
+import { act, useEffect, type ReactElement } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import { I18nProvider } from '@/i18n/I18nProvider';
 import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
+import { UnsavedEditingStateProvider, useUnsavedEditingState } from '@/utils/unsavedEditingState';
 import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
@@ -73,6 +74,24 @@ vi.mock('@sentry/nextjs', () => ({
 const LOCAL_API_URL = 'http://localhost:8000';
 const PRODUCTION_API_URL = 'https://api.nursescheduling.org';
 const SECONDARY_API_URL = 'https://api-secondary.nursescheduling.org';
+
+let unsavedEditingState: ReturnType<typeof useUnsavedEditingState> | null = null;
+
+function UnsavedEditingStateProbe() {
+  const state = useUnsavedEditingState();
+  useEffect(() => {
+    unsavedEditingState = state;
+  }, [state]);
+  return null;
+}
+
+// The app layout provides the page-leaving warning state.
+const render = (ui: ReactElement) => renderWithoutProviders(
+  <UnsavedEditingStateProvider>
+    <UnsavedEditingStateProbe />
+    {ui}
+  </UnsavedEditingStateProvider>
+);
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -1823,6 +1842,54 @@ describe('OptimizeAndExportPage error handling', () => {
       url === 'http://localhost:8000/optimize/opt_sse'
       && (init as RequestInit | undefined)?.method === 'GET'
     ))).toHaveLength(1);
+  });
+
+  it('warns before leaving the page only while an optimization runs', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_leave' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_leave', state: 'completed', outcome: 'optimal', score: 42, solverStatus: 'OPTIMAL',
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers({ 'Content-Disposition': 'attachment; filename=schedule.xlsx' }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const dispatchBeforeUnload = () => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+
+    render(<OptimizeAndExportPage />);
+    expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
+    expect(dispatchBeforeUnload()).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    expect(unsavedEditingState?.tabSwitchWarningMessage()).toBe(
+      'The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?'
+    );
+    expect(dispatchBeforeUnload()).toBe(true);
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'completed' });
+      MockEventSource.instances[0].emit('job.result_available', { outcome: 'optimal', score: 42 });
+    });
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+
+    expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
+    expect(dispatchBeforeUnload()).toBe(false);
   });
 
   it('shows queued position updates received through SSE', async () => {

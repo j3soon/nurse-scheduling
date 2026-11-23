@@ -30,26 +30,33 @@ import {
 } from 'react';
 
 type UnsavedEditingState = {
-  setTabSwitchWarningActive: () => void;
-  clearTabSwitchWarningActive: () => void;
+  setTabSwitchWarningActive: (message?: string) => void;
+  clearTabSwitchWarningActive: (message?: string) => void;
   hasTabSwitchWarningActive: () => boolean;
+  // Undefined means the default unsaved edits warning.
+  tabSwitchWarningMessage: () => string | undefined;
 };
 
 const UnsavedEditingStateContext = createContext<UnsavedEditingState | null>(null);
 
 function createUnsavedEditingState(): UnsavedEditingState {
-  // Current pages only open one editor at a time, but keep a count so future
-  // overlapping warning registrations cannot clear each other.
-  let tabSwitchWarningCount = 0;
+  // Keep one entry per registration so overlapping warnings cannot clear each other.
+  // A null entry is an editor with unsaved edits.
+  const warnings: (string | null)[] = [];
 
   return {
-    setTabSwitchWarningActive: () => {
-      tabSwitchWarningCount += 1;
+    setTabSwitchWarningActive: message => {
+      warnings.push(message ?? null);
     },
-    clearTabSwitchWarningActive: () => {
-      tabSwitchWarningCount = Math.max(0, tabSwitchWarningCount - 1);
+    clearTabSwitchWarningActive: message => {
+      const index = warnings.lastIndexOf(message ?? null);
+      if (index !== -1) warnings.splice(index, 1);
     },
-    hasTabSwitchWarningActive: () => tabSwitchWarningCount > 0,
+    hasTabSwitchWarningActive: () => warnings.length > 0,
+    // Unsaved edits are lost on leaving, so their warning comes first.
+    tabSwitchWarningMessage: () => (
+      warnings.includes(null) ? undefined : warnings.at(-1) ?? undefined
+    ),
   };
 }
 
@@ -68,7 +75,7 @@ export function useUnsavedEditingState(): UnsavedEditingState {
   return value;
 }
 
-export function useTabSwitchWarning(isActive: boolean): void {
+export function useTabSwitchWarning(isActive: boolean, message?: string): void {
   const {
     setTabSwitchWarningActive: setActive,
     clearTabSwitchWarningActive: clearActive,
@@ -77,10 +84,10 @@ export function useTabSwitchWarning(isActive: boolean): void {
   useEffect(() => {
     if (!isActive) return;
 
-    setActive();
+    setActive(message);
 
     return () => {
-      clearActive();
+      clearActive(message);
     };
-  }, [clearActive, isActive, setActive]);
+  }, [clearActive, isActive, message, setActive]);
 }

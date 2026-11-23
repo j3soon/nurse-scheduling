@@ -54,6 +54,7 @@ import {
   type OptimizationOptionsResponse,
   type ServerInfoResponse,
 } from '@/app/optimize-and-export/serverSelection';
+import { useTabSwitchWarning } from '@/utils/unsavedEditingState';
 import { CURRENT_APP_VERSION, hasAppVersionMismatch } from '@/utils/version';
 
 type ServerStatus = 'unchecked' | 'checking' | 'online' | 'offline' | 'incompatible' | 'degraded' | 'unauthorized';
@@ -730,6 +731,20 @@ export default function OptimizeAndExportPage() {
   const [timeoutArg, setTimeoutArg] = useState<number | string>(300);
   const [timeoutError, setTimeoutError] = useState<MessageDescriptor | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  useTabSwitchWarning(
+    isOptimizing,
+    t("The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?"),
+  );
+  useEffect(() => {
+    if (!isOptimizing) return;
+    // Closing or reloading the tab loses the run's progress stream and download.
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, [isOptimizing]);
   const [errorMessage, setErrorMessage] = useState<MessageDescriptor | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [scheduleScore, setScheduleScore] = useState<number | null>(null);

@@ -796,6 +796,7 @@ export const zhTW: Catalog = {
   "The optimizer could not finish early.": "無法提早完成最佳化。",
   "The preferences section must be a list.": "preferences 區段必須為清單。",
   "The saved chat could not be opened from browser storage.": "無法從瀏覽器儲存空間開啟已儲存的對話。",
+  "The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?": "最佳化會繼續執行，並在完成時下載班表，但此頁面將不再顯示進度。要離開此頁面嗎？",
   "The schedule could not be downloaded.": "無法下載班表。",
   "The summary replaces all earlier conversation messages in model context.": "此摘要會取代模型上下文中更早的所有對話訊息。",
   "The {value0} section must be an object.": "{value0} 區段必須為物件。",

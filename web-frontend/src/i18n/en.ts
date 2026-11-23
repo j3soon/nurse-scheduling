@@ -870,6 +870,7 @@ export const en = {
   "The optimizer could not finish early.": "The optimizer could not finish early.",
   "The preferences section must be a list.": "The preferences section must be a list.",
   "The saved chat could not be opened from browser storage.": "The saved chat could not be opened from browser storage.",
+  "The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?": "The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?",
   "The schedule could not be downloaded.": "The schedule could not be downloaded.",
   "The Schedule Spec could not be created.": "The Schedule Spec could not be created.",
   "The summary replaces all earlier conversation messages in model context.": "The summary replaces all earlier conversation messages in model context.",
