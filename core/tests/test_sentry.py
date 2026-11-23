@@ -554,6 +554,19 @@ def test_capture_invalid_request_ignores_unauthorized():
         capture_invalid_request(request, 401, "Backend credentials are required.")
 
 
+def test_capture_invalid_request_ignores_method_not_allowed():
+    """Unauthenticated scanners probing wrong HTTP methods must not flood Sentry."""
+    request = _request("/info", method="POST")
+    fake_sentry_sdk = types.SimpleNamespace(
+        new_scope=lambda: pytest.fail("405 response reached Sentry"),
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("nurse_scheduling.sentry._should_enable_sentry", lambda: True)
+        monkeypatch.setitem(sys.modules, "sentry_sdk", fake_sentry_sdk)
+
+        capture_invalid_request(request, 405, "Method Not Allowed")
+
+
 def test_service_events_and_logs_include_build_release_and_api_version_with_real_sdk():
     # A subprocess keeps SDK integrations and root logging isolated from pytest.
     script = """

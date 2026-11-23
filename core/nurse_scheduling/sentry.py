@@ -463,9 +463,9 @@ def _capture_invalid_request(
 ) -> None:
     """Build and send one report for a client error worth keeping."""
     signal = classify_suspicious_request(request, status_code, error_code)
-    # Missing routes, expired resources, and unauthenticated probes of a protected
-    # deployment are expected and not actionable.
-    if signal is None and status_code in (401, 404):
+    # Missing routes, wrong methods, expired resources, and unauthenticated probes of a
+    # protected deployment are expected and not actionable.
+    if signal is None and status_code in (401, 404, 405):
         return
 
     route = request.scope.get("route")
