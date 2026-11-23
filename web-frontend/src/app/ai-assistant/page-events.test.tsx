@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import {
+  mockCompactSession,
   mockCreateSession,
   mockDownloadOptimization,
   mockCancelOptimization,
@@ -981,4 +982,23 @@ describe('AiAssistantPage', () => {
 
 
 
+  it('marks the conversation unavailable when manual compaction returns 404', async () => {
+    const user = userEvent.setup();
+    mockCompactSession.mockRejectedValueOnce(new MockAiHttpError('Session not found', 404));
+    mockRunEvents.mockImplementationOnce(async (_id, _q, callbacks) => {
+      callbacks.onEvent({ type: 'delta', text: 'Hello' });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 100, maxChars: 1000, usedTokens: 500, maxTokens: 10000, estimated: false } });
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hi');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Hello');
+
+    const compactButton = await screen.findByRole('button', { name: /Compact/i });
+    await user.click(compactButton);
+
+    await expect(
+      screen.findByText('This chat expired or is no longer available. Start a new chat to continue.')
+    ).resolves.toBeInTheDocument();
+  });
 });

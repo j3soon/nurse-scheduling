@@ -1274,8 +1274,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       }
       await finished;
     } catch (compactError) {
-      if (lifecycle.owns(operation) && !controller.signal.aborted) {
-        reportRequestError(compactError, 'The conversation could not be compacted.');
+      if (lifecycle.owns(operation)) {
+        if (compactError instanceof AiHttpError && compactError.status === 404) {
+          markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
+        } else if (!controller.signal.aborted) {
+          reportRequestError(compactError, 'The conversation could not be compacted.');
+        }
       }
     } finally {
       controller.signal.removeEventListener('abort', finishRun);
