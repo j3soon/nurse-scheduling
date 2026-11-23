@@ -36,6 +36,7 @@ import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette import formparsers
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import MAX_NESTING_DEPTH
@@ -2552,6 +2553,64 @@ def test_text_input_uses_configured_limit_above_multipart_text_default(path, fie
         oversized = submit(client, max_yaml_bytes + 1)
         assert oversized.status_code == 413
         assert oversized.json()["detail"] == "Schedule Spec YAML is too large"
+
+
+@pytest.mark.parametrize("root_path", ["", "/api"])
+def test_chunked_upload_stops_reading_at_the_body_limit(root_path, monkeypatch):
+    # A chunked request has no Content-Length, so the middleware must count received bytes.
+    spooled = []
+
+    class RecordingSpooledFile(formparsers.SpooledTemporaryFile):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            spooled.append(self)
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", RecordingSpooledFile)
+    app = create_app(settings=_settings(max_yaml_bytes=1024), start_background=False)
+    boundary = b"----chunked-limit"
+    chunks = [
+        b"--"
+        + boundary
+        + b'\r\nContent-Disposition: form-data; name="schedule_spec_file"; filename="schedule.yaml"\r\n'
+        b"Content-Type: application/x-yaml\r\n\r\n",
+        *[b"a" * 32_768] * 8,
+        b"\r\n--" + boundary + b"--\r\n",
+    ]
+    path = f"{root_path}/schedule_spec/optimize"
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": root_path,
+        "query_string": b"",
+        "headers": [(b"content-type", b"multipart/form-data; boundary=" + boundary)],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    pending = iter(chunks)
+    consumed = 0
+    messages = []
+
+    async def receive():
+        nonlocal consumed
+        chunk = next(pending, None)
+        if chunk is None:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        consumed += len(chunk)
+        return {"type": "http.request", "body": chunk, "more_body": True}
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+
+    assert messages[0]["status"] == 413
+    assert consumed < sum(len(chunk) for chunk in chunks)
+    assert spooled and all(file.closed for file in spooled)
 
 
 AUTH_TOKEN = "integration-shared-token"

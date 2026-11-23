@@ -29,6 +29,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette._utils import get_route_path
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -57,7 +58,7 @@ from .jobs.models import StoreLimits
 from .jobs.runner import OptimizationRunner
 from .jobs.worker import JobWorker
 from .maintenance import JobMaintenance
-from .request_limits import MULTIPART_OVERHEAD_BYTES, MaxBodySizeMiddleware
+from .request_limits import MULTIPART_OVERHEAD_BYTES, OVERSIZE_BODY_MESSAGE, MaxBodySizeMiddleware
 from .runtime_identity import get_deployment_id
 from .solver_options import validate_solver_availability
 from .stores.memory import MemoryJobStore
@@ -131,8 +132,11 @@ def _format_unexpected_error(error: Exception) -> str:
 
 def _is_form_parser_size_error(exc: StarletteHTTPException) -> bool:
     """Return whether Starlette reported multipart size overflow as a generic 400."""
-    detail = str(exc.detail).lower()
-    return exc.status_code == 400 and "size" in detail and ("exceeded" in detail or "too large" in detail)
+    detail = str(exc.detail)
+    lowered = detail.lower()
+    return exc.status_code == 400 and (
+        detail == OVERSIZE_BODY_MESSAGE or ("size" in lowered and ("exceeded" in lowered or "too large" in lowered))
+    )
 
 
 def create_app(
@@ -293,7 +297,8 @@ def create_app(
     @app.exception_handler(StarletteHTTPException)
     async def starlette_http_error_handler(request: Request, exc: StarletteHTTPException):
         """Capture client HTTP errors and normalize multipart size failures."""
-        if request.url.path in {"/optimize", "/schedule_spec/optimize"} and _is_form_parser_size_error(exc):
+        route_path = get_route_path(request.scope).rstrip("/")
+        if route_path in {"/optimize", "/schedule_spec/optimize"} and _is_form_parser_size_error(exc):
             exc = StarletteHTTPException(status_code=413, detail="Schedule Spec YAML is too large")
         if 400 <= exc.status_code < 500:
             await run_in_threadpool(capture_invalid_request, request, exc.status_code, exc.detail)
