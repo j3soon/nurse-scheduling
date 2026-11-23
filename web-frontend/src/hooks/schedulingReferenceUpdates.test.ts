@@ -209,6 +209,31 @@ describe('applyReferencesForIdChange', () => {
     expect((state.preferences[1] as ShiftRequestPreference).shiftType).toBe('Day');
     expect((state.preferences[3] as ShiftCountPreference).countShiftTypes).toBe('Day');
   });
+
+  it('updates only later date groups when renaming a date group whose old ID matches a date member', () => {
+    const state = createState();
+    state.dates = {
+      range: { startDate: new Date('2026-11-01'), endDate: new Date('2026-11-03') },
+      items: [
+        { id: '01', description: '' },
+        { id: '02', description: '' },
+        { id: '03', description: '' },
+      ],
+      groups: [
+        { id: 'WORKDAY', members: ['01', '02'], description: '' },
+        { id: 'Holiday', members: ['01', '03'], description: '' },
+        { id: 'Dependent', members: ['01'], description: '' },
+      ],
+    };
+
+    const renamed = applyReferencesForIdChange(state, DataType.DATES, '01', 'Holiday');
+
+    expect(renamed.dates.groups).toEqual([
+      { id: 'WORKDAY', members: ['01', '02'], description: '' },
+      { id: 'Holiday', members: ['01', '03'], description: '' },
+      { id: 'Dependent', members: ['Holiday'], description: '' },
+    ]);
+  });
 });
 
 describe('applyReferencesForIdDeletion', () => {

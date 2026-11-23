@@ -434,14 +434,21 @@ export const applyReferencesForIdChange = (
   nextState = applyPreferencesForIdChange(nextState, dataType, oldId, newId);
   nextState = applyExportLayoutForIdChange(nextState, dataType, oldId, newId);
   if (dataType === DataType.DATES && oldId !== newId) {
+    // A legacy group ID can equal a date. A group resolves only earlier groups, so the
+    // renamed group and the groups before it use that ID for the date, not the group.
+    const renamedGroupIndex = nextState.dates.groups.findIndex(group => group.id === newId);
     nextState = {
       ...nextState,
       dates: {
         ...nextState.dates,
-        groups: nextState.dates.groups.map(group => ({
-          ...group,
-          members: renameReferenceIds(group.members, oldId, newId) as string[],
-        })),
+        groups: nextState.dates.groups.map((group, index) => (
+          renamedGroupIndex !== -1 && index <= renamedGroupIndex
+            ? group
+            : {
+              ...group,
+              members: renameReferenceIds(group.members, oldId, newId) as string[],
+            }
+        )),
       },
     };
   }
