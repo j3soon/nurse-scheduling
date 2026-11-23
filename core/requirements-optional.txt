@@ -11,7 +11,7 @@ pyscipopt==6.2.1
 # exercised by the core tests. The server itself never imports them.
 pypdf==6.19.0 # For PDF text and embedded-image inspection
 pypdfium2==5.13.0 # For bounded PDF page rendering in the sandbox
-PyYAML==6.0.3 # For agent-written YAML scripts in the offline sandbox
+PyYAML==6.0.3 # For core unit tests that parse YAML fixtures
 # For CI
 pytest
 pytest-cov

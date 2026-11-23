@@ -38,6 +38,7 @@ All records below use `localStorage` except the active conversation.
 | `nurse-scheduling-ai-data` | Display preferences for reasoning, tools, turn costs, models, and Chinese conversion. | No automatic expiry. |
 | `nurse-scheduling-ai-server` | Selected AI backend URL as a plain string. | No automatic expiry. |
 | `nurse-scheduling-ai-auth` | Remembered AI tokens by backend endpoint. | No automatic expiry. |
+| `nurse-scheduling-language` | Selected UI language (`en` or `zh-TW`). | No automatic expiry. |
 
 <a id="schedule-data"></a>
 

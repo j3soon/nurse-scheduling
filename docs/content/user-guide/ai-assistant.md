@@ -67,7 +67,7 @@ you can continue chatting while it solves.
 
 The optimizer runs for up to 300 seconds (five minutes) by default. Ask the
 assistant for a different timeout when needed. A deployment may set another
-default. One chat may start 50 optimizer runs by default.
+default. One chat may start 1,000 optimizer runs by default.
 
 Optimizer completion reports explain when an automatic request audit is unavailable.
 Custom export text outside bracketed annotations can prevent the audit.
@@ -143,7 +143,7 @@ recover messages after a backend restart. A restart interrupts active responses,
 but the saved question, partial output, uploaded source files, generated ZIPs,
 and optimizer files remain available. Removing an upload or ZIP hides it from
 active use but keeps it in the session archive. Removed files still count toward
-the chat's stored file limit, 1 GB by default. When a chat reaches it, start a
+the chat's stored file limit, 10 GB by default. When a chat reaches it, start a
 new chat to save more files. All archived files expire with the chat. Without PostgreSQL, chats and files remain in memory only.
 Keep your original files.
 
@@ -297,7 +297,7 @@ Markdown and JSON files always contain the original text.
 
 When the assistant creates files for download, it puts them in one ZIP archive.
 Use **Download files (ZIP)** below its answer. The archive and its uncompressed
-contents are each limited to 50 MB by default. Downloads remain available while
+contents are each limited to 250 MB by default. Downloads remain available while
 the chat session exists. Without PostgreSQL, the service memory limit also applies. A workspace path
 printed in an answer is not itself a download link.
 Use **Remove ZIP** after saving a file you no longer need in the chat. This frees
