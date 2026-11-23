@@ -33,7 +33,9 @@ from nurse_scheduling import cli
 from nurse_scheduling.solver_interface import SolverProgress
 
 
-def test_cli_version_prints_git_version(monkeypatch, capsys):
+def test_cli_version_prints_git_version(tmp_path, monkeypatch, capsys):
+    from nurse_scheduling import version
+
     seen = {}
 
     def fake_check_output(cmd, stderr, text):
@@ -45,7 +47,8 @@ def test_cli_version_prints_git_version(monkeypatch, capsys):
     def fail_schedule(*args, **kwargs):
         raise AssertionError("schedule should not run for --version")
 
-    monkeypatch.setattr(cli.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(version, "APP_VERSION_FILE", tmp_path / "missing-app-version")
+    monkeypatch.setattr(version.subprocess, "check_output", fake_check_output)
     monkeypatch.setattr(cli.scheduler, "schedule", fail_schedule)
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", "--version"])
 
@@ -64,11 +67,14 @@ def test_cli_version_prints_git_version(monkeypatch, capsys):
     assert seen["text"] is True
 
 
-def test_cli_version_falls_back_when_git_version_is_unavailable(monkeypatch, capsys):
+def test_cli_version_falls_back_when_git_version_is_unavailable(tmp_path, monkeypatch, capsys):
+    from nurse_scheduling import version
+
     def raise_git_error(*args, **kwargs):
         raise OSError("git unavailable")
 
-    monkeypatch.setattr(cli.subprocess, "check_output", raise_git_error)
+    monkeypatch.setattr(version, "APP_VERSION_FILE", tmp_path / "missing-app-version")
+    monkeypatch.setattr(version.subprocess, "check_output", raise_git_error)
     monkeypatch.setattr(sys, "argv", ["nurse-scheduling", "--version"])
 
     cli.main()
@@ -381,3 +387,13 @@ def test_cli_show_model_build_stats_prints_scheduler_events(tmp_path, monkeypatc
     assert "large" not in out
     assert "Score: 123" in out
     assert "Status: FEASIBLE" in out
+
+
+def test_cli_get_app_version_reads_generated_app_version_file(tmp_path, monkeypatch):
+    from nurse_scheduling import version
+
+    version_file = tmp_path / ".app-version"
+    version_file.write_text("v1.2.3-container\n", encoding="utf-8")
+    monkeypatch.setattr(version, "APP_VERSION_FILE", version_file)
+
+    assert cli._get_app_version() == "v1.2.3-container"

@@ -21,11 +21,9 @@ import argparse
 import json
 import logging
 import os.path
-import subprocess
 import sys
 import time
 from io import BytesIO
-from pathlib import Path
 
 from . import exporter, scheduler
 from .model_build_stats import ModelBuildStatsSummary
@@ -36,31 +34,14 @@ from .solver_interface import (
     serialize_schedule_phase_progress,
     serialize_solver_progress,
 )
+from .version import get_app_version
 
 # TODO: Better CLI
 # Ref: https://packaging.python.org/en/latest/guides/creating-command-line-tools/
 
 
 def _get_app_version() -> str:
-    repo_root = Path(__file__).resolve().parents[2]
-    try:
-        return subprocess.check_output(
-            [
-                "git",
-                "-c",
-                f"safe.directory={repo_root}",
-                "-C",
-                str(repo_root),
-                "describe",
-                "--tags",
-                "--always",
-                "--dirty",
-            ],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return "v0.0.0-unknown"
+    return get_app_version()
 
 
 def _create_cli_progress_callback(progress_output_file=None, print_to_stdout: bool = True):
