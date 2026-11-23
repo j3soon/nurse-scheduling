@@ -1574,3 +1574,41 @@ def test_defensive_limit_stops_an_unterminated_sse_line_before_json_parsing(monk
     with pytest.raises(ProviderResponseLimitError, match="defensive response byte limit"):
         _events(provider)
     assert read == [0, 1, 2]
+
+
+def test_reasoning_and_tool_fragment_merging_handles_null_thinking_and_empty_native(monkeypatch):
+    chunks = [
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": None, "index": 0}]}),
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": "step 1", "index": 0}]}),
+        _delta_chunk(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {"name": "read", "arguments": '{"path":'},
+                        "extra_content": {"google": {"thought_signature": "sig-abc"}},
+                    }
+                ]
+            }
+        ),
+        _delta_chunk(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "function": {"arguments": '"/workspace/a"}'},
+                        "extra_content": {},
+                    }
+                ]
+            }
+        ),
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    wire = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+    provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(200, content=wire.encode()))
+    events = _events(provider)
+    replays = [event for event in events if isinstance(event, ReasoningReplay)]
+    tool_reqs = [event for event in events if isinstance(event, ToolCallRequest)]
+    assert replays and replays[0].native["thinking_blocks"][0]["thinking"] == "step 1"
+    assert tool_reqs and tool_reqs[0].calls[0].native == {"extra_content": {"google": {"thought_signature": "sig-abc"}}}

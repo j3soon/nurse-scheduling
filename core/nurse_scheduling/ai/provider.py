@@ -950,7 +950,10 @@ def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
                     if name == field or (key == "thinking_blocks" and name == "signature"):
                         if not isinstance(part, str):
                             raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
-                        last[name] = last.get(name, "") + part
+                        existing = last.get(name)
+                        if existing is not None and not isinstance(existing, str):
+                            raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
+                        last[name] = (existing or "") + part
                     elif name not in last or not last[name]:
                         last[name] = part
             else:
@@ -1016,7 +1019,7 @@ def _merge_tool_call_fragments(partial_calls: dict[int, _PartialToolCall], fragm
         if isinstance(fragment.get("id"), str):
             partial.id = fragment["id"]
         for key in ("extra_content", "provider_specific_fields"):
-            if isinstance(fragment.get(key), dict):
+            if isinstance(fragment.get(key), dict) and fragment[key]:
                 partial.native = {**(partial.native or {}), key: fragment[key]}
         function = fragment.get("function")
         if not isinstance(function, dict):
