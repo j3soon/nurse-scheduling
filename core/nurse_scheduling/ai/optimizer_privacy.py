@@ -71,13 +71,14 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
                 raise OptimizerResultError("The optimizer result is not an XLSX workbook.")
     except BadZipFile as exc:
         raise OptimizerResultError("The optimizer workbook archive is invalid.") from exc
-    if all(anonymized == original for anonymized, original in original_id_by_anonymized_id.items()):
-        return content
+    identity_mapping = all(anonymized == original for anonymized, original in original_id_by_anonymized_id.items())
     try:
         workbook = load_workbook(BytesIO(content), keep_links=False)
         try:
             if not workbook.worksheets:
                 raise OptimizerResultError("The optimizer workbook has no worksheet.")
+            if identity_mapping:
+                return content
             sheet = workbook.worksheets[0]
             for row_number in range(3, 3 + people_count):
                 cell = sheet.cell(row_number, 1)

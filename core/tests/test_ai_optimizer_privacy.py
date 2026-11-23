@@ -20,6 +20,7 @@
 # This test is mostly AI generated.
 
 from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import load_workbook
@@ -123,6 +124,16 @@ def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> Non
 def test_optimizer_workbook_rejects_invalid_result() -> None:
     with pytest.raises(OptimizerResultError, match="not an XLSX"):
         restore_people_ids(b"not a workbook", {"P1": "Alice"}, 1)
+
+
+def test_optimizer_workbook_rejects_invalid_xml_without_anonymized_ids() -> None:
+    # Corrupt workbook XML must still be rejected even when people IDs already equal P1..Pn.
+    corrupt_zip = BytesIO()
+    with ZipFile(corrupt_zip, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/workbook.xml", "<broken")
+    with pytest.raises(OptimizerResultError, match="could not be restored"):
+        restore_people_ids(corrupt_zip.getvalue(), {"P1": "P1"}, 1)
 
 
 def test_optimizer_submission_accepts_a_schedule_without_people_groups() -> None:
