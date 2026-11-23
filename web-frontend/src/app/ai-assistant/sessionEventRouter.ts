@@ -94,6 +94,12 @@ export class SessionEventRouter {
   }
 
   finish(run: ForegroundRun): void {
-    if (this.foreground === run) this.foreground = null;
+    if (this.foreground !== run) return;
+    this.foreground = null;
+    // A rejected or aborted request never identifies its run, so every deferred
+    // event belongs to another run. Background already received each session reset.
+    for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
+      if (ownsConversation() && event.type !== 'session_reset') background(event);
+    }
   }
 }

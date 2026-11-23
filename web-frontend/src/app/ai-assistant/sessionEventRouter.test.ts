@@ -69,4 +69,20 @@ describe('session event routing after a pre-acknowledgement reset', () => {
     router.dispatch({ type: 'done', runId: 'accepted' }, vi.fn(), () => true);
     expect(handle).toHaveBeenCalledWith({ type: 'done', runId: 'accepted' });
   });
+
+  it('flushes deferred background events when a foreground run finishes without acknowledgement', () => {
+    const router = new SessionEventRouter();
+    const background = vi.fn();
+    const run = router.begin(vi.fn(), vi.fn(), vi.fn());
+    router.dispatch({ type: 'run_start', runId: 'review', trigger: 'optimizer' }, background, () => true);
+    router.dispatch({ type: 'delta', runId: 'review', text: 'Done.' }, background, () => true);
+    router.dispatch({ type: 'done', runId: 'review' }, background, () => true);
+    expect(background).not.toHaveBeenCalled();
+
+    router.finish(run);
+
+    expect(background).toHaveBeenCalledTimes(3);
+    expect(background).toHaveBeenNthCalledWith(1, { type: 'run_start', runId: 'review', trigger: 'optimizer' });
+    expect(background).toHaveBeenNthCalledWith(3, { type: 'done', runId: 'review' });
+  });
 });
