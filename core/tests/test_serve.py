@@ -2818,6 +2818,9 @@ def test_event_stream_rejects_missing_or_unusable_stream_tokens():
         assert _stream_status(client, MISSING_JOB_ID, "?token=nonsense") == 401
         assert _stream_status(client, MISSING_JOB_ID, "?token=not-a-number.deadbeef") == 401
         assert _stream_status(client, MISSING_JOB_ID, "?token=") == 401
+        invalid_query = client.get(f"/optimize/{MISSING_JOB_ID}/events?token=nonsense")
+        assert invalid_query.status_code == 401
+        assert invalid_query.json()["detail"] == "Backend credentials are invalid."
 
 
 def test_stream_tokens_do_not_authorize_other_routes():
