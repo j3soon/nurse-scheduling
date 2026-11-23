@@ -1538,9 +1538,11 @@ export default function AiAssistantPage() {
               <>
                 <button
                   type="submit"
-                  disabled={!isClientReady || composerUnavailable || !draft.trim()}
+                  disabled={!isClientReady || composerUnavailable || !draft.trim() || selectedAttachments.length > 0}
                   aria-label={t("Queue message")}
-                  title={t("Queue message")}
+                  title={selectedAttachments.length > 0
+                    ? t("Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.")
+                    : t("Queue message")}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <FiArrowUp aria-hidden="true" className="h-5 w-5" />

@@ -848,6 +848,7 @@ export const zhTW: Catalog = {
   "Uses the first online server by priority.": "依優先順序使用第一個線上的伺服器。",
   "Uses {value0}": "使用 {value0}",
   "Validation result sent to AI.": "已將驗證結果傳送至 AI。",
+  "Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.": "請等待目前回應完成後再傳送附件，或移除附件以將文字訊息加入佇列。",
   "Waiting": "等待中",
   "Waiting for backend options": "正在等待後端選項",
   "Waiting for first feasible solution...": "正在等待第一個可行解…",

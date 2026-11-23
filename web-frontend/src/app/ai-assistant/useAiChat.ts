@@ -1210,6 +1210,10 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const submitMessage = async (question: string, attachments: File[]) => {
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
+      if (attachments.length > 0) {
+        setError('Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.');
+        return;
+      }
       const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
       queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
       setQueuedMessages(queuedMessagesRef.current);

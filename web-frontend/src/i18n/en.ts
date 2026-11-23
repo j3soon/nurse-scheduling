@@ -928,6 +928,7 @@ export const en = {
   "Uses {value0}": "Uses {value0}",
   "Uses the first online server by priority.": "Uses the first online server by priority.",
   "Validation result sent to AI.": "Validation result sent to AI.",
+  "Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.": "Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.",
   "Waiting": "Waiting",
   "Waiting for backend options": "Waiting for backend options",
   "Waiting for first feasible solution...": "Waiting for first feasible solution...",

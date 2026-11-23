@@ -533,4 +533,34 @@ describe('AiAssistantPage', () => {
     expect(screen.queryByText(/did not finish uploading/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
+
+  it('refuses to queue a message while pending attachments are selected', async () => {
+    let streamCallbacks: import('./sessionEvents').SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    const user = userEvent.setup();
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Initial');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['abc'], 'ward.csv', { type: 'text/csv' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check ward.csv');
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-review', trigger: 'optimizer' });
+    });
+
+    const queueButton = await screen.findByRole('button', { name: 'Queue message' });
+    expect(queueButton).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toHaveValue('Check ward.csv');
+    expect(screen.getByText('ward.csv')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Wait for the current response to finish before sending attached files/);
+  });
+
+
 });
