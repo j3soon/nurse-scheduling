@@ -228,6 +228,39 @@ def test_slow_discovery_only_blocks_the_same_credential(monkeypatch, cached):
     asyncio.run(exercise())
 
 
+def test_model_catalog_handles_null_model_info_and_reasoning_options(monkeypatch):
+    client_type = httpx.AsyncClient
+    catalog = ModelCatalog(settings())
+
+    async def respond(request):
+        if request.url.path.endswith("/model/info"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"model_name": "null-info", "model_info": None},
+                        {"model_name": "null-options", "model_info": {"chat_reasoning_options": None}},
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "null-info", "context_length": 32000},
+                    {"id": "null-options", "context_length": 64000},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kwargs: client_type(**{**kwargs, "transport": httpx.MockTransport(respond)})
+    )
+    discovered = asyncio.run(catalog.models("institution-a"))
+    assert [model.id for model in discovered] == ["null-info", "null-options"]
+    assert all(model.reasoning == () for model in discovered)
+
+
 @pytest.mark.parametrize("duplicate_question, expected_status", [("Help", 202), ("Different", 409)])
 def test_duplicate_message_during_model_discovery(monkeypatch, duplicate_question, expected_status):
     client_type = httpx.AsyncClient
