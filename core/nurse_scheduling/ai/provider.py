@@ -558,10 +558,10 @@ class OpenAiCompatibleProvider:
             payload["tool_choice"] = "auto"
 
         original_estimate = estimate_context_tokens(messages, tools or [])
-        stream_started = False
         max_attempts = self._settings.provider_max_attempts
         retry_deadline: float | None = None
         for attempt in range(1, max_attempts + 1):
+            stream_started = False
             estimate = estimate_context_tokens(payload["messages"], tools or [])
             used_tokens = (
                 self._context_used_tokens + max(0, estimate - original_estimate)

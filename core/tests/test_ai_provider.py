@@ -1612,3 +1612,28 @@ def test_reasoning_and_tool_fragment_merging_handles_null_thinking_and_empty_nat
     tool_reqs = [event for event in events if isinstance(event, ToolCallRequest)]
     assert replays and replays[0].native["thinking_blocks"][0]["thinking"] == "step 1"
     assert tool_reqs and tool_reqs[0].calls[0].native == {"extra_content": {"google": {"thought_signature": "sig-abc"}}}
+
+
+def test_stream_started_resets_across_retry_attempts(monkeypatch):
+    attempts = 0
+
+    class FirstStreamsThenFails(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f"data: {json.dumps(_delta_chunk({'content': 'partial'}))}\n\n".encode()
+            raise httpx.ReadTimeout("mid-stream timeout")
+
+    def respond(_request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(200, stream=FirstStreamsThenFails())
+        raise httpx.ReadTimeout("before-stream timeout")
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("nurse_scheduling.ai.provider.asyncio.sleep", no_sleep)
+    provider = _transport_provider(monkeypatch, respond, provider_max_attempts=2)
+    with pytest.raises(ProviderError, match="timed out before starting"):
+        _events(provider)
+    assert attempts == 2

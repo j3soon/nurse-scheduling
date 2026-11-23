@@ -158,7 +158,8 @@ async def agent_loop(
         request = current_request()
         definitions = [] if final_answer_only else [tool.definition for tool in tools]
         request_chars = history_chars([message for message in request if message["role"] != "system"])
-        request_tokens = compactor.tokens(request, definitions)
+        initial_request_tokens = compactor.tokens(request, definitions)
+        request_tokens = initial_request_tokens
         response_chars = 0
         reported_chars = 0
         yield AgentContextUsage(min(history_limit, request_chars), request_tokens)
@@ -194,6 +195,9 @@ async def agent_loop(
                         answer, reasoning, calls = [], [], ()
                         replay = usage = None
                         finish_reason = None
+                        response_chars = 0
+                        reported_chars = 0
+                        request_tokens = initial_request_tokens
                         yield event
                     elif isinstance(event, (TokenUsage, ProviderCall)):
                         if isinstance(event, TokenUsage):
