@@ -174,11 +174,12 @@ class HttpOptimizerBackend:
 
     async def result_artifact(self, job: OptimizerJobPayload) -> "OptimizerArtifact":
         schedule_link = job.links.get("schedule")
-        if not isinstance(schedule_link, str) or not _is_relative_link(schedule_link):
+        target_url = _resolve_relative_link(self._base_url, schedule_link) if isinstance(schedule_link, str) else None
+        if target_url is None:
             raise OptimizerError("The optimizer did not provide a result download.")
         try:
             content = bytearray()
-            async with self._client.stream("GET", urljoin(self._base_url, schedule_link.lstrip("/"))) as response:
+            async with self._client.stream("GET", target_url) as response:
                 response.raise_for_status()
                 async for chunk in response.aiter_bytes():
                     if len(content) + len(chunk) > self._max_result_bytes:
@@ -268,7 +269,22 @@ def _is_trusted_http_host(host: str | None) -> bool:
         return False
 
 
-def _is_relative_link(link: str) -> bool:
-    """Keep a result download on the configured optimizer, which holds its bearer token."""
-    parsed = urlsplit(link)
-    return bool(link) and not parsed.scheme and not parsed.netloc
+def _resolve_relative_link(base_url: str, link: str) -> str | None:
+    """Resolve a result download path within the configured optimizer origin and base path."""
+    if not link or link.startswith("//") or any(ch.isspace() or ord(ch) < 0x20 or ch == "\\" for ch in link):
+        return None
+    stripped = link.lstrip("/")
+    if not stripped:
+        return None
+    for candidate in (link, stripped):
+        parsed = urlsplit(candidate)
+        if parsed.scheme or parsed.netloc:
+            return None
+    base = urlsplit(base_url)
+    resolved = urljoin(base_url, stripped)
+    target = urlsplit(resolved)
+    if target.scheme != base.scheme or target.netloc != base.netloc:
+        return None
+    if not target.path.startswith(base.path):
+        return None
+    return resolved
