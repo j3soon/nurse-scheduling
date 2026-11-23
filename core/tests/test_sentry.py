@@ -302,18 +302,36 @@ def test_init_sentry_keeps_fastapi_integrations_by_default(monkeypatch):
 
 def test_stream_token_redaction_decodes_parameter_names():
     query = "x=1&%74oken=live-secret&TOKEN=second-secret&x=2"
+    url = f"https://example.test/events?{query}"
     event = {
-        "request": {"query_string": query},
-        "contexts": {"trace": {"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}},
-        "spans": [{"data": {"http.query": query, "url.full": f"https://example.test/events?{query}"}}],
+        "request": {"query_string": query, "url": url},
+        "contexts": {"trace": {"data": {"http.query": query, "url.full": url}}},
+        "spans": [{"data": {"http.query": query, "url.full": url}}],
+        "breadcrumbs": {
+            "values": [
+                {
+                    "category": "httplib",
+                    "data": {"url": url, "url.full": url, "http.query": query, "query_string": query},
+                },
+            ]
+        },
     }
 
     redacted = _redact_stream_token(event, {})
     expected = "x=1&%74oken=[Filtered]&TOKEN=[Filtered]&x=2"
+    expected_url = f"https://example.test/events?{expected}"
     assert redacted["request"]["query_string"] == expected
-    for data in (redacted["contexts"]["trace"]["data"], redacted["spans"][0]["data"]):
+    assert redacted["request"]["url"] == expected_url
+    for data in (
+        redacted["contexts"]["trace"]["data"],
+        redacted["spans"][0]["data"],
+        redacted["breadcrumbs"]["values"][0]["data"],
+    ):
         assert data["http.query"] == expected
-        assert data["url.full"] == f"https://example.test/events?{expected}"
+        assert data["url.full"] == expected_url
+    crumb_data = redacted["breadcrumbs"]["values"][0]["data"]
+    assert crumb_data["url"] == expected_url
+    assert crumb_data["query_string"] == expected
 
 
 def test_init_sentry_keeps_shared_development_defaults(monkeypatch):

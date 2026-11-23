@@ -117,29 +117,44 @@ def _redact_stream_token(event: dict, _hint: dict) -> dict:
             parts.append(f"{name}=[Filtered]" if separator and unquote_plus(name).lower() == "token" else parameter)
         return "&".join(parts)
 
-    def redact_trace_data(data: Any) -> None:
+    def redact_url(url: str) -> str:
+        if "?" not in url:
+            return url
+        prefix, query = url.split("?", 1)
+        return f"{prefix}?{redact_query(query)}"
+
+    def redact_data(data: Any) -> None:
         if not isinstance(data, dict):
             return
-        if isinstance(data.get("http.query"), str):
-            data["http.query"] = redact_query(data["http.query"])
-        url = data.get("url.full")
-        if isinstance(url, str) and "?" in url:
-            prefix, query = url.split("?", 1)
-            data["url.full"] = f"{prefix}?{redact_query(query)}"
+        for key in ("http.query", "query_string"):
+            if isinstance(data.get(key), str):
+                data[key] = redact_query(data[key])
+        for key in ("url.full", "url"):
+            if isinstance(data.get(key), str):
+                data[key] = redact_url(data[key])
 
     request = event.get("request")
-    if isinstance(request, dict) and isinstance(request.get("query_string"), str):
-        request["query_string"] = redact_query(request["query_string"])
+    if isinstance(request, dict):
+        if isinstance(request.get("query_string"), str):
+            request["query_string"] = redact_query(request["query_string"])
+        if isinstance(request.get("url"), str):
+            request["url"] = redact_url(request["url"])
     contexts = event.get("contexts")
     if isinstance(contexts, dict):
         trace = contexts.get("trace")
         if isinstance(trace, dict):
-            redact_trace_data(trace.get("data"))
+            redact_data(trace.get("data"))
     spans = event.get("spans")
     if isinstance(spans, list):
         for span in spans:
             if isinstance(span, dict):
-                redact_trace_data(span.get("data"))
+                redact_data(span.get("data"))
+    breadcrumbs = event.get("breadcrumbs")
+    crumb_items = breadcrumbs.get("values") if isinstance(breadcrumbs, dict) else breadcrumbs
+    if isinstance(crumb_items, list):
+        for crumb in crumb_items:
+            if isinstance(crumb, dict):
+                redact_data(crumb.get("data"))
     return event
 
 
