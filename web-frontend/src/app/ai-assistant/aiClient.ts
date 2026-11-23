@@ -775,8 +775,7 @@ export function decodeEvent(eventType: string, payload: SsePayload): SessionEven
     emit({ type: 'stale', message });
   } else if (eventType === 'context_usage') {
     if (Number.isSafeInteger(payload.used_chars) && (payload.used_chars as number) >= 0
-      && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0
-      && (payload.used_chars as number) <= (payload.max_chars as number)) {
+      && Number.isSafeInteger(payload.max_chars) && (payload.max_chars as number) > 0) {
       const tokens: Pick<ContextUsage, 'usedTokens' | 'maxTokens' | 'estimated'> = {};
       if (Number.isSafeInteger(payload.used_tokens) && (payload.used_tokens as number) >= 0) {
         tokens.usedTokens = payload.used_tokens as number;
