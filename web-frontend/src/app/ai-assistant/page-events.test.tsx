@@ -560,6 +560,60 @@ describe('AiAssistantPage', () => {
     expect(await screen.findByText('Current answer.')).toBeInTheDocument();
   });
 
+  it('saves the event position of deferred review events when the foreground message fails', async () => {
+    const user = userEvent.setup();
+    let fail: ((error: unknown) => void) | undefined;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(() => {}));
+    mockSendMessage.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { fail = reject; }));
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fail).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls[0][1] as SessionStreamOptions;
+    act(() => {
+      const review = runEvents(stream, 'review');
+      review?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' });
+      review?.onEvent({ type: 'delta', text: 'Earlier review.' });
+      review?.onEvent({ type: 'done', runId: 'review' });
+      stream.onEventId?.(3);
+    });
+    await act(async () => fail?.(new MockAiHttpError('Server error', 500)));
+    expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.sessionEventId).toBe(3);
+    expect(JSON.stringify(stored.messages)).toContain('Earlier review.');
+  });
+
+  it('saves the event position of deferred review events when manual compaction fails', async () => {
+    const user = userEvent.setup();
+    let fail: ((error: unknown) => void) | undefined;
+    mockCompactSession.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { fail = reject; }));
+    mockRunEvents.mockImplementationOnce(async (_id, _q, callbacks) => {
+      callbacks.onEvent({ type: 'delta', text: 'Hello' });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 100, maxChars: 1000, usedTokens: 500, maxTokens: 10000, estimated: false } });
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hi');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Hello');
+    await user.click(await screen.findByRole('button', { name: /Compact/i }));
+    await waitFor(() => expect(fail).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      const review = runEvents(stream, 'review');
+      review?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' });
+      review?.onEvent({ type: 'delta', text: 'Earlier review.' });
+      review?.onEvent({ type: 'done', runId: 'review' });
+      stream.onEventId?.(9);
+    });
+    await act(async () => fail?.(new MockAiHttpError('Server error', 500)));
+    expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.sessionEventId).toBe(9);
+  });
+
   it('routes a terminal event received before the message acknowledgement to its foreground answer', async () => {
     const user = userEvent.setup();
     mockSendMessage.mockImplementationOnce(async () => {

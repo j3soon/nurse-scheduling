@@ -1126,6 +1126,8 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       } finally {
         controller.signal.removeEventListener('abort', aborted);
         eventRouterRef.current.finish(foreground);
+        // Finishing delivers any deferred events, so save their position too.
+        if (lifecycle.owns(operation)) setSessionEventId(lastSessionEventIdRef.current);
       }
       if (!lifecycle.owns(operation)) return;
       setMessages(previous => previous.map(message => (
@@ -1294,6 +1296,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       controller.signal.removeEventListener('abort', finishRun);
       eventRouterRef.current.finish(foreground);
       if (lifecycle.owns(operation)) {
+        setSessionEventId(lastSessionEventIdRef.current);
         setCompactionRequested(false);
         setIsReconnecting(false);
         if (currentRequestRef.current === request) currentRequestRef.current = null;
