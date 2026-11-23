@@ -3146,3 +3146,110 @@ def test_a_store_recovery_is_reported_so_the_silence_ends(monkeypatch):
             time.sleep(0.01)
 
     assert recoveries == [("worker.claim", 3)]
+
+
+def test_stream_events_handles_concurrent_job_deletion(monkeypatch):
+    with _client(start_background=False) as client:
+        job_id = _create(client).json()["id"]
+        controller = client.app.state.job_controller
+        controller.cancel_job(job_id)
+        original_read_events = controller.read_events
+
+        def read_events_then_delete(target_id: str, *, after_id=None):
+            events, _terminal = original_read_events(target_id, after_id=after_id)
+            controller.delete_job(target_id)
+            return events, True
+
+        monkeypatch.setattr(controller, "read_events", read_events_then_delete)
+        response = client.get(f"/optimize/{job_id}/events")
+        assert response.status_code == 200
+        assert "event: job.state_changed" in response.text
+
+
+def test_expire_worker_claims_skips_concurrently_deleted_job():
+    store = MemoryJobStore()
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    clock = [now]
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=4, max_retained=8),
+        retention_seconds=60,
+        worker_lease_seconds=30,
+        clock=lambda: clock[0],
+    )
+    lease1 = controller.register_worker("worker-1")
+    lease2 = controller.register_worker("worker-2")
+    job1 = controller.create_job(
+        input_name="a.yaml",
+        client_id="client-a",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"a",
+    )
+    job2 = controller.create_job(
+        input_name="b.yaml",
+        client_id="client-b",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"b",
+    )
+    claimed1 = controller.claim_next_job(lease1)
+    claimed2 = controller.claim_next_job(lease2)
+    assert claimed1 is not None and claimed2 is not None
+    assert {claimed1.id, claimed2.id} == {job1.id, job2.id}
+
+    clock[0] = now + timedelta(seconds=300)
+    original_find = store.find_jobs_without_live_workers
+
+    def find_and_delete_first(check_time):
+        candidates = original_find(check_time)
+        store.delete(candidates[0].id, expected_revision=candidates[0].revision)
+        return candidates
+
+    store.find_jobs_without_live_workers = find_and_delete_first  # type: ignore[method-assign]
+    expired = controller.expire_worker_claims()
+    assert len(expired) == 1
+    remaining_id = expired[0]
+    assert controller.get_job(remaining_id).state == JobState.FAILED
+
+
+def test_worker_keeps_running_when_job_disappears_before_failure_report(monkeypatch):
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=4, max_retained=8),
+        retention_seconds=60,
+        worker_lease_seconds=30,
+    )
+
+    worker = JobWorker(
+        controller,
+        SuccessfulRunner(),
+        worker_id="worker-survives-delete",
+        claim_poll_seconds=0.01,
+        worker_lease_seconds=30.0,
+        timeout_grace_seconds=5.0,
+    )
+    lease = controller.register_worker("worker-survives-delete")
+    job = controller.create_job(
+        input_name="a.yaml",
+        client_id="client-a",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"a",
+    )
+    claimed = controller.claim_next_job(lease)
+    assert claimed is not None and claimed.id == job.id
+    worker._ready.set()
+
+    def disappear_and_fail(*_args, **_kwargs):
+        store.delete(claimed.id, expected_revision=claimed.revision)
+        raise RuntimeError("boom after deletion")
+
+    monkeypatch.setattr("nurse_scheduling.server.jobs.worker.run_optimization_process", disappear_and_fail)
+    # _execute must handle JobNotFoundError from fail_job without raising into _run().
+    worker._execute(claimed, lease)
+    assert worker._ready.is_set()

@@ -565,7 +565,10 @@ class JobController:
                 did_expire = True
                 return failed, [self._state_event(failed, transition_time)], None
 
-            expired = self._update_job_with_retry(candidate.id, transition)
+            try:
+                expired = self._update_job_with_retry(candidate.id, transition)
+            except JobNotFoundError:
+                continue
             if did_expire:
                 expired_ids.append(expired.id)
                 self._log_terminal_job(expired)

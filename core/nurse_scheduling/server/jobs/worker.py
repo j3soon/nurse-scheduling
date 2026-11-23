@@ -470,6 +470,9 @@ class JobWorker:
             failure = JobFailure(code="optimization_failed", message=self._unexpected_error_formatter(error))
             try:
                 failed = self._controller.fail_job(job.id, failure, lease=lease)
+            except JobNotFoundError:
+                server_logger.warning("[server:worker] job disappeared while reporting failure job_id=%s", job.id)
+                return
             except Exception:
                 try:
                     capture_optimize_exception(job, content, error)
