@@ -2376,4 +2376,47 @@ describe('OptimizeAndExportPage backend authentication', () => {
 
     await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: 'http://localhost:9000' }]));
   });
+
+  it('opens with default backends when device storage is blocked', async () => {
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Blocked', 'SecurityError');
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
+  });
+
+  it('keeps migrated legacy backends when device storage cannot save them', async () => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      servers: [{ endpoint: 'http://localhost:9001' }],
+      selectedServerEndpoint: 'http://localhost:9001',
+    }));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (url: string) => respondWithHealthyBackend(String(url))
+    );
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('http://localhost:9001')).resolves.toBeInTheDocument();
+  });
+
+  it('keeps valid stored backends next to invalid entries', async () => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [null, 'bad-entry', { endpoint: 'http://localhost:9000' }],
+      selectedServerEndpoint: 'http://localhost:9000',
+    }));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (url: string) => respondWithHealthyBackend(String(url))
+    );
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('http://localhost:9000')).resolves.toBeInTheDocument();
+  });
 });

@@ -219,11 +219,15 @@ function toStoredServerOptions(
   };
 }
 
-function dedupeServerEntries(servers: StoredOptimizeServerEntry[]): OptimizeServerEntry[] {
+function isStoredServerEntry(value: unknown): value is Partial<StoredOptimizeServerEntry> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function dedupeServerEntries(servers: unknown[]): OptimizeServerEntry[] {
   const seenEndpoints = new Set<string>();
 
   return servers.reduce<OptimizeServerEntry[]>((entries, server) => {
-    if (typeof server.endpoint !== 'string') {
+    if (!isStoredServerEntry(server) || typeof server.endpoint !== 'string') {
       return entries;
     }
 
@@ -246,20 +250,21 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
     return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
   }
 
-  const stored = window.localStorage.getItem(SERVER_OPTIONS_STORAGE_KEY);
-  if (stored === null) {
-    return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
-  }
-
   try {
-    const parsed = JSON.parse(stored) as Partial<StoredOptimizeServerOptions>;
-    if (!Array.isArray(parsed.servers)) {
+    const stored = window.localStorage.getItem(SERVER_OPTIONS_STORAGE_KEY);
+    if (stored === null) {
+      return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
+    }
+
+    const parsed = JSON.parse(stored) as Partial<StoredOptimizeServerOptions> | null;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed) || !Array.isArray(parsed.servers)) {
       return { servers: createDefaultServerEntries(), selectedServerEndpoint: 'auto' };
     }
 
     const isLegacyStore = typeof parsed.appVersion !== 'string';
-    const storedServers = isLegacyStore
+    const storedServers: unknown[] = isLegacyStore
       ? parsed.servers.filter(server => (
+          !isStoredServerEntry(server) ||
           typeof server.endpoint !== 'string' ||
           normalizeEndpoint(server.endpoint) !== LOCAL_BACKEND_API_URL
         ))
@@ -295,14 +300,22 @@ function loadStoredServerOptions(): { servers: OptimizeServerEntry[]; selectedSe
 }
 
 function persistServerOptions(servers: OptimizeServerEntry[], selectedServerEndpoint: ServerSelection): void {
-  window.localStorage.setItem(
-    SERVER_OPTIONS_STORAGE_KEY,
-    JSON.stringify(toStoredServerOptions(servers, selectedServerEndpoint)),
-  );
+  try {
+    window.localStorage.setItem(
+      SERVER_OPTIONS_STORAGE_KEY,
+      JSON.stringify(toStoredServerOptions(servers, selectedServerEndpoint)),
+    );
+  } catch {
+    // Device storage can be blocked or full. Keep the settings in memory.
+  }
 }
 
 function deleteStoredServerOptions(): void {
-  window.localStorage.removeItem(SERVER_OPTIONS_STORAGE_KEY);
+  try {
+    window.localStorage.removeItem(SERVER_OPTIONS_STORAGE_KEY);
+  } catch {
+    // Device storage can be blocked.
+  }
 }
 
 function parseClaimedPerformance(value: unknown): ServerInfoResponse['claimed_performance'] {
