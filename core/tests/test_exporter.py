@@ -1289,3 +1289,37 @@ def test_schedule_month_prints_on_one_a4_page_wide(month_workbook):
     assert float(name.attrib["yMax"]) - float(name.attrib["yMin"]) >= 8
     assert "123456789012" in page
     assert "OFF (Total)" not in page
+
+
+def _single_day_spec(person_id: str, request_dates: str) -> bytes:
+    return (
+        "apiVersion: alpha\n"
+        "dates:\n"
+        "  range:\n"
+        "    startDate: '2026-10-01'\n"
+        "    endDate: '2026-10-01'\n"
+        "people:\n"
+        "  items:\n"
+        f'    - id: "{person_id}"\n'
+        "shiftTypes:\n"
+        "  items:\n"
+        "    - id: D\n"
+        "preferences:\n"
+        "  - type: at most one shift per day\n"
+        "  - type: shift request\n"
+        f'    person: ["{person_id}"]\n'
+        "    date: ['01']\n"
+        "    shiftType: [OFF]\n"
+        "    weight: .inf\n"
+        "  - type: shift request\n"
+        f'    person: ["{person_id}"]\n'
+        f"    date: {request_dates}\n"
+        "    shiftType: [D]\n"
+        "    weight: 5\n"
+    ).encode()
+
+
+def test_exporter_counts_a_repeated_request_date_once_in_cell_notes():
+    # The objective counts the request once, so the note must report the same weight.
+    res = schedule(_single_day_spec("P1", "['01', '01']"), solver="ortools/cp-sat", prettify=True)
+    assert res.cell_export_info["comments"][(3, 2)] == ["Weight of unmet single-style request: 5"]

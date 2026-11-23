@@ -315,12 +315,13 @@ def _iter_matching_cell_preferences(
         if not any(s in target_shift_types for s in compiled_pref.shift_types):
             continue
 
+        seen_cells: set[tuple[int, int]] = set()
         for date_target in compiled_pref.date_targets:
             for d in date_target.dates:
                 if d not in target_dates:
                     continue
                 for p in compiled_pref.people:
-                    if p not in target_people:
+                    if p not in target_people or (d, p) in seen_cells:
                         continue
                     satisfied = _is_shift_request_satisfied(
                         ctx,
@@ -336,6 +337,7 @@ def _iter_matching_cell_preferences(
                         request_shape=date_target.request_shape,
                         satisfied=satisfied,
                     ):
+                        seen_cells.add((d, p))
                         yield d, p, pref, compiled_pref.requested_shift_type
 
 
