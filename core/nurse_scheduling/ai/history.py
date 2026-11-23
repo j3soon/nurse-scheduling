@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 import anyio
 import psycopg
@@ -359,6 +360,21 @@ class ChatHistory:
                 "UPDATE chat_runs SET status = %s, error_code = %s, committed = %s, finished_at = now() WHERE id = %s",
                 (status, "service_restart" if kind is None else None, committed, run_id),
             )
+
+    def session_export_authorization(self, session_id: str) -> tuple[str, str | None] | None:
+        """Return `(owner_hash, auth_credential_id)` for an unexpired session, or `None`."""
+        try:
+            UUID(session_id)
+        except ValueError:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT owner_hash, auth_credential_id FROM chat_sessions WHERE id = %s AND expires_at > now()",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row[0], row[1]
 
     def load_session(self, session_id: str, owner: str) -> dict[str, Any] | None:
         """Load an unexpired owned session, its conversation, and the runs whose terminal event was not stored.
