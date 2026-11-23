@@ -19,12 +19,14 @@
 
 # This file is mostly AI generated.
 
+import lzma
 import zlib
 from io import BytesIO
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from zipfile import BadZipFile, ZipFile
 
 WORKSPACE_DOWNLOAD = "/workspace/download.zip"
+MAX_DOWNLOAD_ZIP_ENTRIES = 10_000
 
 
 def validate_download_zip(content: bytes, max_bytes: int) -> None:
@@ -33,17 +35,26 @@ def validate_download_zip(content: bytes, max_bytes: int) -> None:
         raise ValueError("The generated ZIP exceeds the download size limit.")
     try:
         with ZipFile(BytesIO(content)) as archive:
-            if sum(item.file_size for item in archive.infolist()) > max_bytes:
+            entries = archive.infolist()
+            if len(entries) > MAX_DOWNLOAD_ZIP_ENTRIES:
+                raise ValueError("The ZIP contains too many entries.")
+            if sum(item.file_size for item in entries) > max_bytes:
                 raise ValueError("The ZIP contents exceed the uncompressed size limit.")
             total = 0
-            for item in archive.infolist():
-                path = PurePosixPath(item.filename.replace("\\", "/"))
-                if path.is_absolute() or ".." in path.parts or (item.external_attr >> 16) & 0o170000 == 0o120000:
+            for item in entries:
+                normalized = item.filename.replace("\\", "/")
+                path = PurePosixPath(normalized)
+                if (
+                    path.is_absolute()
+                    or bool(PureWindowsPath(item.filename).drive)
+                    or ".." in path.parts
+                    or (item.external_attr >> 16) & 0o170000 == 0o120000
+                ):
                     raise ValueError("The ZIP must contain only relative file paths, without symbolic links.")
                 with archive.open(item) as member:
                     while chunk := member.read(65536):
                         total += len(chunk)
                         if total > max_bytes:
                             raise ValueError("The ZIP contents exceed the uncompressed size limit.")
-    except (BadZipFile, RuntimeError, NotImplementedError, OSError, zlib.error) as exc:
+    except (BadZipFile, RuntimeError, NotImplementedError, OSError, EOFError, zlib.error, lzma.LZMAError) as exc:
         raise ValueError("The generated file is not a readable ZIP archive.") from exc
