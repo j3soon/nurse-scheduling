@@ -22,12 +22,12 @@ if ! command -v uvicorn >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "${AI_PROVIDER_API_KEY:-}" && -t 0 ]]; then
+if [[ -z "${AI_PROVIDER_API_KEY:-}" && -z "${AI_PROVIDER_PROFILES:-}" && -t 0 ]]; then
   read -rsp "AI provider API key: " AI_PROVIDER_API_KEY
   echo
 fi
-if [[ -z "${AI_PROVIDER_API_KEY:-}" ]]; then
-  echo "AI_PROVIDER_API_KEY is required." >&2
+if [[ -z "${AI_PROVIDER_API_KEY:-}" && -z "${AI_PROVIDER_PROFILES:-}" ]]; then
+  echo "AI_PROVIDER_API_KEY or AI_PROVIDER_PROFILES is required." >&2
   exit 1
 fi
 if [[ -z "${AI_PROVIDER_BASE_URL:-}" ]]; then
