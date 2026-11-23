@@ -686,7 +686,8 @@ def _recover_run_context(connection, session_id: str, run_id: str) -> None:
 def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) -> None:
     """Save entries by sequence number.
 
-    A later copy of a run's entry can change only its interruption state. Other conflicts keep the first copy.
+    A later copy of a run's entry can change only its interruption or context omission state.
+    Other conflicts keep the first copy.
     """
     rows = []
     for seq, run_id, entry in entries:
@@ -698,7 +699,8 @@ def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) ->
                 "INSERT INTO chat_session_entries AS e (session_id, seq, run_id, type, payload) "
                 "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (session_id, seq) DO UPDATE SET payload = EXCLUDED.payload "
                 "WHERE e.run_id = EXCLUDED.run_id AND e.type = EXCLUDED.type AND e.payload <> EXCLUDED.payload "
-                "AND e.payload - 'stop_reason' - 'valid' = EXCLUDED.payload - 'stop_reason' - 'valid'",
+                "AND e.payload - 'stop_reason' - 'valid' - 'context_omitted' "
+                "= EXCLUDED.payload - 'stop_reason' - 'valid' - 'context_omitted'",
                 rows,
             )
 
