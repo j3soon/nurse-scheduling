@@ -43,19 +43,19 @@ elif [[ "$run_full_suite" == false ]]; then
     web-frontend/e2e web-frontend/src web-frontend/public; then
     run_full_suite=true
   fi
-fi
 
-# Export rendering crosses Python, frontend components, and their shared CSS.
-mapfile -d '' rendering_changes < <(
-  affected_changed_files "$ROOT_DIR" thirdparty/opencc
-  affected_changed_files "$ROOT_DIR" ':(glob)core/nurse_scheduling/ai/chat_*'
-  affected_changed_files "$ROOT_DIR" core/tests/ai_fixtures/chat-rendering.json
-  affected_changed_files "$ROOT_DIR" core/tests/chat_rendering_helper.py
-  affected_changed_files "$ROOT_DIR" web-frontend/src/app/ai-assistant
-  affected_changed_files "$ROOT_DIR" web-frontend/src/app/globals.css
-)
-if ((${#rendering_changes[@]} > 0)); then
-  specs+=("e2e/ai-assistant-rendering.spec.ts")
+  # Export rendering crosses Python, frontend components, and their shared CSS.
+  mapfile -d '' rendering_changes < <(
+    affected_changed_files "$ROOT_DIR" thirdparty/opencc
+    affected_changed_files "$ROOT_DIR" ':(glob)core/nurse_scheduling/ai/chat_*'
+    affected_changed_files "$ROOT_DIR" core/tests/ai_fixtures/chat-rendering.json
+    affected_changed_files "$ROOT_DIR" core/tests/chat_rendering_helper.py
+    affected_changed_files "$ROOT_DIR" web-frontend/src/app/ai-assistant
+    affected_changed_files "$ROOT_DIR" web-frontend/src/app/globals.css
+  )
+  if ((${#rendering_changes[@]} > 0)); then
+    specs+=("e2e/ai-assistant-rendering.spec.ts")
+  fi
 fi
 
 if ((${#specs[@]} > 0)); then

@@ -236,6 +236,12 @@ assert_line "$output" 'test: tests/test_ai_history.py::selected_case'
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list --full)"
 assert_line "$output" 'tests: full Playwright suite (isolated server)'
 
+write_fixture web-frontend/src/app/ai-assistant/page.tsx
+output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list web-frontend/e2e/page.spec.ts)"
+assert_line "$output" 'spec: e2e/page.spec.ts'
+assert_no_line "$output" 'spec: e2e/ai-assistant-rendering.spec.ts'
+rm -- "$fixture_root/web-frontend/src/app/ai-assistant/page.tsx"
+
 set +e
 output="$("$fixture_root/scripts/test_core_affected.sh" --list --base missing-ref 2>&1)"
 status=$?
