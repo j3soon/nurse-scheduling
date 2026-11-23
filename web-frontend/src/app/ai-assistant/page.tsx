@@ -652,6 +652,8 @@ export default function AiAssistantPage() {
     if (endpoint !== aiEndpoint) {
       setSelection(undefined);
       setAuthRequired(false);
+      setModelSelectionEnabled(false);
+      setSavedChatExportEnabled(false);
       setFileCapability(DISABLED_FILE_CAPABILITY);
       setBackendVersion(undefined);
     }

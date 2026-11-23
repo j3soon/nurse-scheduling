@@ -563,4 +563,23 @@ describe('AiAssistantPage', () => {
   });
 
 
+  it('clears model selection and chat export when switching to an offline AI server', async () => {
+    mockGetCapabilities
+      .mockResolvedValueOnce({ ...defaultCapabilities, model_selection: true, saved_chat_export: true })
+      .mockRejectedValueOnce(new Error('Server unreachable'));
+    const user = userEvent.setup();
+    render(<AiAssistantPage />);
+    expect(await screen.findByLabelText('AI model')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.clear(screen.getByLabelText('Custom AI server URL'));
+    await user.type(screen.getByLabelText('Custom AI server URL'), 'https://offline.example');
+    await user.click(screen.getByRole('button', { name: 'Use custom' }));
+
+    await waitFor(() => expect(screen.queryByLabelText('AI model')).not.toBeInTheDocument());
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Retry offline');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('button', { name: 'Export Chat' })).toBeDisabled();
+  });
 });
