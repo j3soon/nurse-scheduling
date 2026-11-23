@@ -89,14 +89,22 @@ export function useSessionEventStream() {
         reset: resetReplay,
         onEventId: id => {
           if (!ownsReader()) return;
+          // Keep asking for a reset replay until the server delivers part of one.
+          resetReplay = false;
           cursor.current = id;
           retryCount.current = 0;
           options.onEventId(id);
         },
-        onEvent: event => { if (ownsReader()) options.onEvent(event); },
+        onEvent: event => {
+          if (!ownsReader()) return;
+          if (event.type === 'session_reset') resetReplay = false;
+          options.onEvent(event);
+        },
       }, controller.signal, options.authToken, options.endpoint);
-      resetReplay = false;
-      void stream.then(reconnect, error => {
+      void stream.then(() => {
+        if (ownsReader()) resetReplay = false;
+        reconnect();
+      }, error => {
         if (!ownsReader()) return;
         options.onError(error);
         reconnect();

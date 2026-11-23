@@ -93,4 +93,26 @@ describe('session event connection ownership', () => {
     await act(() => vi.advanceTimersByTimeAsync(60000));
     expect(readers).toHaveLength(1);
   });
+
+  it('preserves resetReplay across failed initial connect attempts until confirmed', async () => {
+    vi.useFakeTimers();
+    const calls: SessionStreamOptions[] = [];
+    let attempt = 0;
+    stream.mockImplementation((_id, callbacks) => {
+      calls.push(callbacks);
+      attempt += 1;
+      if (attempt === 1) return Promise.reject(new Error('network drop'));
+      return new Promise(() => {});
+    });
+    const options = {
+      sessionId: 'session', endpoint: '/ai', authToken: null as string | null,
+      onEvent: vi.fn(), onEventId: vi.fn(), onDisconnect: vi.fn(), onError: vi.fn(),
+    };
+    const { result } = renderHook(useSessionEventStream);
+    act(() => result.current.connect({ ...options, resetReplay: true }));
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(calls).toHaveLength(2);
+    expect(calls[0].reset).toBe(true);
+    expect(calls[1].reset).toBe(true);
+  });
 });
