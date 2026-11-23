@@ -1256,4 +1256,26 @@ describe('provider cost events', () => {
     await streamSessionEvents('s', { onEvent: event => events.push(event) }, new AbortController().signal, null);
     expect(events.at(-1)).toEqual({ type: 'cost_summary', conversation: totals });
   });
+
+  it('omits non-IANA browser timezones from session and queue requests', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'session-tz' }) })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const resolvedOptionsSpy = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValueOnce({ timeZone: '+08:00' } as Intl.ResolvedDateTimeFormatOptions)
+      .mockReturnValueOnce({ timeZone: 'Etc/Unknown' } as Intl.ResolvedDateTimeFormatOptions);
+
+    try {
+      await createSession('people: []\n', null, '/ai');
+      await queueMessage('session-tz', 'msg-1', 'Follow up', null, '/ai');
+    } finally {
+      resolvedOptionsSpy.mockRestore();
+    }
+
+    const createBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const queueBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(createBody).not.toHaveProperty('frontend_timezone');
+    expect(queueBody).not.toHaveProperty('frontend_timezone');
+  });
 });

@@ -437,6 +437,14 @@ export async function getBackendVersion(signal?: AbortSignal, endpoint = getAiBa
   }
 }
 
+// The AI server accepts only IANA timezone names. A browser reports an offset such
+// as "+08:00", or "Etc/Unknown", when it cannot name the system timezone.
+function frontendTimezoneField(): { frontend_timezone?: string } {
+  const timezone: unknown = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return typeof timezone === 'string' && /^[A-Za-z]/.test(timezone) && timezone !== 'Etc/Unknown'
+    ? { frontend_timezone: timezone } : {};
+}
+
 export async function createSession(
   scheduleSpecYaml: string,
   authToken: string | null,
@@ -452,7 +460,7 @@ export async function createSession(
       selection,
       frontend_version: CURRENT_APP_VERSION,
       ai_endpoint: endpoint,
-      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...frontendTimezoneField(),
     }),
   });
   if (!response.ok) throw await responseError(response);
@@ -824,7 +832,7 @@ async function postMessage(
       message_id: messageId,
       selection,
       frontend_version: CURRENT_APP_VERSION,
-      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...frontendTimezoneField(),
     }),
     signal,
   });
@@ -1002,7 +1010,7 @@ export async function queueMessage(
       message_id: messageId,
       message,
       frontend_version: CURRENT_APP_VERSION,
-      frontend_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ...frontendTimezoneField(),
     }),
   });
   if (!response.ok) throw await responseError(response);
