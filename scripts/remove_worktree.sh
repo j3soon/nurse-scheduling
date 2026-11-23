@@ -91,6 +91,17 @@ hash_file() {
   fi
 }
 
+copy_staging_env() {
+  local source=$1 target=$2
+  if [[ -f $target ]]; then
+    # Keep the main file's mode and owner.
+    cat -- "$source" > "$target"
+  else
+    mkdir -p -- "${target%/*}" || return 1
+    cp -p -- "$source" "$target"
+  fi
+}
+
 # Print the names of settings that differ between two env files. Never print values.
 changed_keys() {
   awk '
@@ -122,12 +133,13 @@ if [[ -z $worktree_hash || $worktree_hash == "$main_hash" ]]; then
 elif [[ $worktree_hash == "$copied_hash" ]]; then
   echo "Only the main clone changed $env_file after the copy. Keeping the main copy."
 elif [[ $env_choice == update ]]; then
-  if [[ -f $main_env ]]; then
-    # Keep the main file's mode and owner.
-    cat -- "$worktree_env" > "$main_env"
-  else
-    mkdir -p -- "${main_env%/*}"
-    cp -p -- "$worktree_env" "$main_env"
+  if ! copy_staging_env "$worktree_env" "$main_env"; then
+    {
+      echo "Could not update the main clone's $env_file. It may be incomplete."
+      echo 'The checkout was kept. Retry with --update-env-staging,'
+      echo 'or restore the main file from a backup before using --keep-env-staging.'
+    } >&2
+    exit 1
   fi
   echo "Updated the main clone's $env_file from the checkout."
 elif [[ $env_choice == keep ]]; then

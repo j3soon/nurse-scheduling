@@ -42,8 +42,8 @@ class AgentWorktreeTests(unittest.TestCase):
     def add(self, *args, cwd=None, env=None):
         return self.run_script(HELPER, *args, cwd=cwd, env=env)
 
-    def remove(self, *args):
-        return self.run_script(REMOVER, *args)
+    def remove(self, *args, env=None):
+        return self.run_script(REMOVER, *args, env=env)
 
     def run_script(self, script, *args, cwd=None, env=None):
         return subprocess.run(
@@ -204,6 +204,45 @@ class AgentWorktreeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Only the main clone changed", result.stdout)
         self.assertEqual(main_env.read_text(encoding="utf-8"), "TOKEN=rotated\n")
+
+    def test_remove_explains_how_to_recover_from_a_partial_staging_env_write(self):
+        self.git("branch", "dev")
+        main_env = self.write_staging_env(self.root, "TOKEN=old\n")
+        self.assertEqual(self.add("fix/env").returncode, 0)
+        checkout = self.root / ".worktrees/fix/env"
+        changed = "TOKEN=new\n"
+        worktree_env = self.write_staging_env(checkout, changed)
+
+        shim_dir = Path(self.temporary.name) / "bin"
+        shim_dir.mkdir()
+        shim = shim_dir / "cat"
+        shim.write_text(
+            '#!/bin/sh\n'
+            'if [ "${2:-}" = "$WORKTREE_TEST_STAGING_ENV" ]; then printf "TOKEN="; exit 1; fi\n'
+            'exec "$WORKTREE_TEST_REAL_CAT" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        result = self.remove(
+            "fix/env",
+            "--update-env-staging",
+            env={
+                **os.environ,
+                "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}",
+                "WORKTREE_TEST_REAL_CAT": shutil.which("cat"),
+                "WORKTREE_TEST_STAGING_ENV": str(worktree_env),
+            },
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), "TOKEN=")
+        self.assertEqual(worktree_env.read_text(encoding="utf-8"), changed)
+        self.assertIn("It may be incomplete.", result.stderr)
+        self.assertIn("restore the main file from a backup before using --keep-env-staging", result.stderr)
+
+        result = self.remove("fix/env", "--update-env-staging")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), changed)
+        self.assertFalse(checkout.exists())
 
 
 if __name__ == "__main__":
