@@ -227,3 +227,8 @@ def test_brackets_in_a_comment_are_not_nesting():
 def test_load_yaml_requires_top_level_mapping(content):
     with pytest.raises(InputValidationError, match="top-level mapping"):
         _load_yaml(content)
+
+
+def test_load_yaml_wraps_invalid_calendar_dates_as_input_validation_error():
+    with pytest.raises(InputValidationError, match="Invalid YAML value"):
+        _load_yaml(b"apiVersion: alpha\ndates:\n  range:\n    startDate: 2025-02-30\n    endDate: 2025-03-01\n")

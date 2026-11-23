@@ -1520,6 +1520,11 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
         ),
         ("non-mapping document", "$0", "top-level mapping"),
         (
+            "invalid calendar date",
+            _INVALID_INPUT_SCENARIO.replace("startDate: 2026-05-14", "startDate: 2026-02-30"),
+            "Invalid YAML value",
+        ),
+        (
             "unsupported api version",
             _INVALID_INPUT_SCENARIO.replace("apiVersion: alpha", "apiVersion: beta"),
             "Unsupported API version: beta",

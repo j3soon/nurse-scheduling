@@ -133,7 +133,10 @@ def _load_yaml(content: bytes, *, reject_aliases: bool = False) -> dict[str, Any
     # Use ruamel.yaml instead of PyYAML to support YAML 1.2
     # This avoids the auto-conversion of special strings such as
     # `Off` into boolean value `False`.
-    data = YAML(typ="safe").load(stream)
+    try:
+        data = YAML(typ="safe").load(stream)
+    except ValueError as error:
+        raise InputValidationError(f"Invalid YAML value: {error}") from error
     if not isinstance(data, dict):
         raise InputValidationError("Schedule Spec YAML must contain a top-level mapping")
     return data
