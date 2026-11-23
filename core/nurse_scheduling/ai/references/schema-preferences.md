@@ -207,8 +207,8 @@ Rules:
 - `countShiftTypes` must resolve to at least one shift type.
 - `x = T` means exactly the target count. The inequality expressions set minimum or maximum counts.
 - `target` must be non-negative.
-- Use `weight: -.inf` for a hard exact or inequality constraint.
-- For `|x - T|^2`, `weight` must be non-positive or `-.inf`. Positive and `.inf` weights are rejected.
+- For `x = T`, `x >= T`, `x <= T`, `x > T`, and `x < T`, a positive `weight` encourages the relation and `weight: .inf` enforces it as a hard constraint (`weight: -.inf` forbids it).
+- For `|x - T|^2`, `weight` must be non-positive or `-.inf` (`-.inf` enforces `x = T`). Positive and `.inf` weights are rejected.
 - For how many people a shift type needs on a date, use `shift type requirement` instead. A staffing level is not a per-person shift total.
 - Coefficients are a list of unique 2-item lists, not a mapping or a list of strings. Each selected shift type may be covered once.
 
@@ -221,7 +221,7 @@ preferences:
     countShiftTypes: [N]
     expression: x = T
     target: 4
-    weight: -.inf
+    weight: .inf
 
 This example is validated and authoritative for this shape. Do not search schedule-spec.yaml for another schema example. Read only enough Schedule Spec text to preserve values and locate the edit anchor. If the user requested a change and you have that anchor, make the edit next.
 
