@@ -1188,8 +1188,8 @@ probes work and the frontend can discover authentication and attachment limits.
 Capabilities reports whether bearer auth is active. When either AI key setting
 is set, every session route requires `Authorization: Bearer <key>` and
 returns `401` when the credential is missing or wrong. Native runs may leave the
-key settings unset to serve locally without auth. Docker Compose sets
-`AI_AUTH_REQUIRED=true` on the service, so its env file must explicitly set
+key settings unset to serve locally without auth. The API images and Docker
+Compose set `AI_AUTH_REQUIRED=true`, so a deployment must explicitly set
 `AI_AUTH_REQUIRED=false` and leave both key settings empty to serve without
 authentication. Required mode refuses to start with a missing, blank, shorter
 than 16 character, or non-ASCII key. `AI_AUTH_TOKEN` configures one shared credential.
