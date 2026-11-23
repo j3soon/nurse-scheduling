@@ -298,6 +298,29 @@ describe('applyReferencesForIdDeletion', () => {
     });
   });
 
+  it('omits coefficient arrays when all referenced shift types are deleted', () => {
+    const initialState = createState();
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = ['D', 'N'];
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftTypeCoefficients = [['D', 2]];
+    (initialState.preferences[3] as ShiftCountPreference).countShiftTypeCoefficients = [['D', 2]];
+    initialState.export!.extraColumns![0] = {
+      type: 'count',
+      header: 'D Count',
+      countShiftTypes: ['D', 'N'],
+      countShiftTypeCoefficients: [['D', 2]],
+      countDates: ['2026-01-01'],
+    };
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.SHIFT_TYPES, ['D']);
+    const requirement = state.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as ShiftTypeRequirementsPreference;
+    const count = state.preferences.find(pref => pref.type === SHIFT_COUNT) as ShiftCountPreference;
+    const extraColumn = state.export?.extraColumns?.[0];
+
+    expect(requirement).not.toHaveProperty('shiftTypeCoefficients');
+    expect(count).not.toHaveProperty('countShiftTypeCoefficients');
+    expect(extraColumn).not.toHaveProperty('countShiftTypeCoefficients');
+  });
+
   it('removes IDs inside nested preference reference groups', () => {
     const initialState = createState();
     (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = [['D', 'N']] as unknown as string[];

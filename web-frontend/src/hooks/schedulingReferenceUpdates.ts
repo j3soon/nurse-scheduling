@@ -214,9 +214,14 @@ export const applyPreferencesForIdDeletion = (
           [fieldName]: filterReferenceIds((pref as ShiftTypeRequirementsPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.shiftTypeCoefficients) {
-          updatedPref.shiftTypeCoefficients = updatedPref.shiftTypeCoefficients.filter(
+          const remaining = updatedPref.shiftTypeCoefficients.filter(
             ([id]) => !deletedIdsSet.has(id)
           );
+          if (remaining.length > 0) {
+            updatedPref.shiftTypeCoefficients = remaining;
+          } else {
+            delete updatedPref.shiftTypeCoefficients;
+          }
         }
         return updatedPref;
       } else if (pref.type === SHIFT_REQUEST) {
@@ -238,9 +243,14 @@ export const applyPreferencesForIdDeletion = (
           [fieldName]: filterReferenceIds((pref as ShiftCountPreference)[fieldName] as ReferenceIdTree, deletedIdsSet)
         };
         if (dataType === DataType.SHIFT_TYPES && updatedPref.countShiftTypeCoefficients) {
-          updatedPref.countShiftTypeCoefficients = updatedPref.countShiftTypeCoefficients.filter(
+          const remaining = updatedPref.countShiftTypeCoefficients.filter(
             ([id]) => !deletedIdsSet.has(id)
           );
+          if (remaining.length > 0) {
+            updatedPref.countShiftTypeCoefficients = remaining;
+          } else {
+            delete updatedPref.countShiftTypeCoefficients;
+          }
         }
         return updatedPref;
       } else if (pref.type === SHIFT_AFFINITY) {
@@ -336,12 +346,14 @@ export const applyExportLayoutForIdDeletion = (
             return { ...rule, countDates: filterIds(rule.countDates) };
           }
           if (dataType === DataType.SHIFT_TYPES) {
+            const { countShiftTypeCoefficients, ...restRule } = rule;
+            const remaining = countShiftTypeCoefficients?.filter(
+              ([id]) => !deletedIdsSet.has(id)
+            );
             return {
-              ...rule,
+              ...restRule,
               countShiftTypes: filterIds(rule.countShiftTypes),
-              countShiftTypeCoefficients: rule.countShiftTypeCoefficients?.filter(
-                ([id]) => !deletedIdsSet.has(id)
-              ),
+              ...(remaining && remaining.length > 0 ? { countShiftTypeCoefficients: remaining } : {}),
             };
           }
           return rule;
