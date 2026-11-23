@@ -145,7 +145,7 @@ class UsageReportSettings:
         """Load and validate reporter configuration."""
         transport = os.getenv("USAGE_REPORT_TRANSPORT", "stdout").strip().lower()
         subject = _validated_subject_template(os.getenv("USAGE_REPORT_SUBJECT", DEFAULT_USAGE_REPORT_SUBJECT))
-        mailgun_api_url = os.getenv("MAILGUN_API_URL", DEFAULT_MAILGUN_API_URL).rstrip("/")
+        mailgun_api_url = (os.getenv("MAILGUN_API_URL") or "").strip().rstrip("/") or DEFAULT_MAILGUN_API_URL
         if transport == "mailgun":
             mailgun_api_url = _validated_mailgun_api_url(mailgun_api_url)
         settings = cls(

@@ -1175,3 +1175,25 @@ def test_mailgun_transport_sends_plain_text_job_table(monkeypatch, redis_client,
     assert post.call_args.kwargs["files"]["to"] == (None, "operator@example.com")
     assert "private-client-id" in post.call_args.kwargs["files"]["text"][1]
     assert "private-filename.yaml" not in post.call_args.kwargs["files"]["text"][1]
+
+
+def test_reporter_treats_empty_mailgun_api_url_from_env_example_as_default(monkeypatch, caplog):
+    monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "stdout")
+    monkeypatch.setenv("MAILGUN_API_URL", "")
+    monkeypatch.setenv("MAILGUN_API_KEY", "")
+    monkeypatch.setenv("MAILGUN_DOMAIN", "")
+    monkeypatch.setenv("MAILGUN_FROM", "")
+    monkeypatch.setenv("MAILGUN_TO", "")
+
+    with caplog.at_level("WARNING", logger="nurse_scheduling.usage_report"):
+        stdout_settings = UsageReportSettings.from_env()
+    assert stdout_settings.mailgun_api_url == "https://api.mailgun.net/v3"
+    assert caplog.records == []
+
+    monkeypatch.setenv("USAGE_REPORT_TRANSPORT", "mailgun")
+    monkeypatch.setenv("MAILGUN_API_KEY", "secret-key")
+    monkeypatch.setenv("MAILGUN_DOMAIN", "mg.example.com")
+    monkeypatch.setenv("MAILGUN_FROM", "Reports <reports@mg.example.com>")
+    monkeypatch.setenv("MAILGUN_TO", "operator@example.com")
+    mailgun_settings = UsageReportSettings.from_env()
+    assert mailgun_settings.mailgun_api_url == "https://api.mailgun.net/v3"
