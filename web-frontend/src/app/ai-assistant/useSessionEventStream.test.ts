@@ -115,4 +115,20 @@ describe('session event connection ownership', () => {
     expect(calls[0].reset).toBe(true);
     expect(calls[1].reset).toBe(true);
   });
+
+  it('stops reconnecting when onError returns false while keeping token identity until changed', async () => {
+    vi.useFakeTimers();
+    stream.mockRejectedValue(new Error('Unauthorized'));
+    const options = {
+      sessionId: 'session', endpoint: '/ai', authToken: 'bad-token' as string | null,
+      onEvent: vi.fn(), onEventId: vi.fn(), onDisconnect: vi.fn(), onError: vi.fn(() => false),
+    };
+    const { result } = renderHook(useSessionEventStream);
+    act(() => result.current.connect(options));
+    await act(() => vi.advanceTimersByTimeAsync(60000));
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(options.onError).toHaveBeenCalledTimes(1);
+    expect(result.current.connected('session', 'bad-token', '/ai')).toBe(true);
+    expect(result.current.connected('session', 'good-token', '/ai')).toBe(false);
+  });
 });

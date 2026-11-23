@@ -959,4 +959,26 @@ describe('AiAssistantPage', () => {
     expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
     expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });
+
+  it('marks the conversation unavailable and stops reconnecting when the event stream returns 404', async () => {
+    const user = userEvent.setup();
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failStream = reject;
+    }));
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(failStream).toBeDefined());
+
+    act(() => failStream(new MockAiHttpError('Session not found', 404)));
+
+    await expect(
+      screen.findByText('This chat is no longer available on the AI server. Start a new chat to continue.')
+    ).resolves.toBeInTheDocument();
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
+
+
 });

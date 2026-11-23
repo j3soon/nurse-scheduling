@@ -640,12 +640,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
 
-  const markConversationUnavailable = (notice: string) => {
+  const markConversationUnavailable = useCallback((notice: string) => {
     resetRuntime();
     setConversationUnavailable(true);
     setSessionNotice(notice);
     clearStoredConversation();
-  };
+  }, [resetRuntime]);
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
     const beginBackgroundMessage = (runId: string) => {
@@ -804,10 +804,18 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
       onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
-        if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
+        if (streamError instanceof AiHttpError && streamError.status === 404) {
+          markConversationUnavailable('This chat is no longer available on the AI server. Start a new chat to continue.');
+          return false;
+        }
+        // Retry a rejected token only after the user enters another one.
+        if (isAuthenticationError(streamError)) {
+          reportRequestError(streamError, 'The AI session could not reconnect.');
+          return false;
+        }
       },
     });
-  }, [applyRunSchedule, authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
+  }, [applyRunSchedule, authToken, lifecycle, markConversationUnavailable, reportRequestError, updateContextUsage, sessionEvents, setError]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;

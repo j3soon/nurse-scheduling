@@ -31,7 +31,8 @@ interface ConnectionOptions {
   onEvent: SessionEventHandler;
   onEventId: (id: number) => void;
   onDisconnect: () => void;
-  onError: (error: unknown) => void;
+  // Return false to stop retrying. The connection record stays until its options change.
+  onError: (error: unknown) => boolean | void;
 }
 
 interface Connection {
@@ -106,8 +107,10 @@ export function useSessionEventStream() {
         reconnect();
       }, error => {
         if (!ownsReader()) return;
-        options.onError(error);
-        reconnect();
+        const shouldRetry = options.onError(error) !== false;
+        if (!ownsReader()) return;
+        if (shouldRetry) reconnect();
+        else current.controller = null;
       });
     };
     open();
