@@ -359,3 +359,21 @@ def test_model_rejects_unsupported_backend_semantics(mutate, message):
 
     with pytest.raises(ValueError, match=message):
         ScheduleSpec.model_validate(payload)
+
+
+def test_export_weight_range_rejects_nan():
+    payload = _base_payload()
+    payload["export"] = {
+        "formatting": [
+            {
+                "type": "cell",
+                "people": ["ALL"],
+                "dates": ["ALL"],
+                "shiftTypes": ["ALL"],
+                "backgroundColor": "#ffffff",
+                "when": {"preference": {"types": ["shift request"], "weightRange": [float("nan"), 10]}},
+            }
+        ]
+    }
+    with pytest.raises(ValueError, match="weightRange"):
+        ScheduleSpec.model_validate(payload)
