@@ -1323,3 +1323,16 @@ def test_exporter_counts_a_repeated_request_date_once_in_cell_notes():
     # The objective counts the request once, so the note must report the same weight.
     res = schedule(_single_day_spec("P1", "['01', '01']"), solver="ortools/cp-sat", prettify=True)
     assert res.cell_export_info["comments"][(3, 2)] == ["Weight of unmet single-style request: 5"]
+
+
+def test_exporter_removes_control_characters_that_worksheets_reject():
+    from nurse_scheduling.exporter import export_to_excel
+
+    res = schedule(_single_day_spec("P1\\x07", "['01']"), solver="ortools/cp-sat", prettify=True)
+    out = BytesIO()
+    export_to_excel(res.dataframe, out, res.cell_export_info)
+    wb = load_workbook(BytesIO(out.getvalue()))
+    try:
+        assert wb.active["A3"].value == "P1"
+    finally:
+        wb.close()

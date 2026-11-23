@@ -25,6 +25,7 @@ from unicodedata import east_asian_width
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Border, PatternFill
 from openpyxl.styles.borders import Side
 from openpyxl.utils import get_column_letter
@@ -674,6 +675,13 @@ def _set_schedule_print_frame(ws, last_date_col: int):
         set_edge(ws.cell(row, last_date_col), "right")
 
 
+def _sanitize_excel_text(value):
+    """Strip XML-illegal ASCII control characters so openpyxl export cannot crash."""
+    if isinstance(value, str) and ILLEGAL_CHARACTERS_RE.search(value):
+        return ILLEGAL_CHARACTERS_RE.sub("", value)
+    return value
+
+
 def export_to_excel(df, output_buffer, cell_export_info=None):
     """
     Export DataFrame to Excel with frozen panes at B3 (first two rows and first column).
@@ -684,9 +692,14 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
         cell_export_info: Dictionary containing comments, styles and layout from dataframe export
     """
 
-    # Write to a temporary BytesIO buffer first
+    # Write to a temporary BytesIO buffer first. `df` may be a DataFrame or a Styler.
+    if hasattr(df, "data") and isinstance(df.data, pd.DataFrame):
+        safe_df = copy(df)
+        safe_df.data = df.data.map(_sanitize_excel_text)
+    else:
+        safe_df = df.map(_sanitize_excel_text)
     temp_buffer = BytesIO()
-    df.to_excel(temp_buffer, index=False, header=False, engine="openpyxl")
+    safe_df.to_excel(temp_buffer, index=False, header=False, engine="openpyxl")
     temp_buffer.seek(0)
 
     # Load the workbook to apply additional formatting
@@ -730,7 +743,7 @@ def export_to_excel(df, output_buffer, cell_export_info=None):
                 raise ValueError("cell_export_info comments must be lists of strings")
             first_note_row = notes_ws.max_row + 1
             for note in notes:
-                notes_ws.append([cell.coordinate, cell.value, note])
+                notes_ws.append([cell.coordinate, cell.value, _sanitize_excel_text(note)])
                 note_cell = notes_ws.cell(row=notes_ws.max_row, column=1)
                 note_cell.hyperlink = f"#'{schedule_sheet_name}'!{cell.coordinate}"
                 note_cell.style = "Hyperlink"
