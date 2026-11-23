@@ -20,12 +20,15 @@
 # This test is mostly AI generated.
 
 import json
+import re
 import subprocess
 import sys
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import load_workbook
 
+from nurse_scheduling.ai.attachment_tools import inspect_optimizer_result as reader
 from nurse_scheduling.ai.attachment_tools.inspect_optimizer_result import (
     _assigned,
     inspect_result,
@@ -63,6 +66,23 @@ def test_reader_counts_actual_assignments_and_hard_avoids(audit):
     assert result["score"] == 33_000_000_000
     assert result["score_direction"] == "maximize"
     assert result["status"] == "FEASIBLE"
+
+
+def test_reader_accepts_a_sheet_without_a_dimension_record(audit, monkeypatch):
+    # Read-only openpyxl reports max_row and max_column as None without <dimension>.
+    path, context = audit
+    with ZipFile(path) as source:
+        parts = {item.filename: source.read(item) for item in source.infolist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    parts[sheet] = re.sub(rb"<dimension [^>]*/>", b"", parts[sheet])
+    with ZipFile(path, "w", compression=ZIP_DEFLATED) as target:
+        for name, data in parts.items():
+            target.writestr(name, data)
+    result = inspect_result(path, context, context["source_sha256"])
+    assert result["score"] == 33_000_000_000
+    monkeypatch.setattr(reader, "MAX_CELLS", 10)
+    with pytest.raises(ValueError, match="too large"):
+        inspect_result(path, context, context["source_sha256"])
 
 
 def test_completion_summary_has_bounded_counts_and_explicit_scope(audit):
