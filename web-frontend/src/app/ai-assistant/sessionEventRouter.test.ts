@@ -85,4 +85,20 @@ describe('session event routing after a pre-acknowledgement reset', () => {
     expect(background).toHaveBeenNthCalledWith(1, { type: 'run_start', runId: 'review', trigger: 'optimizer' });
     expect(background).toHaveBeenNthCalledWith(3, { type: 'done', runId: 'review' });
   });
+
+  it.each([{ runIds: ['review'] }, { runIds: [] }])('drops background events that a reset replaced when a foreground run finishes, runIds=$runIds', ({ runIds }) => {
+    const router = new SessionEventRouter();
+    const background = vi.fn();
+    const run = router.begin(vi.fn(), vi.fn(), vi.fn());
+    const replay = { type: 'delta' as const, runId: 'review', text: 'x' };
+    const sessionReset = { type: 'session_reset' as const, reset: { ...reset, runIds, terminalRunIds: [], activeRunId: 'review' } };
+    router.dispatch(replay, background, () => true);
+    router.dispatch(sessionReset, background, () => true);
+    router.dispatch(replay, background, () => true);
+
+    router.finish(run);
+
+    // Background cleared the run when the reset arrived, so only the replayed text follows it.
+    expect(background.mock.calls).toEqual([[sessionReset], [replay]]);
+  });
 });

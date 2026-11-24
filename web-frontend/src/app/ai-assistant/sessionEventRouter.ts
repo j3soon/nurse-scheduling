@@ -35,6 +35,8 @@ interface ForegroundRun {
   reject: (error: Error) => void;
   refresh: () => void;
   pendingReset?: SessionReset;
+  /** Deferred events before this index arrived before the latest session reset. */
+  resetIndex?: number;
 }
 
 /** Route one session stream independently of React and HTTP response timing. */
@@ -86,7 +88,10 @@ export class SessionEventRouter {
 
   reset(reset: SessionReset): void {
     const run = this.foreground;
-    if (run && !run.runId) run.pendingReset = reset;
+    if (run && !run.runId) {
+      run.pendingReset = reset;
+      run.resetIndex = run.deferred.length;
+    }
     if (run?.runId && !reset.runIds.includes(run.runId)
       && !reset.terminalRunIds.includes(run.runId) && reset.activeRunId !== run.runId) {
       run.reject(new Error('This response expired from event replay. Start a new question.'));
@@ -97,8 +102,9 @@ export class SessionEventRouter {
     if (this.foreground !== run) return;
     this.foreground = null;
     // A rejected or aborted request never identifies its run, so every deferred
-    // event belongs to another run. Background already received each session reset.
-    for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
+    // event belongs to another run. Background already applied each session reset,
+    // which replaced the output that arrived before it.
+    for (const { event, background, ownsConversation } of run.deferred.splice(0).slice(run.resetIndex ?? 0)) {
       if (ownsConversation() && event.type !== 'session_reset') background(event);
     }
   }
