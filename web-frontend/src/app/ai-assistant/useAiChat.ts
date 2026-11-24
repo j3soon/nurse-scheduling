@@ -648,11 +648,22 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   }, [resetRuntime]);
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
+    // Reconstruct completed replies without replacing the active background operation.
+    let completedReplayRuns = new Set<string>();
+    let replayMessageRunId: string | undefined;
+    const backgroundMessageRunId = () => replayMessageRunId ?? lifecycle.current('background')?.id;
+    const finishBackgroundMessage = () => {
+      if (replayMessageRunId === undefined) lifecycle.finish(lifecycle.current('background'));
+      replayMessageRunId = undefined;
+    };
     const beginBackgroundMessage = (runId: string) => {
-      lifecycle.begin('background', runId);
-      // The server renews the session when it starts this turn.
-      setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
-      sandboxScheduleRef.current = scheduleSpecYamlRef.current;
+      replayMessageRunId = completedReplayRuns.has(runId) ? runId : undefined;
+      if (replayMessageRunId === undefined) {
+        lifecycle.begin('background', runId);
+        // The server renews the session when it starts this turn.
+        setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
+        sandboxScheduleRef.current = scheduleSpecYamlRef.current;
+      }
       setMessages(previous => {
         const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return existing ? previous.map(message => message.id === existing.id
@@ -663,11 +674,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     // A reconnect replays only retained events, so a long turn can lose its own
     // turn_start. Adopt the remaining output instead of discarding the answer.
     const resumeBackgroundMessage = () => {
+      if (replayMessageRunId !== undefined) return;
       if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
       beginBackgroundMessage(lifecycle.current('background')?.id ?? messageId());
     };
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
-      const activeId = lifecycle.current('background')?.id ?? messageId;
+      const activeId = messageId ?? backgroundMessageRunId();
       if (activeId === undefined) return;
       setMessages(previous => {
         const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === activeId);
@@ -676,12 +688,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     };
     const failBackgroundTurn = (message: string) => {
       updateBackgroundMessage(entry => failResponse(entry, message));
-      lifecycle.finish(lifecycle.current('background'));
+      finishBackgroundMessage();
       setError(message);
     };
     const ownsConversation = lifecycle.capture();
     const updateBackgroundCosts = (update: (message: ChatMessage) => ChatMessage) => {
-      const runId = lifecycle.current('background')?.id;
+      const runId = backgroundMessageRunId();
       setMessages(previous => {
         const first = previous.find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return previous.map(message => message.id === first?.id ? update(message) : message);
@@ -695,6 +707,8 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       },
       onModelSelection: modelSelection => updateBackgroundMessage(entry => ({ ...entry, modelSelection })),
       onReset: reset => {
+        completedReplayRuns = new Set(reset.terminalRunIds.filter(id => id !== reset.activeRunId));
+        replayMessageRunId = undefined;
         setMessages(previous => {
           const keptRuns = new Set<string>();
           return previous.flatMap(message => {
@@ -724,11 +738,11 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
       },
       onRunContext: id => {
-        if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
+        if (backgroundMessageRunId() !== id) beginBackgroundMessage(id);
       },
       onRunStart: beginBackgroundMessage,
       onSteering: (queuedId, content) => {
-        const runId = lifecycle.current('background')?.id;
+        const runId = backgroundMessageRunId();
         if (!runId) return;
         queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
         setQueuedMessages(queuedMessagesRef.current);
@@ -764,11 +778,11 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           failureReason: undefined,
           responseCompletedAt: Date.now(),
         }), runId);
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
       },
       onStopped: runId => {
         updateBackgroundMessage(stopResponse, runId);
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
       },
       onStale: message => {
         updateBackgroundMessage(entry => ({
@@ -779,13 +793,13 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           responseCompletedAt: Date.now(),
           activity: [{ kind: 'response', text: message }],
         }));
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
         setError(message);
       },
       onDownload: id => updateBackgroundMessage(entry => ({ ...entry, downloadId: id })),
       onWarning: setError,
       onModelInput: input => {
-        const runId = lifecycle.current('background')?.id;
+        const runId = backgroundMessageRunId();
         setMessages(previous => {
         const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         if (!answer) return previous;

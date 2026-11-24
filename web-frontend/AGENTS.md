@@ -314,6 +314,8 @@ state updates because one replay snapshot can contain several replies.
 Cursor recovery must retain saved message metadata when its defining event
 precedes the cursor. Test this separately from replacement snapshots.
 Use each event's `run_id` to identify replayed messages when `run_start` was trimmed.
+Replay completed runs before the active run in reset tests. Verify that the
+active run keeps its pending Stop until its own terminal event.
 Validate the whole SSE frame and every recovery entry before updating the cursor
 or transcript. Acknowledge validated frames before consumer callbacks. Apply
 replacement snapshots even when their IDs are at or below the stored cursor.

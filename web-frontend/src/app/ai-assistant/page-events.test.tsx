@@ -1123,7 +1123,7 @@ describe('AiAssistantPage', () => {
     expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(4);
   });
 
-  it('preserves stopping state when session_reset replays an active background run', async () => {
+  it.each([false, true])('preserves a pending Stop during replay with earlier output=%s', async earlierOutput => {
     const user = userEvent.setup();
     let streamCallbacks: SessionStreamOptions | undefined;
     mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
@@ -1148,12 +1148,25 @@ describe('AiAssistantPage', () => {
     act(() => {
       streamCallbacks?.onEvent({
         type: 'session_reset',
-        reset: { runIds: ['bg-run'], activeRunId: 'bg-run', terminalRunIds: [], incomplete: false },
+        reset: {
+          runIds: earlierOutput ? ['earlier', 'bg-run'] : ['bg-run'],
+          activeRunId: 'bg-run', terminalRunIds: earlierOutput ? ['earlier'] : [], incomplete: false,
+        },
       });
+      if (earlierOutput) {
+        streamCallbacks?.onEvent({ type: 'run_start', runId: 'earlier', trigger: 'optimizer' });
+        streamCallbacks?.onEvent({ type: 'delta', runId: 'earlier', text: 'Earlier answer.' });
+        streamCallbacks?.onEvent({ type: 'done', runId: 'earlier' });
+      }
       streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Active answer.' });
     });
 
+    if (earlierOutput) expect(screen.getByText('Earlier answer.')).toBeInTheDocument();
+    expect(screen.getByText('Active answer.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    act(() => streamCallbacks?.onEvent({ type: 'stopped', runId: 'bg-run' }));
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   });
 
 

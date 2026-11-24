@@ -969,6 +969,49 @@ test('returns to the top of a long chat on desktop and mobile', async ({ page })
   }
 });
 
+test('keeps Stop pending while the AI stream replays an earlier completed reply', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.addInitScript(() => {
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'active-run', sessionEventId: 4,
+    }));
+  });
+  const replay = Promise.withResolvers<void>();
+  await page.route('**/v1/sessions/browser-session/stop', route => route.fulfill({ status: 202 }));
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    await replay.promise;
+    const snapshot = {
+      active_run_id: 'active-run',
+      incomplete: false,
+      events: [
+        { type: 'delta', data: { run_id: 'earlier-run', text: 'Earlier answer.' } },
+        { type: 'done', data: { run_id: 'earlier-run' } },
+        { type: 'delta', data: { run_id: 'active-run', text: 'Active answer.' } },
+      ],
+    };
+    await route.fulfill({
+      status: 200, contentType: 'text/event-stream',
+      body: `id: 7\nevent: session_reset\ndata: ${JSON.stringify(snapshot)}\n\n`,
+    });
+  });
+
+  try {
+    await page.goto('/ai-assistant');
+    const stop = page.getByRole('button', { name: 'Stop', exact: true });
+    await stop.click();
+    await expect(stop).toBeDisabled();
+    replay.resolve();
+    await expect(page.getByText('Earlier answer.')).toBeVisible();
+    await expect(page.getByText('Active answer.')).toBeVisible();
+    await expect(stop).toBeDisabled();
+  } finally {
+    replay.resolve();
+  }
+});
+
 test('reconnects an active AI reply after saving the same token again', async ({ page }) => {
   const token = 'browser-ai-auth-token';
   await mockAiBackend(page, [], false, token);
