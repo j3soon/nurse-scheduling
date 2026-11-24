@@ -1325,14 +1325,18 @@ def test_exporter_counts_a_repeated_request_date_once_in_cell_notes():
     assert res.cell_export_info["comments"][(3, 2)] == ["Weight of unmet single-style request: 5"]
 
 
-def test_exporter_removes_control_characters_that_worksheets_reject():
+@pytest.mark.parametrize("prettify", [True, False], ids=["styled", "plain"])
+def test_exporter_removes_control_characters_that_worksheets_reject(prettify):
     from nurse_scheduling.exporter import export_to_excel
 
-    res = schedule(_single_day_spec("P1\\x07", "['01']"), solver="ortools/cp-sat", prettify=True)
+    res = schedule(_single_day_spec("P1\\x07", "['01']"), solver="ortools/cp-sat", prettify=prettify)
+    # Export formatting notes render user-written text.
+    res.cell_export_info["comments"][(3, 2)] = ["Bell\x07 note"]
     out = BytesIO()
     export_to_excel(res.dataframe, out, res.cell_export_info)
     wb = load_workbook(BytesIO(out.getvalue()))
     try:
         assert wb.active["A3"].value == "P1"
+        assert wb["Notes"]["C2"].value == "Bell note"
     finally:
         wb.close()
