@@ -31,6 +31,7 @@ done
 affected_parse_args "$ROOT_DIR" "${parse_args[@]}"
 
 test_paths=()
+real_replay=
 run_full_suite="$affected_full"
 ai_changed=false
 ai_eval_changed=false
@@ -71,6 +72,10 @@ elif [[ "$run_full_suite" == false ]]; then
         ai_changed=true
         ai_eval_changed=true
         ;;
+      tests/real/* | tests/testcases/real/*)
+        real_replay=tests/real/schedule_score_ground_truth.py
+        run_full_suite=true
+        ;;
       nurse_scheduling/* | tests/* | pyproject.toml | uv.lock)
         run_full_suite=true
         ;;
@@ -107,6 +112,9 @@ if [[ "$affected_list" == true ]]; then
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
   echo 'types: ty check --python "$(command -v python)"'
+  if [[ -n "$real_replay" ]]; then
+    printf 'test: %s\n' "$real_replay"
+  fi
   if [[ "$run_full_suite" == true ]]; then
     echo "tests: primary core suite (CP-SAT and CBC)"
   elif ((${#test_paths[@]} > 0)); then
@@ -174,6 +182,10 @@ fi
 pytest_args=(-q --tb=short --disable-warnings --maxfail=1)
 if [[ "$skip_unavailable_solvers" == true ]]; then
   pytest_args+=(--skip-unavailable-solvers)
+fi
+if [[ -n "$real_replay" ]]; then
+  echo "Real-scenario inputs changed. Replaying the saved assignment."
+  pytest "${pytest_args[@]}" "$real_replay"
 fi
 if [[ "$run_full_suite" == true ]]; then
   echo "Broad core changes detected; running the compact normal suite."

@@ -20,7 +20,9 @@ below from your local `core/` clone. Activate `.venv` with
   affected pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
-  primary solver suite with CP-SAT and CBC regression sweeps. Other backend
+  primary solver suite with CP-SAT and CBC regression sweeps. When real-scenario
+  tests or their fixtures change, the affected command first runs the saved
+  assignment replay to check the fixture hash and objective score. Other backend
   sweeps remain available with `pytest --solver-profile=all`. Tests marked
   `requires_solver` skip automatically when their optional runtime package is absent.
   An installed runtime that fails its availability check still stops the script. Use `--skip-unavailable-solvers` to skip those
