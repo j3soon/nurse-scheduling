@@ -1555,6 +1555,12 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
             + "    countShiftTypes: []\n    expression: '|x - T|'\n    target: 1\n    weight: -1\n",
             "Non-empty count shift types are required",
         ),
+        (
+            "OFF in shift type requirement",
+            _INVALID_INPUT_SCENARIO
+            + "  - type: shift type requirement\n    shiftType: OFF\n    requiredNumPeople: 0\n",
+            "'OFF' is not allowed in shift type requirement preferences",
+        ),
     ],
 )
 def test_optimization_runner_reports_invalid_input(description, yaml_content, expected_message):
