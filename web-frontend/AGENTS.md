@@ -77,6 +77,8 @@ keep native defaults and do not reach page shortcuts.
 Before interacting with statically rendered controls or capturing a preview, wait
 for an observable result of client initialization, such as seeded content or
 loaded backend options enabling Optimize.
+In component tests, wait for effect-owned side effects such as listener cleanup
+with `waitFor`, even after the related DOM update has appeared.
 Keep independent page checks in separate Playwright tests so each page has its
 own timeout and failure report.
 

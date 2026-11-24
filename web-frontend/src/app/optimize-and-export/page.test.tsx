@@ -1888,8 +1888,10 @@ describe('OptimizeAndExportPage error handling', () => {
     });
     await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
 
-    expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
-    expect(dispatchBeforeUnload()).toBe(false);
+    await waitFor(() => {
+      expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
+      expect(dispatchBeforeUnload()).toBe(false);
+    });
   });
 
   it('shows queued position updates received through SSE', async () => {
