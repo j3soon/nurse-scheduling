@@ -10,11 +10,15 @@ CORE_DIR="$ROOT_DIR/core"
 FRONTEND_DIR="$ROOT_DIR/web-frontend"
 DOCS_DIR="$ROOT_DIR/docs"
 
+if [[ -f /.dockerenv ]]; then
+  # The container mounts the host checkout, so a venv here would replace the host's.
+  echo "Error: dev containers preinstall the core packages in /opt/venv, which is on PATH."
+  echo "Run python, pytest, ruff, and ty directly. Do not run this script."
+  exit 1
+fi
+
 if ! command -v uv >/dev/null 2>&1; then
   echo "Error: 'uv' is not installed. See README.md prerequisites."
-  if [[ -f /.dockerenv ]]; then
-    echo "Dev containers install Python dependencies system-wide. Run python, pytest, and ruff directly."
-  fi
   exit 1
 fi
 
@@ -23,41 +27,17 @@ if ! command -v bun >/dev/null 2>&1; then
   exit 1
 fi
 
-setup_python_project() {
+sync_uv_project() {
   local project_dir="$1"
-  # Development setups install the optional file, which also pulls in the
-  # minimal runtime requirements that deployment images use.
-  local req_name="${2:-requirements.txt}"
-  local req_file="$project_dir/$req_name"
+  shift
 
-  if [[ ! -d "$project_dir" ]]; then
-    echo "Error: project directory not found: $project_dir"
+  if [[ ! -f "$project_dir/uv.lock" ]]; then
+    echo "Error: uv lock file not found: $project_dir/uv.lock"
     exit 1
   fi
 
-  if [[ ! -f "$req_file" ]]; then
-    echo "Error: requirements file not found: $req_file"
-    exit 1
-  fi
-
-  (
-    cd "$project_dir"
-
-    if [[ -x .venv/bin/python ]] && \
-      .venv/bin/python -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' >/dev/null 2>&1; then
-      echo "Reusing Python 3.12 virtual environment in $project_dir/.venv ..."
-    else
-      echo "Creating virtual environment in $project_dir/.venv ..."
-      uv venv --python 3.12 --clear
-    fi
-
-    echo "Activating virtual environment ..."
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
-
-    echo "Installing dependencies from $req_file ..."
-    uv pip install -r "$req_name"
-  )
+  echo "Syncing the locked environment in $project_dir/.venv ..."
+  (cd "$project_dir" && uv sync --locked --python 3.14 "$@")
 }
 
 echo
@@ -72,11 +52,13 @@ bun install
 
 echo
 echo "==> Setting up core"
-setup_python_project "$CORE_DIR" requirements-optional.txt
+# Development installs the optional solvers and the default dev group.
+# Deployment images install only the runtime set with `--no-dev`.
+sync_uv_project "$CORE_DIR" --all-extras
 
 echo
 echo "==> Setting up docs"
-setup_python_project "$DOCS_DIR"
+sync_uv_project "$DOCS_DIR"
 
 echo
 echo "Done."

@@ -19,12 +19,16 @@ set -x
   python -m unittest discover -s scripts -p test_check_vendor.py
   python scripts/check_vendor.py
   python -m unittest discover -s scripts -p test_check_docs_links.py
+  python -m unittest discover -s scripts -p test_add_worktree.py
+  python -m unittest discover -s skills/upgrade-dependencies/scripts -p 'test_*.py'
+  python skills/upgrade-dependencies/scripts/dependency_inventory.py --check
 )
 
 (
   cd "$repo_root/core"
   ruff format --check nurse_scheduling tests
   ruff check nurse_scheduling tests
+  ty check --python "$(command -v python)"
   pytest \
     -q --tb=short --disable-warnings --maxfail=1 \
     --cov=nurse_scheduling \

@@ -21,13 +21,13 @@
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 CONTEXT_SAFETY_TOKENS = 4096
 
 
-def reasoning_text(message: dict[str, Any]) -> str:
+def reasoning_text(message: Mapping[str, Any]) -> str:
     """Read visible thinking without opaque signatures or encrypted replay data."""
     for key in ("_reasoning_text", "reasoning_content", "reasoning", "reasoning_text"):
         if message.get(key):
@@ -43,7 +43,7 @@ def reasoning_text(message: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def estimate_tokens(message: dict[str, Any]) -> int:
+def estimate_tokens(message: Mapping[str, Any]) -> int:
     """Use Pi's characters/4 fallback, with a fixed allowance for tool images."""
     content = message.get("content")
     if isinstance(content, list):
@@ -63,7 +63,7 @@ def estimate_tokens(message: dict[str, Any]) -> int:
     return math.ceil(chars / 4)
 
 
-def estimate_context_tokens(messages: Sequence[dict[str, Any]], tools: Sequence[dict], identity=None) -> int:
+def estimate_context_tokens(messages: Sequence[Mapping[str, Any]], tools: Sequence[dict], identity=None) -> int:
     """Prefer the latest same-model usage plus estimates for messages after it."""
     trailing = 0
     for message in reversed(messages):

@@ -485,7 +485,8 @@ def project_saved_chat(snapshot: dict[str, Any]) -> tuple[list[dict], dict]:
         "fileUrls": source.get("file_urls", {}),
     }
     if optimization:
-        request = optimization.get("request") or {}
+        request = optimization.get("request")
+        request = request if isinstance(request, dict) else {}
         metadata["runningOptimization"] = {
             "jobId": optimization["job_id"],
             "state": optimization["state"],

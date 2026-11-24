@@ -29,14 +29,14 @@ from collections.abc import Sequence
 from decimal import Decimal, InvalidOperation
 from itertools import islice, takewhile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openpyxl import load_workbook
 from ruamel.yaml import YAML
 
-try:
+if TYPE_CHECKING or __package__:
     from .inspect_xlsx import _check_archive
-except ImportError:  # Standalone copy in /reference/tools.
+else:  # Standalone copy in /reference/tools.
     from inspect_xlsx import _check_archive
 
 RESULT = "/workspace/optimizer-results/optimized-schedule.xlsx"
@@ -241,12 +241,15 @@ def _statistics(assignments, context, people, histories, include_history, max_pe
     if set(selected) - person_ids.keys():
         raise ValueError("Unknown person ID in statistics query")
     rows = []
+    shift_counts: Counter[str] = Counter()
     for selected_id in selected:
         person = person_ids[selected_id]
         shifts = [assignments[person][day] for day in context["dates"]]
+        person_shift_counts = Counter(shifts)
+        shift_counts.update(person_shift_counts)
         row = {
             "person": person,
-            "shift_counts": dict(Counter(shifts)),
+            "shift_counts": dict(person_shift_counts),
             "max_work_run": _longest_run(shifts, True),
             "max_off_run": _longest_run(shifts, False),
         }
@@ -258,15 +261,12 @@ def _statistics(assignments, context, people, histories, include_history, max_pe
                 max_off_run_including_history=None if history is None else _longest_run(shifts, False, history),
             )
         rows.append(row)
-    shift_counts = Counter()
-    for row in rows:
-        shift_counts.update(row["shift_counts"])
     summary = {"people": len(rows), "shift_counts": dict(shift_counts)}
     run_fields = ["max_work_run", "max_off_run"]
     if include_history:
         run_fields += ["max_work_run_including_history", "max_off_run_including_history"]
     for field in run_fields:
-        known = [row[field] for row in rows if row[field] is not None]
+        known = [value for row in rows if isinstance(value := row[field], int)]
         summary[field] = max(known, default=None)
         summary[field + "_distribution"] = dict(sorted(Counter(known).items()))
         if include_history and field.endswith("including_history"):

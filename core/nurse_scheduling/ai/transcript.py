@@ -111,7 +111,7 @@ class CompactionEntry:
 
 AgentMessage = UserMessage | AssistantMessage | ToolResultMessage | AppEventEntry | CompactionEntry
 
-ENTRY_TYPES = {
+ENTRY_TYPES: dict[type[AgentMessage], str] = {
     UserMessage: "user",
     AssistantMessage: "assistant",
     ToolResultMessage: "tool_result",

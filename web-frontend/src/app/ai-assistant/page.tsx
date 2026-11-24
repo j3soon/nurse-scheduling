@@ -1235,7 +1235,9 @@ export default function AiAssistantPage() {
             </ul>
           )}
           {recentChats.length > 0 && <button type="button" onClick={() => {
-            if (window.confirm(t("Clear all recent chats on this device? Backend sessions will be kept until their retention limit."))) clearRecentChats();
+            if (window.confirm(t("Clear all recent chats on this device? Backend sessions will be kept until their retention limit."))) {
+              void clearRecentChats();
+            }
           }} className="mt-2 min-h-11 text-xs text-red-700 underline">{t("Clear history")}</button>}
           <p className="mt-2 text-xs text-gray-500">{t("Remove and Clear history only forget browser records. The open conversation stays visible.")}</p>
         </MobileDetails>

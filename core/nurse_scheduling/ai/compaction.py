@@ -21,7 +21,7 @@
 
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from pathlib import Path
 
@@ -131,8 +131,8 @@ class ContextCompactor:
         manual: bool = False,
         already_compacted: bool = False,
         after_omitted_attempt: bool = False,
-    ) -> AsyncIterator[
-        ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd | AgentGenerationProgress
+    ) -> AsyncGenerator[
+        ProviderCall | AgentCompaction | AgentCompactionStart | AgentCompactionEnd | AgentGenerationProgress, None
     ]:
         if not force and not self.needed(messages, tools):
             return
@@ -140,8 +140,11 @@ class ContextCompactor:
         previous_summary = None
         previous_files = {}
         if body and body[0].get("_compaction_summary"):
-            previous_files = body[0].get("_compaction_files", {})
-            previous_summary = body.pop(0)["content"].removeprefix(SUMMARY_PREFIX + "\n")
+            saved_summary = body.pop(0)
+            previous_files = saved_summary.get("_compaction_files", {})
+            content = saved_summary["content"]
+            assert isinstance(content, str)
+            previous_summary = content.removeprefix(SUMMARY_PREFIX + "\n")
         cut = _cut_point(body, self.keep_recent_tokens)
         if (
             after_omitted_attempt
@@ -206,6 +209,8 @@ class ContextCompactor:
                             yield event
                         else:
                             summary = f"{history_text}\n\n---\n\n**Turn Context (split turn):**\n\n{event}"
+            if summary is None:
+                raise ProviderError.for_user("The AI provider returned an empty context summary.")
             read_files = set(previous_files.get("read", ()))
             modified_files = set(previous_files.get("modified", ()))
             for message in older:
@@ -253,7 +258,7 @@ class ContextCompactor:
         summary: str | None = None,
         *,
         initial_prompt: str = "context-compaction",
-    ) -> AsyncIterator[ProviderCall | AgentGenerationProgress | str]:
+    ) -> AsyncGenerator[ProviderCall | AgentGenerationProgress | str, None]:
         """Use Pi's summary prompts and token budgets without local text ceilings."""
         serialized = _serialize(messages)
         turn_prefix = initial_prompt == "compaction-turn-prefix"

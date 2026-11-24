@@ -150,10 +150,10 @@ assert_line "$output" 'tests: none'
 output="$("$fixture_root/scripts/test_core_affected.sh" --list --base HEAD^)"
 assert_line "$output" 'test: tests/test_ai_basic.py'
 
-write_fixture core/requirements.txt
+write_fixture core/uv.lock
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
-rm -- "$fixture_root/core/requirements.txt"
+rm -- "$fixture_root/core/uv.lock"
 
 rm -- "$fixture_root/core/tests/test_ai_provider.py"
 output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
@@ -259,6 +259,10 @@ printf '%s\n' \
   > "$fixture_root/bin/ruff"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
+  'printf "mock ty: %s\n" "$*"' \
+  > "$fixture_root/bin/ty"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
   'printf "mock pytest: %s\n" "$*"' \
   > "$fixture_root/bin/pytest"
 printf '%s\n' \
@@ -285,13 +289,14 @@ printf '%s\n' \
   'done' \
   'echo "No test files found, exiting with code 0"' \
   > "$fixture_root/bin/bunx"
-chmod +x "$fixture_root/bin/ruff" "$fixture_root/bin/pytest" "$fixture_root/bin/python" \
-  "$fixture_root/bin/bun" "$fixture_root/bin/bunx"
+chmod +x "$fixture_root/bin/ruff" "$fixture_root/bin/ty" "$fixture_root/bin/pytest" \
+  "$fixture_root/bin/python" "$fixture_root/bin/bun" "$fixture_root/bin/bunx"
 
 output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" \
   core/tests/test_scheduler.py)"
 assert_line "$output" 'mock ruff: format --check nurse_scheduling tests'
 assert_line "$output" 'mock ruff: check nurse_scheduling tests'
+assert_line "$output" "mock ty: check --python $fixture_root/bin/python"
 assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/test_scheduler.py'
 assert_no_line "$output" 'mock python: - pulp/highs'
 output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" --full)"

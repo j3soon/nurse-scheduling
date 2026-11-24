@@ -6,17 +6,18 @@ The FastAPI backend entry point is `nurse_scheduling/serve.py`.
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
 section. In a dev container the main clone mounts at `/app`. Resolve the
 current checkout with `git rev-parse --show-toplevel` and use its `core/`
-directory. Project packages are installed system-wide, so run `python`,
-`pytest`, and `ruff` directly. On a host checkout, run commands below from your local
-`core/` clone and create the virtual environment once with
-`uv venv --python 3.12 && source .venv/bin/activate`.
-- `uv pip install -r requirements-optional.txt`: the development install. See
-  the Dependencies section below.
+directory. The image's active `/opt/venv` holds the locked packages, so run
+`python`, `pytest`, `ruff`, and `ty` directly. On a host checkout, run commands
+below from your local `core/` clone. Activate `.venv` with
+`source .venv/bin/activate`, or prefix commands with `uv run`.
+- `uv sync --locked --all-extras`: create or update the development
+  environment. Add `--active` in a dev container. See the Dependencies section
+  below.
 - `python -m nurse_scheduling.cli <input.yaml> [output.csv] --solver <selector>`: selectors are documented in `README.md`.
 - `pytest`: run the normal core test suite with logs captured unless a test fails.
 - `pytest <affected_test_paths>`
-- `../scripts/test_core_affected.sh`: run full Ruff checks and compact affected
-  pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
+- `../scripts/test_core_affected.sh`: run full Ruff and ty checks and compact
+  affected pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
   primary solver suite with CP-SAT and CBC regression sweeps. Other backend
@@ -32,8 +33,13 @@ directory. Project packages are installed system-wide, so run `python`,
 - `pytest tests/test_solver_ortools_cp_sat.py tests/test_solver_pulp_cbc.py tests/test_schedule_ortools_cp_sat.py tests/test_schedule_pulp_cbc.py`: run the primary solver/schedule suites.
 - `ruff check nurse_scheduling tests`
 - `ruff format nurse_scheduling tests`
+- `ty check --python "$(command -v python)"`: type-check production Python
+  using the same Python environment as the tests. Keep type fixes small and
+  testable. Use a file-specific exclusion when a fix needs a major refactor or
+  depends on behavior that cannot be tested adequately. Record the reason in
+  `pyproject.toml` and remove the exclusion when it can be resolved.
 
-After modifying core code, run Ruff and affected pytest suites before finishing.
+After modifying core code, run Ruff, ty, and affected pytest suites before finishing.
 Prefer `../scripts/test_core_affected.sh` for routine validation. Pass explicit
 test paths when a narrower suite is known to be sufficient. Use `--base REF` to
 include committed branch changes since the merge base with `REF`, `--list` to
@@ -61,8 +67,8 @@ stderr. Do not replace an explicitly selected file with a fallback.
 
 ## Windows CI Timing
 
-- Windows core CI uses Python 3.12. Its asyncio deadline timers can fire before
-  a coarse monotonic clock reaches the deadline. Include this condition in
+- On Windows core CI, asyncio deadline timers can fire before a coarse
+  monotonic clock reaches the deadline. Include this condition in
   deadline tests instead of relying only on Linux runs with real timers.
 - Treat `asyncio.Timeout.expired()` as final when it owns the overall retry
   budget. Stop retries at `now >= deadline`. Keep individual request timeouts
@@ -84,16 +90,28 @@ stderr. Do not replace an explicitly selected file with a fallback.
   that phase starts. Do not make unrelated setup fit a short wall-clock budget.
 
 ## Dependencies
-- `requirements.txt` is the minimal runtime set. Deployment images install only
-  it, so a small file keeps those builds fast. Add a package there only when
-  the CLI, the backend, or the AI service imports it at runtime.
-- `requirements-optional.txt` starts with `-r requirements.txt` and adds the
-  extra solver backends, the sandbox-only attachment tool packages, and the
-  test and lint tooling. It is the development and CI install.
-- A package a sandbox tool imports belongs in the optional file even when the
-  tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
+- `pyproject.toml` declares the dependencies, and `uv.lock` pins every
+  version. CI and the images install with `--locked`, so they fail when the
+  lock does not match `pyproject.toml`.
+- `[project.dependencies]` is the minimal runtime set. Deployment images
+  install only it with `uv sync --locked --no-dev`, so a small set keeps those
+  builds fast. Add a package there only when the CLI, the backend, or the AI
+  service imports it at runtime.
+- The `highs` and `scip` extras add the optional solver backends. The default
+  `dev` group adds the test tooling and includes the `lint` and `sandbox`
+  groups. Development and CI install everything with `--all-extras`.
+- A package a sandbox tool imports belongs in the `sandbox` group even when
+  the tool ships under `nurse_scheduling/`. Those scripts are uploaded and run
   inside the E2B image, which installs its own pinned copies, and only the
-  tests import them here. Keep the two pin sets in step.
+  tests import them here. `tests/test_dependency_lock.py` checks that
+  `docker/e2b/e2b.Dockerfile` pins the `sandbox` group at the locked versions.
+- The `[tool.uv]` constraints in `pyproject.toml` hold NumPy and pandas at the
+  versions that the cuOpt dev image accepts. Update them when its base image
+  changes.
+- `highspy` must match the HiGHS release that OR-Tools bundles. Another
+  version in the same process crashes OR-Tools MathOpt HiGHS solves. The
+  matching release has no CPython 3.14 wheel, so Python 3.14 skips
+  `pulp/highs`.
 - Verify sandbox dependency changes in a rebuilt image with a synthetic script.
   A successful host import or fake-backend test does not prove availability in
   the deployed template. State which template was tested and whether production
@@ -102,12 +120,17 @@ stderr. Do not replace an explicitly selected file with a fallback.
   `server/solver_options.py` report it unavailable. It already treats
   `ImportError` as unavailable, so a missing optional backend must degrade
   rather than break startup.
-- Verify a dependency move by installing `requirements.txt` alone into a
-  throwaway virtual environment, then importing `nurse_scheduling.cli`,
-  `serve`, `ai_serve`, `server.diagnostic`, and `server.usage_report`, and
-  running one CLI solve with `--prettify` to reach the XLSX export path.
-  Reading the imports is not enough, because transitive-only packages such as
-  the `jinja2` that `pandas.DataFrame.style` needs have no import statement.
+- Verify a dependency move by syncing only the runtime set into a throwaway
+  environment with `UV_PROJECT_ENVIRONMENT=<temp>/venv uv sync --locked
+  --no-dev`. Then import `nurse_scheduling.cli`, `serve`, `ai_serve`,
+  `server.diagnostic`, and `server.usage_report`, and run one CLI solve with
+  `--prettify` to reach the XLSX export path. Reading the imports is not
+  enough, because transitive-only packages such as the `jinja2` that
+  `pandas.DataFrame.style` needs have no import statement.
+- Set `DISABLE_SENTRY=1` for these checks. Outside pytest, the services report
+  errors to the project's Sentry DSN by default. `ai_serve` also needs
+  placeholder `AI_PROVIDER_*` values and `AI_SANDBOX_BACKEND=e2b` with
+  placeholder `E2B_API_KEY` and `E2B_TEMPLATE` values to import.
 
 ## Service Monitoring
 - Initialize Sentry with the application build version, not the API version.

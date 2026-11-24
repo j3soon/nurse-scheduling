@@ -25,7 +25,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -36,6 +36,7 @@ from .config import MAX_DOWNLOAD_BYTES, MAX_HISTORY_CHARS, AiSettings
 from .optimizer import WORKSPACE_OPTIMIZER_RESULT
 from .result_context import build_result_context
 from .sandbox import (
+    CommandResult,
     SandboxBackend,
     SandboxError,
     SandboxFactory,
@@ -252,7 +253,7 @@ async def _measured_sandbox_run(
     load_attachment: AttachmentLoader | None = None,
     analysis: AgentAnalysis | None = None,
     timezone: str = "UTC",
-) -> AsyncIterator[SandboxBackend]:
+) -> AsyncGenerator["_LazySandboxRun", None]:
     """Create, hydrate, and measure a sandbox only when a tool needs it."""
     stack = AsyncExitStack()
     sandbox = _LazySandboxRun(
@@ -359,7 +360,7 @@ class _LazySandboxRun:
         return self._sandbox
 
     @asynccontextmanager
-    async def activity_batch(self) -> AsyncIterator[None]:
+    async def activity_batch(self) -> AsyncGenerator[None, None]:
         async with AsyncExitStack() as stack:
             self._activity_stack = stack
             self._activity_started = False
@@ -372,13 +373,16 @@ class _LazySandboxRun:
     async def write_file(self, path: str, content: str | bytes) -> None:
         await (await self._start()).write_file(path, content)
 
+    async def write_files(self, files: Mapping[str, str | bytes]) -> None:
+        await (await self._start()).write_files(files)
+
     async def read_file(self, path: str, *, max_bytes: int | None = None) -> bytes:
         backend = await self._start()
         if max_bytes is None:
             return await backend.read_file(path)
         return await backend.read_file(path, max_bytes=max_bytes)
 
-    async def run(self, command: str, *, timeout_seconds: float | None = None):
+    async def run(self, command: str, *, timeout_seconds: float | None = None) -> CommandResult:
         return await (await self._start()).run(command, timeout_seconds=timeout_seconds)
 
     async def close(self) -> None:

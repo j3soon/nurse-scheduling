@@ -20,6 +20,7 @@
 import datetime
 import math
 import re
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from .errors import InputValidationError
@@ -84,7 +85,7 @@ def _parse_single_date(date: str, date_range: "DateRange") -> datetime.date:
     raise InputValidationError(f"Date '{date}' is not in the format of YYYY-MM-DD, MM-DD, or D.\n{error_details}")
 
 
-def parse_dates(dates, map_did_d, date_range):
+def parse_dates(dates, map_did_d: Mapping[str, tuple[int, ...]], date_range: "DateRange") -> list[int]:
     startdate, enddate = date_range.startDate, date_range.endDate
     dates = map(str, ensure_list(dates))
     parsed_dates = []

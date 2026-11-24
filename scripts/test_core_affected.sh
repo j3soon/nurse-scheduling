@@ -71,7 +71,7 @@ elif [[ "$run_full_suite" == false ]]; then
         ai_changed=true
         ai_eval_changed=true
         ;;
-      nurse_scheduling/* | tests/* | requirements*.txt | pyproject.toml)
+      nurse_scheduling/* | tests/* | pyproject.toml | uv.lock)
         run_full_suite=true
         ;;
       AGENTS.md | *.md | .gitignore)
@@ -106,6 +106,7 @@ if [[ "$affected_list" == true ]]; then
   echo "lint: scripts/check_terminology.sh"
   echo "lint: ruff format --check nurse_scheduling tests"
   echo "lint: ruff check nurse_scheduling tests"
+  echo 'types: ty check --python "$(command -v python)"'
   if [[ "$run_full_suite" == true ]]; then
     echo "tests: primary core suite (CP-SAT and CBC)"
   elif ((${#test_paths[@]} > 0)); then
@@ -120,6 +121,7 @@ fi
 cd "$CORE_DIR"
 ruff format --check nurse_scheduling tests
 ruff check nurse_scheduling tests
+ty check --python "$(command -v python)"
 
 required_solvers=()
 if [[ "$run_full_suite" != true ]]; then
@@ -164,7 +166,7 @@ elif broken:
     if os.path.exists("/.dockerenv"):
         print("Fix the dev image installation. Pass --skip-unavailable-solvers to skip their tests.", file=sys.stderr)
     else:
-        print("From core/, run: uv pip install -r requirements-optional.txt", file=sys.stderr)
+        print("From core/, run: uv sync --locked --all-extras", file=sys.stderr)
     raise SystemExit(2)
 PY
 fi

@@ -62,6 +62,12 @@ class Context:
         self.n_shift_types = len(self.scenario.shiftTypes.items)
         self.n_people = len(self.scenario.people.items)
 
+    def require_solver(self) -> SolverInterface:
+        """Return the solver once the scheduling run has initialized it."""
+        if self.solver is None:
+            raise RuntimeError("The scheduling context has no solver")
+        return self.solver
+
     @classmethod
     def from_validated(cls, data: ScheduleSpec) -> "Context":
         """Create runtime state without validating or resolving input twice."""

@@ -17,16 +17,20 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@v10.4.0
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: core/requirements*.txt
+          version: "0.13.9"
+          python-version: "3.14"
+          working-directory: core
+          activate-environment: true
+          cache-suffix: all-extras
       - name: Install dependencies
-        run: python -m pip install -r core/requirements-optional.txt
+        working-directory: core
+        run: uv sync --locked --all-extras
       - name: Validate testcase definitions without credentials
         working-directory: core
         run: python -m tests.ai.runner validate
@@ -49,16 +53,20 @@ jobs:
     env:
       E2B_TEMPLATE: ${{ vars.E2B_TEMPLATE || 'nurse-scheduling-ai-sandbox-github-ci' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@v10.4.0
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: core/requirements*.txt
+          version: "0.13.9"
+          python-version: "3.14"
+          working-directory: core
+          activate-environment: true
+          cache-suffix: all-extras
       - name: Install dependencies
-        run: python -m pip install -r core/requirements-optional.txt
+        working-directory: core
+        run: uv sync --locked --all-extras
       - name: Build the CI sandbox template
         env:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
@@ -76,7 +84,7 @@ jobs:
         run: python -m tests.ai.runner run --diagnostic-attempts 3
       - name: Upload conversation transcripts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ai-testcase-conversations
           path: artifacts/ai-testcases/

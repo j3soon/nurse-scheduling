@@ -61,7 +61,7 @@ export default function Home() {
       const releases = await fetchReleaseBranches();
       setReleaseBranches(releases);
     };
-    loadReleaseBranches();
+    void loadReleaseBranches();
   }, []);
 
   useEffect(() => {

@@ -102,6 +102,15 @@ def _solve_with_fixed_affine(
     return round(solver.get_value(y))
 
 
+def test_unsolved_model_has_statistics_but_no_variable_value():
+    solver = PuLPSolver()
+    variable = solver.new_bool_var("unassigned")
+
+    assert solver.get_statistics()["status"] == "Not Solved"
+    with pytest.raises(ValueError, match="no value"):
+        solver.get_value(variable)
+
+
 def test_generated_variable_name_skips_existing_suffix():
     solver = PuLPSolver()
     first = solver.new_bool_var("duplicate")

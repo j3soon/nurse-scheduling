@@ -132,10 +132,9 @@ In a new terminal, start backend:
 
 ```powershell
 cd core
+uv sync --locked --no-dev --python 3.14
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-uv venv --python 3.12
 .venv\Scripts\Activate.ps1
-uv pip install -r requirements.txt
 fastapi dev nurse_scheduling\serve.py
 ```
 
@@ -210,8 +209,10 @@ GPU image with cuOpt support:
 docker build -f docker/Dockerfile.dev.cuopt -t j3soon/nurse-scheduling:dev-cuopt .
 ```
 
-The cuOpt image omits `highspy` because the pinned release has no CPython 3.14
-wheel. Use another environment for the `pulp/highs` solver.
+Python 3.14 environments, including both development images, omit `highspy`.
+The release that matches the HiGHS library in OR-Tools has no CPython 3.14
+wheel. For the `pulp/highs` solver, use a host checkout with Python 3.13 or
+earlier.
 
 ```sh
 # persist Codex/Claude Code/OpenCode/Pi/Antigravity CLI auth/config across containers
@@ -281,7 +282,7 @@ docker run --rm -it --network=host \
 
 Use Git 2.48 or newer on the host and in the container. Both Ubuntu development
 images install Git through APT from `ppa:git-core/ppa`. The CPU image uses
-Ubuntu 24.04 and Python 3.12. Rebuild older images before using this workflow.
+Ubuntu 24.04 and a uv-managed Python 3.14. Rebuild older images before using this workflow.
 
 Create a branch and checkout for each agent from the main clone. Use a prefix
 that describes the change, such as `fix/`, `feat/`, or `docs/`.
@@ -301,16 +302,26 @@ older Git clients cannot use the repository until they are upgraded.
 Use one agent per worktree. Install frontend dependencies inside each checkout
 with `bun install --frozen-lockfile`. Core packages are already installed in
 the dev container. Keep build output separate and use distinct ports for local
-servers. Load credentials from the main clone's ignored `docker/.env`.
+servers. Load credentials from the main clone's ignored `docker/.env`. The
+helper copies the main clone's ignored `docker/.env.staging` into the new
+checkout when that file exists.
 
 Review the agent's commits before integrating them. From the main clone:
 
 ```sh
 git merge --no-ff fix/api -m "Merge reviewed API fix"
-git worktree remove .worktrees/fix/api
+./scripts/remove_worktree.sh fix/api
 # Delete the branch only after its changes have been integrated.
 git branch -d fix/api
 ```
+
+`remove_worktree.sh` removes a clean checkout only when `dev` contains every
+commit of its branch. Pass `--base REF` to check another ref, such as
+`FETCH_HEAD` after a fetch. The script also compares the checkout's
+`docker/.env.staging` with the main clone. If the checkout changed that file,
+the script lists the changed setting names without their values and stops with
+exit code 3. Rerun it with `--update-env-staging` to copy the checkout's file to
+the main clone, or with `--keep-env-staging` to leave the main copy unchanged.
 
 ### Web Frontend
 

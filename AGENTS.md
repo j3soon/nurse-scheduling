@@ -13,12 +13,13 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Detect the session location first:
   `test -f /.dockerenv && echo container || echo host`.
 - Dev container (`/.dockerenv` exists, built from `docker/Dockerfile.dev*`):
-  the main clone mounts at `/app`, and module dependencies come
-  preinstalled system-wide. Do not run `./scripts/setup_env.sh`, install
-  `uv`, or create a virtual environment. Run `python`, `pytest`, and `ruff`
-  directly. In the cuOpt image, `python3` is the base 3.10 interpreter
-  without project packages, so use `python`, which is Python 3.14 while CI
-  uses 3.12.
+  the main clone mounts at `/app`. The image installs the locked core
+  packages in `/opt/venv`, which is active and first on `PATH`. Run `python`,
+  `pytest`, `ruff`, and `ty` directly. Do not run `./scripts/setup_env.sh` or
+  create another virtual environment. After `core/uv.lock` changes, run
+  `uv sync --active --locked --all-extras` in `core/`. Pass `--active` to
+  `uv sync` and `uv run`, because otherwise uv creates `core/.venv` in the
+  host checkout. CI, the dev images, and the API images run Python 3.14.
 - Prefer APT packages from the distribution or the tool project's documented
   package repository over custom source builds in development images.
 - Host checkout (no `/.dockerenv`): the repository lives wherever the user
@@ -63,9 +64,15 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   checkout alone, because its shared Git metadata lives outside that mount.
   Each agent owns its branch and worktree. The coordinating agent reviews and
   integrates completed commits, then removes clean checkouts with
-  `git worktree remove`. Do not reset another agent's branch or delete its work.
-  Keep dependencies and build output separate per worktree, choose distinct
-  service ports, and load shared secrets from the main clone's ignored env file.
+  `scripts/remove_worktree.sh TYPE/NAME`. Do not reset another agent's branch
+  or delete its work. Keep dependencies and build output separate per
+  worktree, choose distinct service ports, and load shared secrets from the
+  main clone's ignored env file.
+- The worktree helpers copy the main clone's `docker/.env.staging` into new
+  checkouts. When `scripts/remove_worktree.sh` stops with exit code 3, the
+  checkout changed that file. Show the user the listed setting names and ask
+  whether to update the main copy. Then rerun with `--update-env-staging` or
+  `--keep-env-staging`. Never choose for the user.
 - Keep edits scoped to the requested module. Preserve existing patterns.
 - When resuming another agent's session, verify compatibility claims and pending
   check results against current code, configuration, and saved outputs. Treat
@@ -127,6 +134,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   suite to diagnose its failure.
 - Run security scans with `skills/security-scan` against an isolated loopback
   copy of the services. Never scan the public domain or the running deployment.
+- Upgrade dependencies with `skills/upgrade-dependencies`. Unless the user says
+  otherwise, give each upgrade its own worktree and pull request.
 - Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
   CORS error for the APIs can mean the origin never responded, so isolate the
   hop before changing CORS or proxy configuration.
@@ -173,6 +182,12 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 - Agent-created commits need a descriptive body ending with a `by <Harness> (<Model>)` line using the actual harness and model names, e.g. `by Codex (gpt-5.6-sol)` or `by Claude Code (Opus 5)`.
 - For Codex attribution, use the full lowercase model slug, such as `gpt-5.6-sol`. Never substitute a shortened family name such as `GPT-5`.
 - Keep commit bodies short, at most two brief paragraphs covering why the change was needed and what it does. Document mechanism, investigation notes, and third-party behavior in Markdown instead.
+- A commit that changes a lock names each bun or uv command and the files that
+  it wrote, such as `` `cd core && uv lock` updates `core/uv.lock`. `` Give a
+  reason only for a version changed by hand in `package.json` or
+  `pyproject.toml`. Omit hand edits of files that no tool owns, because the
+  diff shows them. Follow the format in `skills/upgrade-dependencies`, and
+  check it with that skill's `check_upgrade_commits.py`.
 - Make commit descriptions understandable without chat history or discarded
   revisions. Name previous scripts or explain previous behavior when comparing
   implementations. After amending, folding, or rewriting history, check affected
@@ -260,11 +275,18 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
 
 ## Cross-Module Requirements
 - When renaming or deleting frontend people, dates, or shift types, sync all references, including preferences and export layout entries.
-- When adding, moving, or removing a dependency, update every installer in the
-  same commit: the `docker/` images, the GitHub workflows, `scripts/setup_env.sh`,
-  the affected-test selection in `scripts/`, and the `README.md` and `docs/`
-  install commands. Grep for the file name rather than the package name, since
-  an installer usually names only the requirements file.
+- Change Python dependencies with `uv add`, `uv remove`, or
+  `uv lock --upgrade-package NAME` in the module directory. Commit
+  `pyproject.toml` with its `uv.lock`. Installers read the lock, so a version
+  change needs no installer edits. When a package moves between the runtime
+  set, an extra, and a dependency group, check the `uv sync` flags in the
+  `docker/` images, the GitHub workflows, and `scripts/setup_env.sh`.
+- Change frontend dependencies, including `overrides`, with `bun add`,
+  `bun remove`, `bun update`, or `bun pm pkg set` in `web-frontend/`. Commit
+  `package.json` with its `bun.lock`.
+- Toolchain versions, action tags, and image tags repeat across files. Update
+  every location that `skills/upgrade-dependencies/scripts/dependency_inventory.py`
+  lists. CI rejects conflicting pins.
 
 ## Pull Requests
 - Include scope and rationale, linked issues when applicable, test/lint evidence, and screenshots for frontend UI changes.

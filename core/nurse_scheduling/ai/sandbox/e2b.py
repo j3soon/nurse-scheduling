@@ -28,7 +28,7 @@ import shlex
 import subprocess
 import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from enum import Enum
@@ -71,7 +71,7 @@ COMMAND_OUTPUT_SOURCE = Path(__file__).with_name("command_output.py").read_text(
 # E2B pauses the VM when this active timeout expires, and each auto-resume
 # restarts it. One hour is the E2B Hobby tier maximum.
 ACTIVE_TIMEOUT_SECONDS = 3600
-CreateSandbox = Callable[..., Awaitable[Any]]
+CreateSandbox = Callable[..., Coroutine[Any, Any, AsyncSandbox]]
 RequestResult = TypeVar("RequestResult")
 NON_RETRYABLE_E2B_ERRORS = (
     AuthenticationException,
@@ -270,7 +270,7 @@ class E2BSandboxFactory:
         creation = asyncio.create_task(
             self._create_sandbox(
                 template=self._template,
-                **({"envs": envs} if envs is not None else {}),
+                envs=envs,
                 timeout=ACTIVE_TIMEOUT_SECONDS,
                 secure=True,
                 allow_internet_access=False,
@@ -307,7 +307,7 @@ class E2BSandboxFactory:
         )
         return backend
 
-    async def _destroy_after_cancelled_creation(self, creation: asyncio.Task[Any]) -> None:
+    async def _destroy_after_cancelled_creation(self, creation: asyncio.Task[AsyncSandbox]) -> None:
         """Finish an in-flight create request so its sandbox can be killed."""
         try:
             sandbox = await asyncio.shield(creation)
@@ -425,7 +425,7 @@ class E2BSandboxBackend:
         )
 
     @asynccontextmanager
-    async def activity_batch(self) -> AsyncIterator[None]:
+    async def activity_batch(self) -> AsyncGenerator[None, None]:
         """Keep the sandbox warm until a related batch of operations finishes."""
         self._cancel_pending_pause(for_activity=True)
         async with self._lifecycle_lock:
@@ -670,7 +670,7 @@ class E2BSandboxBackend:
             raise
 
     @asynccontextmanager
-    async def _active_operation(self, *, read_only: bool = False) -> AsyncIterator[None]:
+    async def _active_operation(self, *, read_only: bool = False) -> AsyncGenerator[None, None]:
         """Coordinate one operation with exclusive mutations and lifecycle transitions."""
         self._cancel_pending_pause(for_activity=True)
         async with self._operation_condition:

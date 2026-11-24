@@ -24,7 +24,7 @@ import json
 import logging
 import re
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from typing import Annotated, BinaryIO, Literal, cast
@@ -32,6 +32,7 @@ from uuid import UUID, uuid4
 
 import anyio
 import psycopg
+from anyio.to_thread import run_sync
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -150,15 +151,18 @@ class CreateSessionRequest(BaseModel):
     selection: ModelSelection | None = None
 
 
-class ChatRequest(BaseModel):
-    """One user question for an existing schedule chat."""
-
+class _ChatMessageRequest(BaseModel):
     message: str = Field(min_length=1)
-    # A repeated client message ID reattaches to its run instead of asking again.
-    message_id: str | None = Field(default=None, min_length=1, max_length=100)
     frontend_version: str | None = Field(default=None, min_length=1, max_length=200)
     frontend_timezone: FrontendTimezone | None = None
     selection: ModelSelection | None = None
+
+
+class ChatRequest(_ChatMessageRequest):
+    """One user question for an existing schedule chat."""
+
+    # A repeated client message ID reattaches to its run instead of asking again.
+    message_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class StopChatRequest(BaseModel):
@@ -167,7 +171,7 @@ class StopChatRequest(BaseModel):
     message_id: str = Field(min_length=1, max_length=100)
 
 
-class QueueChatRequest(ChatRequest):
+class QueueChatRequest(_ChatMessageRequest):
     """One user message queued while the assistant is working."""
 
     message_id: str = Field(min_length=1, max_length=100)
@@ -527,7 +531,7 @@ def create_app(
             prepared_exports.prune()
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         prepare_sandbox = getattr(sandbox_factory, "prepare", None)
         if prepare_sandbox is not None:
             await prepare_sandbox()
@@ -685,7 +689,8 @@ def create_app(
         return CreateSessionResponse(id=session.id)
 
     async def build_chat_archive(session_id: str, owner: str | None) -> BinaryIO:
-        if recovery.history is None:
+        history = recovery.history
+        if history is None:
             raise HTTPException(status_code=409, detail="Saved chat export requires PostgreSQL history.")
         release = recovery.pin(session_id)
         try:
@@ -699,9 +704,7 @@ def create_app(
                     status_code=503, detail="The chat snapshot is still being saved. Try again."
                 ) from exc
             with anyio.CancelScope(shield=True):
-                archive = await anyio.to_thread.run_sync(
-                    lambda: create_chat_archive(recovery.history, session_id, owner=owner)
-                )
+                archive = await run_sync(lambda: create_chat_archive(history, session_id, owner=owner))
         except ChatSessionNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Chat session not found.") from exc
         except (psycopg.Error, OSError) as exc:
@@ -858,6 +861,7 @@ def create_app(
         """Deliver one captured ZIP without exposing arbitrary sandbox paths."""
         content = store.download(session_id, owner, download_id)
         if content is None:
+            assert owner is not None
             content = await recovery.read_file(session_id, owner, "download", download_id)
         return Response(
             content=content,

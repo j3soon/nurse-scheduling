@@ -155,12 +155,15 @@ class ModelInputMessage(TypedDict):
     title: NotRequired[str]
 
 
-class ModelInputEvent(RunFields):
+class ModelInputFields(TypedDict):
+    system: str
+    messages: list[ModelInputMessage]
+
+
+class ModelInputEvent(RunFields, ModelInputFields):
     """The system message and the request messages added since the last assistant reply."""
 
     type: Literal["model_input"]
-    system: str
-    messages: list[ModelInputMessage]
     schedule_spec_yaml: NotRequired[str]
 
 
@@ -192,8 +195,7 @@ class GenerationProgressEvent(RunFields):
     step: int
 
 
-class ContextUsageEvent(RunFields):
-    type: Literal["context_usage"]
+class ContextUsageFields(TypedDict):
     used_chars: int
     max_chars: int
     # Latest request tokens, or an estimate after compaction. The limit needs model metadata.
@@ -202,12 +204,24 @@ class ContextUsageEvent(RunFields):
     estimated: NotRequired[bool]
 
 
+class ContextUsageEvent(RunFields, ContextUsageFields):
+    type: Literal["context_usage"]
+
+
 class HistoryTrimmedEvent(RunFields):
     type: Literal["history_trimmed"]
     dropped: int
 
 
-class OptimizerStateUpdate(TypedDict):
+class OptimizerTiming(TypedDict):
+    created_at: str | None
+    started_at: str | None
+    finished_at: str | None
+    elapsed_seconds: float | None
+    finish_now_requested_by: Literal["user", "agent"] | None
+
+
+class OptimizerStateUpdate(OptimizerTiming):
     """Job state shared by the optimizer callback and the public session event."""
 
     job_id: str
@@ -218,6 +232,7 @@ class OptimizerStateUpdate(TypedDict):
     result: dict[str, Any] | None
     error: dict[str, Any] | None
     downloadable: bool
+    controls: dict[str, Any]
 
 
 class OptimizerProgressUpdate(TypedDict):

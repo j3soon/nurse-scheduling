@@ -30,7 +30,7 @@ def normalize_solver_option(value: str) -> str:
     return capabilities.value
 
 
-# Runtime package of each optional solver from requirements-optional.txt, keyed by the
+# Runtime package of each optional solver extra in pyproject.toml, keyed by the
 # normalized solver value. Dev images can omit these packages, so tests skip when the package
 # is absent. An installed but broken runtime still fails the solver_is_available probe.
 SOLVER_RUNTIME_MODULES = {

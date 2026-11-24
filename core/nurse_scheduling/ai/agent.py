@@ -20,7 +20,7 @@
 # This file is mostly AI generated.
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 
@@ -121,7 +121,7 @@ class Agent:
         history_limit: int = MAX_HISTORY_CHARS,
         reserve_tokens: int = 16384,
         keep_recent_tokens: int = 20000,
-    ) -> AsyncIterator[AgentEvent]:
+    ) -> AsyncGenerator[AgentEvent, None]:
         if self.state.is_streaming:
             raise RuntimeError("Agent is already running. Queue steering instead.")
         self.state.is_streaming = True
@@ -151,16 +151,16 @@ class Agent:
                     yield event
         except BaseException as exc:
             reason = "aborted" if isinstance(exc, (asyncio.CancelledError, GeneratorExit)) else "error"
-            messages = self.state.messages
-            index = len(messages) - 1
-            while index >= 0 and isinstance(messages[index], CompactionEntry):
+            run_messages = self.state.messages
+            index = len(run_messages) - 1
+            while index >= 0 and isinstance(run_messages[index], CompactionEntry):
                 index -= 1
-            last = messages[index] if index >= 0 else None
+            last = run_messages[index] if index >= 0 else None
             if isinstance(last, AssistantMessage) and not last.tool_calls and last.stop_reason in {"stop", "length"}:
                 # Validation and workspace cleanup did not accept this final answer.
-                messages[index] = replace(last, stop_reason=reason)
+                run_messages[index] = replace(last, stop_reason=reason)
             elif not isinstance(last, AssistantMessage) or last.stop_reason not in {"aborted", "error"}:
-                messages.append(AssistantMessage("", reason))
+                run_messages.append(AssistantMessage("", reason))
             raise
         finally:
             self.state.is_streaming = False

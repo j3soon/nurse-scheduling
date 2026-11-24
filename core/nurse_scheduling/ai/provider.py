@@ -26,7 +26,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import aclosing
 from copy import copy
 from dataclasses import dataclass, replace
@@ -275,7 +275,7 @@ class ToolCapableChatProvider(ChatProvider, Protocol):
         self,
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
-    ) -> AsyncIterator[ChatStreamEvent]:
+    ) -> AsyncGenerator[ChatStreamEvent, None]:
         """Yield text deltas and any tool calls for one assistant response."""
         ...
 
@@ -538,7 +538,7 @@ class OpenAiCompatibleProvider:
         self,
         messages: Sequence[ChatMessage],
         tools: Sequence[dict[str, Any]] | None = None,
-    ) -> AsyncIterator[ChatStreamEvent]:
+    ) -> AsyncGenerator[ChatStreamEvent, None]:
         """Translate SSE chunks and retry bounded transient provider failures."""
         await self.prepare_context()
         timeout = httpx.Timeout(self._settings.provider_timeout_seconds, connect=10.0)
@@ -697,7 +697,7 @@ class OpenAiCompatibleProvider:
         timeout: httpx.Timeout,
         headers: dict[str, str],
         payload: dict[str, Any],
-    ) -> AsyncIterator[ChatStreamEvent]:
+    ) -> AsyncGenerator[ChatStreamEvent, None]:
         """Run one HTTP stream attempt without replay policy."""
         request_started = time.perf_counter()
         first_output: float | None = None
@@ -922,18 +922,13 @@ def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
             raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
         blocks = target.setdefault(key, [])
         for block in value:
-            last = blocks[-1] if blocks else None
+            last = blocks[-1] if blocks else {}
             kind = block.get("type")
             if not isinstance(kind, str):
                 raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
             field = {"reasoning.text": "text", "reasoning.summary": "summary", "thinking": "thinking"}.get(kind)
-            same = (
-                last is not None
-                and last.get("type") == kind
-                and all(
-                    last.get(name) == block.get(name) or name not in last or name not in block
-                    for name in ("id", "index")
-                )
+            same = last.get("type") == kind and all(
+                last.get(name) == block.get(name) or name not in last or name not in block for name in ("id", "index")
             )
             # A completed signed thinking block followed by more thinking is a
             # separate native block. Keep it separate to preserve its signature.

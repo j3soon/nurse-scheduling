@@ -10,14 +10,22 @@
   rm -rf web-frontend/out
   rm -rf site
 
+  # Netlify can leave an older Bun on PATH.
+  if [[ "$(bun --version 2>/dev/null)" != "$BUN_VERSION" ]]; then
+    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+    curl -fsSL https://bun.sh/install | bash -s "bun-v$BUN_VERSION"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+  fi
+
   cd web-frontend
   bun ci
   bun run build
   cd ..
 
   python -m unittest discover -s scripts -p test_check_docs_links.py
-  pip install -r docs/requirements.txt
-  python -m zensical build --clean --strict
+  python -m pip install uv==0.13.9
+  python -m uv sync --locked --project docs
+  docs/.venv/bin/python -m zensical build --clean --strict
   python scripts/check_docs_links.py
 
   mkdir -p web-frontend/out/docs
@@ -27,8 +35,9 @@
 [build.environment]
   # Configure frontend Sentry variables in Netlify's Build-scoped environment.
   # See web-frontend/README.md#hosting-on-netlify. Keep SENTRY_AUTH_TOKEN out of this file.
-  NODE_VERSION = "25"
-  PYTHON_VERSION = "3.12"
+  BUN_VERSION = "1.4.5"
+  NODE_VERSION = "26"
+  PYTHON_VERSION = "3.14"
 
 # Preserve the former AI app page URL, query parameters, and fragments.
 [[redirects]]

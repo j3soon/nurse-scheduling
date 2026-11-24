@@ -90,11 +90,11 @@ When a scan finds a new issue, add a check here as its regression record.
 
 ## 4. Fuzz the HTTP schemas
 
-Set `SCRATCH` to a temporary directory outside the repository. Install the tools
-there instead of the system environment:
+Set `SCRATCH` to a temporary directory outside the repository. Use uv to install
+the tools there for the active Python interpreter.
 
 ```bash
-python -m pip install --target "$SCRATCH/scan-tools" schemathesis pip-audit
+uv pip install --python "$(command -v python)" --target "$SCRATCH/scan-tools" schemathesis pip-audit
 set -a; . artifacts/security-scan/stack/stack.env; set +a
 (cd "$SCRATCH" && PYTHONPATH="$SCRATCH/scan-tools" "$SCRATCH/scan-tools/bin/st" run \
   "$API_OPEN_URL/openapi.json" -n 40 --checks all --generation-deterministic)
@@ -124,20 +124,28 @@ mismatches are documentation gaps.
 
 ## 5. Audit dependencies
 
-`core/requirements.txt` leaves most packages unpinned, so a deployed image has
-the versions available on its build date. Audit both a fresh resolution and the
-installed development versions, which approximate an older image:
+The API images install the runtime dependencies from `core/uv.lock`. Export
+the pins from the revision used to build the image.
 
 ```bash
-python -m pip install -q --dry-run --ignore-installed -r core/requirements.txt --report "$SCRATCH/fresh.json"
-python -c 'import json, sys
-for item in json.load(open(sys.argv[1]))["install"]:
-    print(item["metadata"]["name"] + "==" + item["metadata"]["version"])' "$SCRATCH/fresh.json" >"$SCRATCH/fresh-pins.txt"
-python -m pip freeze | grep -v '^-e\|@ file' >"$SCRATCH/dev-pins.txt"
-for pins in fresh-pins dev-pins; do
-  PYTHONPATH="$SCRATCH/scan-tools" python -m pip_audit -r "$SCRATCH/$pins.txt" --no-deps --disable-pip
-done
+uv export --project core --locked --no-dev --no-hashes \
+  --no-emit-project --quiet -o "$SCRATCH/api-pins.txt"
+(cd "$SCRATCH" && PYTHONPATH="$SCRATCH/scan-tools" python -m pip_audit \
+  -r "$SCRATCH/api-pins.txt" --no-deps --disable-pip)
 ```
+
+The E2B template pins its direct sandbox dependencies in
+`docker/e2b/e2b.Dockerfile`. pip resolves their transitive dependencies during
+the build. Run `python3 -m pip list --format=freeze` in a disposable sandbox
+from the template revision under review. Save the output locally as
+`$SCRATCH/sandbox-pins.txt` and run the same `pip-audit` command with that file.
+
+For a package managed by `core`, run `uv lock --upgrade-package NAME` in
+`core/` to apply a fix. If an exact pin or constraint blocks the update,
+edit `core/pyproject.toml` first, then run the lock command. Commit the manifest
+and lockfile together when both change. If a direct sandbox pin changes,
+match the new locked version in `docker/e2b/e2b.Dockerfile` and audit the rebuilt
+template.
 
 `pip-audit` exits 1 when it finds an advisory. For the frontend, run
 `bun audit` in `web-frontend/`. The site is a static

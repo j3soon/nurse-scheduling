@@ -115,17 +115,23 @@ def get_model_entity_counts(ctx: Context) -> tuple[int, int]:
     if solver is None:
         return 0, 0
 
-    if hasattr(solver, "model"):
-        model = solver.model
-        if hasattr(model, "Proto"):
-            proto = model.Proto()
-            return len(proto.variables), len(proto.constraints)
-        if hasattr(model, "NumVariables") and hasattr(model, "NumConstraints"):
-            return model.NumVariables(), model.NumConstraints()
-        if hasattr(model, "get_num_variables") and hasattr(model, "get_num_linear_constraints"):
-            return model.get_num_variables(), model.get_num_linear_constraints()
-        if hasattr(solver, "variables") and hasattr(model, "numConstraints"):
-            return len(solver.variables), model.numConstraints()
+    model = getattr(solver, "model", None)
+    read_proto = getattr(model, "Proto", None)
+    if callable(read_proto):
+        proto = read_proto()
+        return len(proto.variables), len(proto.constraints)
+    count_variables = getattr(model, "NumVariables", None)
+    count_constraints = getattr(model, "NumConstraints", None)
+    if callable(count_variables) and callable(count_constraints):
+        return count_variables(), count_constraints()
+    count_variables = getattr(model, "get_num_variables", None)
+    count_constraints = getattr(model, "get_num_linear_constraints", None)
+    if callable(count_variables) and callable(count_constraints):
+        return count_variables(), count_constraints()
+    variables = getattr(solver, "variables", None)
+    count_constraints = getattr(model, "numConstraints", None)
+    if variables is not None and callable(count_constraints):
+        return len(variables), count_constraints()
 
     return len(ctx.model_vars), 0
 

@@ -22,7 +22,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import replace
 from functools import partial
@@ -164,7 +164,7 @@ async def run_workspace(
     load_attachment: AttachmentLoader | None = None,
     analysis: AgentAnalysis | None = None,
     timezone: str = "UTC",
-) -> AsyncIterator[AgentEvent | AgentScheduleSpecChange | AgentDownload | AgentAnalysis]:
+) -> AsyncGenerator[AgentEvent | AgentScheduleSpecChange | AgentDownload | AgentAnalysis, None]:
     """Hydrate, run, read, validate, and destroy one fresh sandbox run."""
     agent = agent or Agent()
     metrics = metrics or WorkspaceMetrics()

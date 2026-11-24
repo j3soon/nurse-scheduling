@@ -7,7 +7,8 @@ SPDX-FileCopyrightText: 2026 Johnson Sun -->
 Core contains the scheduling engine, CLI, optimization backend, and AI service.
 Each independent shell block below starts from the repository root unless the
 text specifies another directory. In the development container, dependencies
-are installed system-wide. Skip virtual environment creation there.
+are preinstalled in an active virtual environment. Skip the environment setup
+there.
 
 ## CLI
 
@@ -24,12 +25,11 @@ and test coverage.
 
 ```sh
 cd core
-# create virtual environment
-uv venv --python 3.12
+# create .venv with the locked dependencies, including the optional solvers
+# and test tooling
+uv sync --locked --all-extras
 # activate virtual environment
 source .venv/bin/activate
-# install dependencies, including the optional solvers and test tooling
-uv pip install -r requirements-optional.txt
 # run the CPU solver, OR-Tools | CP-SAT is the default
 python -m nurse_scheduling.cli <input_file_path> [output_csv_path] --solver ortools/cp-sat
 # for example:
@@ -64,6 +64,8 @@ ruff check nurse_scheduling tests
 ruff check --fix nurse_scheduling tests
 # apply consistent formatting
 ruff format nurse_scheduling tests
+# type-check production Python
+ty check --python "$(command -v python)"
 ```
 
 Routine CI runs the complete schedule fixture corpus through OR-Tools CP-SAT and PuLP CBC. It runs the workbook

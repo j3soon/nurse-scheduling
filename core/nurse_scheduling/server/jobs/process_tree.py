@@ -51,15 +51,17 @@
 #   watches the guard and aborts the optimization if the guard exits early.
 
 import ctypes
-import multiprocessing
 import os
 import signal
 import subprocess
 import sys
 from dataclasses import dataclass
-from multiprocessing.connection import Connection
-from multiprocessing.context import BaseContext
-from typing import Any
+from multiprocessing.context import SpawnContext
+from multiprocessing.process import BaseProcess
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from multiprocessing.connection import _ConnectionBase
 
 PR_SET_PDEATHSIG = 1
 """Linux prctl operation that configures a signal for parent process death."""
@@ -105,7 +107,7 @@ def _kill_process_tree_by_pid(process_id: int) -> None:
         )
 
 
-def kill_process_tree(process: multiprocessing.Process) -> None:
+def kill_process_tree(process: BaseProcess) -> None:
     """Forcibly terminate a child and any external solver descendants."""
     # Reap an exited direct child before signaling its group. Darwin returns
     # EPERM when a process group contains only an unreaped zombie leader.
@@ -134,7 +136,7 @@ def kill_process_tree(process: multiprocessing.Process) -> None:
 
 
 def _guard_process_tree(
-    connection: Connection,
+    connection: "_ConnectionBase",
     child_process_id: int,
     process_tree_cleaned_event: Any,
 ) -> None:
@@ -155,8 +157,8 @@ def _guard_process_tree(
 class ProcessTreeGuard:
     """Guard that survives abrupt supervisor death long enough to clean a tree."""
 
-    process: multiprocessing.Process
-    send_connection: Connection
+    process: BaseProcess
+    send_connection: "_ConnectionBase"
     process_tree_cleaned_event: Any
 
     @property
@@ -172,7 +174,7 @@ class ProcessTreeGuard:
     @classmethod
     def start(
         cls,
-        context: BaseContext,
+        context: SpawnContext,
         child_process_id: int,
         *,
         name: str,

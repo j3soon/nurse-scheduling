@@ -22,6 +22,12 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+// Node.js 25 and later define a localStorage global. Without
+// --localstorage-file it is undefined, and it hides the jsdom storage in the
+// test workers. Read the descriptor because the getter prints a warning.
+const nodeDefinesWebStorage =
+  Object.getOwnPropertyDescriptor(globalThis, 'localStorage') !== undefined;
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -30,6 +36,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    execArgv: nodeDefinesWebStorage ? ['--no-experimental-webstorage'] : [],
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],

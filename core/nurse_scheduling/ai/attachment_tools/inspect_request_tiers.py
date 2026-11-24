@@ -25,11 +25,12 @@ Counts are per preference entry and per expanded person/date target, including o
 import argparse
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-try:
+if TYPE_CHECKING or __package__:
     from .inspect_optimizer_result import _weight
     from .inspect_shift_requests import inspect_requests
-except ImportError:
+else:  # Standalone copy in /reference/tools.
     from inspect_optimizer_result import _weight
     from inspect_shift_requests import inspect_requests
 

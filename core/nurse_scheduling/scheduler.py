@@ -104,7 +104,7 @@ class ScheduleResult(NamedTuple):
     """Typed result returned by the scheduling application service."""
 
     dataframe: Any | None
-    solution: dict[tuple[int, int, int], int] | None
+    solution: dict[tuple[int, int, int], int | float] | None
     score: int | None
     solver_status: str
     cell_export_info: Any | None
@@ -326,7 +326,7 @@ def schedule(
             model_build_stats_callback,
             ctx,
         )
-        preference_types.PREFERENCE_TYPES_TO_FUNC[preference.type](
+        preference_types.apply_preference(
             ctx,
             preference,
             ctx.compiled_schedule_spec.preferences[i],

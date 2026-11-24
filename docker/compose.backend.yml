@@ -31,7 +31,7 @@ services:
 
   pgadmin:
     profiles: ["inspection"]
-    image: dpage/pgadmin4:9.17
+    image: dpage/pgadmin4:9.19
     restart: "no"
     networks:
       - postgres
@@ -50,7 +50,7 @@ services:
       - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
 
   redis:
-    image: redis:8.8
+    image: redis:8.10
     restart: unless-stopped
     networks:
       - redis
@@ -78,7 +78,7 @@ services:
 
   redisinsight:
     profiles: ["inspection"]
-    image: redis/redisinsight:3.8.0
+    image: redis/redisinsight:3.10.1
     restart: "no"
     networks:
       - redis
