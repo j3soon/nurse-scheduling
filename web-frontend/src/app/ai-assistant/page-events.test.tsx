@@ -1015,22 +1015,28 @@ describe('AiAssistantPage', () => {
     expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
   });
 
-  it('marks the conversation unavailable and stops reconnecting when the event stream returns 404', async () => {
-    const user = userEvent.setup();
+  it('interrupts the active reply and stops reconnecting when the event stream returns 404', async () => {
     let failStream!: (error: unknown) => void;
     mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
       failStream = reject;
     }));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: 'description: current Schedule Spec\n',
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+
     render(<AiAssistantPage />);
-    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
-    await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(failStream).toBeDefined());
+    expect(screen.getByRole('status', { name: 'Thinking' })).toBeInTheDocument();
+    await act(async () => failStream(new MockAiHttpError('Session not found', 404)));
 
-    act(() => failStream(new MockAiHttpError('Session not found', 404)));
-
-    await expect(
-      screen.findByText('This chat is no longer available on the AI server. Start a new chat to continue.')
-    ).resolves.toBeInTheDocument();
+    expect(screen.getByText(
+      'This chat is no longer available on the AI server. Start a new chat to continue.',
+    )).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Thinking' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
     expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
   });
 

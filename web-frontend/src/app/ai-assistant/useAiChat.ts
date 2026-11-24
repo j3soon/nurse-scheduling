@@ -382,6 +382,19 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     onReset();
   }, [lifecycle, sessionEvents, onReset]);
 
+  const markConversationUnavailable = useCallback((notice: string) => {
+    resetRuntime();
+    setMessages(previous => previous.map(message => {
+      const interrupted = message.status === 'pending' ? failResponse(message) : message;
+      return interrupted.request?.active
+        ? { ...interrupted, request: { ...interrupted.request, active: false } }
+        : interrupted;
+    }));
+    setConversationUnavailable(true);
+    setSessionNotice(notice);
+    clearStoredConversation();
+  }, [resetRuntime]);
+
   useEffect(() => {
     if (!isClientReady) return;
     const refresh = () => {
@@ -572,16 +585,13 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       .catch((statusError: unknown) => {
         if (sessionIdRef.current !== activeSessionId) return;
         if (statusError instanceof AiHttpError && statusError.status === 404) {
-          resetRuntime();
-          setConversationUnavailable(true);
-          setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
-          clearStoredConversation();
+          markConversationUnavailable('This chat is no longer available on the AI server. Start a new chat to continue.');
         } else {
           checkedSessionRef.current = null;
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
         }
       });
-  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError, resetRuntime]);
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady, markConversationUnavailable, reportRequestError]);
 
   useEffect(() => {
     if (!activeSessionId || !retainsUploads || conversationUnavailable) {
@@ -624,28 +634,18 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         timeout = window.setTimeout(checkExpiration, Math.min(delay, 2147483647));
         return;
       }
-      resetRuntime();
-      setConversationUnavailable(true);
-      setSessionNotice(
+      markConversationUnavailable(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
       );
-      clearStoredConversation();
     };
     checkExpiration();
     return () => window.clearTimeout(timeout);
-  }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds]);
+  }, [activeSessionId, markConversationUnavailable, sessionExpiresAt, sessionRetentionSeconds]);
 
   const renewSessionExpiration = () => {
     lastActivityRef.current = Date.now();
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
-
-  const markConversationUnavailable = useCallback((notice: string) => {
-    resetRuntime();
-    setConversationUnavailable(true);
-    setSessionNotice(notice);
-    clearStoredConversation();
-  }, [resetRuntime]);
 
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
     // Reconstruct completed replies without replacing the active background operation.

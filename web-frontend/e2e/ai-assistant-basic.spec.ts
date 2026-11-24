@@ -969,6 +969,35 @@ test('returns to the top of a long chat on desktop and mobile', async ({ page })
   }
 });
 
+test('ends the pending reply when the AI session stream returns 404', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.addInitScript(() => {
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'active-run',
+    }));
+  });
+  const removeSession = Promise.withResolvers<void>();
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    await removeSession.promise;
+    await route.fulfill({ status: 404, json: { detail: 'Chat session not found.' } });
+  });
+
+  try {
+    await page.goto('/ai-assistant');
+    const thinking = page.getByRole('status', { name: 'Thinking', exact: true });
+    await expect(thinking).toBeVisible();
+    removeSession.resolve();
+    await expect(page.getByText('This chat is no longer available on the AI server. Start a new chat to continue.')).toBeVisible();
+    await expect(thinking).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+  } finally {
+    removeSession.resolve();
+  }
+});
+
 test('keeps Stop pending while the AI stream replays an earlier completed reply', async ({ page }) => {
   await mockAiBackend(page);
   await page.addInitScript(() => {
