@@ -1058,6 +1058,45 @@ describe('AiAssistantPage', () => {
     expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('lets the user replace a rejected token while a restored background reply waits for its stream', async () => {
+    const user = userEvent.setup();
+    let failStream!: (error: unknown) => void;
+    let resumed: SessionStreamOptions | undefined;
+    mockStreamSessionEvents
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failStream = reject; }))
+      .mockImplementation(async (_id, callbacks) => {
+        resumed = callbacks;
+        await new Promise<void>(() => {});
+      });
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
+      sessionEventId: 4,
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+    render(<AiAssistantPage />);
+    await waitFor(() => expect(failStream).toBeDefined());
+
+    act(() => failStream(new MockAiHttpError('Unauthorized', 401)));
+    await user.type(await screen.findByLabelText('Token for AI assistant'), 'replacement-token');
+    const save = screen.getByRole('button', { name: 'Save token for AI assistant' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2));
+    expect(mockStreamSessionEvents.mock.calls[1][3]).toBe('replacement-token');
+    act(() => resumed?.onEvent({ type: 'delta', runId: 'optimizer-turn', text: 'answer.' }));
+    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.backgroundAssistantId).toBe('optimizer-turn');
+    expect(stored.messages[0]).toEqual(expect.objectContaining({ content: 'Partial answer.', status: 'pending' }));
+  });
+
   it('preserves stopping state when session_reset replays an active background run', async () => {
     const user = userEvent.setup();
     let streamCallbacks: SessionStreamOptions | undefined;

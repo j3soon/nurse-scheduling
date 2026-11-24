@@ -1101,7 +1101,8 @@ export default function AiAssistantPage() {
               token={authToken}
               rememberToken={rememberAuthToken}
               isEditing={isEditingAuthToken}
-              disabled={isStreaming}
+              // A rejected token stops the event stream, so accept its replacement during a reply.
+              disabled={isStreaming && !authRejected}
               onEdit={() => setIsEditingAuthToken(true)}
               onCancel={() => setIsEditingAuthToken(false)}
               onSave={saveAuthToken}
