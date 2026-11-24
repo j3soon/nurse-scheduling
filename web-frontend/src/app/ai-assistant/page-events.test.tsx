@@ -1034,6 +1034,30 @@ describe('AiAssistantPage', () => {
     expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
   });
 
+  it('stops reconnecting the event stream after the AI server rejects its token', async () => {
+    const user = userEvent.setup();
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failStream = reject;
+    }));
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(failStream).toBeDefined());
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => failStream(new MockAiHttpError('Unauthorized', 401)));
+      // Pass the longest reconnect delay.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(screen.getByText('AI credentials were rejected. Enter the current AI token and try again.')).toBeInTheDocument();
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves stopping state when session_reset replays an active background run', async () => {
     const user = userEvent.setup();
     let streamCallbacks: SessionStreamOptions | undefined;
