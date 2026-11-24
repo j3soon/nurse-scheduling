@@ -97,7 +97,8 @@ def _read_assignments(path: Path, context: dict) -> tuple[dict, Any, Any]:
             rows = []
             cell_count = 0
             for row in sheet.iter_rows():
-                cell_count += len(row)
+                # Without a <dimension> record, openpyxl yields an empty row for each skipped row number.
+                cell_count += max(len(row), 1)
                 if cell_count > MAX_CELLS:
                     raise ValueError("Optimizer worksheet is too large")
                 rows.append(row)

@@ -85,6 +85,36 @@ def test_reader_accepts_a_sheet_without_a_dimension_record(audit, monkeypatch):
         inspect_result(path, context, context["source_sha256"])
 
 
+def test_reader_counts_empty_gap_rows_toward_the_cell_limit(audit, monkeypatch):
+    # Without <dimension>, read-only openpyxl yields an empty row for each skipped row number.
+    path, context = audit
+    with ZipFile(path) as source:
+        parts = {item.filename: source.read(item) for item in source.infolist()}
+    sheet = "xl/worksheets/sheet1.xml"
+    parts[sheet] = re.sub(rb"<dimension [^>]*/>", b"", parts[sheet])
+
+    def write_parts():
+        with ZipFile(path, "w", compression=ZIP_DEFLATED) as target:
+            for name, data in parts.items():
+                target.writestr(name, data)
+
+    write_parts()
+    workbook = load_workbook(path, read_only=True)
+    try:
+        rows = list(workbook.worksheets[0].iter_rows())
+    finally:
+        workbook.close()
+    monkeypatch.setattr(reader, "MAX_CELLS", sum(max(len(row), 1) for row in rows) + 100)
+    assert inspect_result(path, context, context["source_sha256"])["score"] == 33_000_000_000
+
+    far_row = len(rows) + 1_000
+    gap = f'<row r="{far_row}"><c r="A{far_row}" t="inlineStr"><is><t>gap</t></is></c></row>'.encode()
+    parts[sheet] = parts[sheet].replace(b"</sheetData>", gap + b"</sheetData>")
+    write_parts()
+    with pytest.raises(ValueError, match="too large"):
+        inspect_result(path, context, context["source_sha256"])
+
+
 def test_completion_summary_has_bounded_counts_and_explicit_scope(audit):
     path, context = audit
     result = build_request_audit(FIXTURE.read_text(), path.read_bytes())
