@@ -832,6 +832,9 @@ and current session recovery working.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+  Compare filesystem locations as `Path` objects. When path behavior needs
+  a cross-platform regression, use `PureWindowsPath` and `PurePosixPath` to
+  exercise both path flavors locally.
   Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
   Reconfigure stdin and stdout to UTF-8 in helpers that exchange text through pipes.
   Set `encoding="utf-8"` on subprocess text pipes as well.

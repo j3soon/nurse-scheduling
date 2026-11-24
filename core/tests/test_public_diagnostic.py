@@ -1190,4 +1190,4 @@ def test_diagnostic_treats_empty_env_vars_as_defaults(monkeypatch):
 
     assert config.target_url == "https://api.nursescheduling.org"
     assert config.scenario_path.is_file()
-    assert str(config.report_dir) == "/tmp/nurse-scheduling-diagnostics"
+    assert config.report_dir == Path("/tmp/nurse-scheduling-diagnostics")
