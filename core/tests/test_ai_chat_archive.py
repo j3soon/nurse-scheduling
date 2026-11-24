@@ -33,6 +33,7 @@ from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
 
+import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 from starlette.requests import ClientDisconnect
@@ -46,7 +47,7 @@ from nurse_scheduling.ai.chat_archive import (
     create_chat_archive,
 )
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
-from nurse_scheduling.ai.history import _owner_hash
+from nurse_scheduling.ai.history import ChatHistory, _owner_hash
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.workspace import SandboxAttachment
 from nurse_scheduling.server.auth import AuthCredential, create_stream_token
@@ -543,3 +544,35 @@ def test_export_link_cannot_be_forged_across_owners_or_credentials(monkeypatch):
     # Invalid session IDs fail as missing sessions before querying PostgreSQL.
     with pytest.raises(ChatSessionNotFoundError):
         chat_archive.write_chat_archive(StubHistory("postgresql://stub/test"), "not-a-uuid", io.BytesIO())
+
+
+def test_export_link_lookup_reports_a_database_outage_as_unavailable(monkeypatch):
+    class UnavailableHistory:
+        read = ChatHistory.read
+
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def initialize(self) -> None:
+            pass
+
+        def prune(self) -> None:
+            pass
+
+        async def maintain(self) -> None:
+            await asyncio.Event().wait()
+
+        async def write(self, *_args, **_kwargs) -> bool:
+            return True
+
+        def session_export_authorization(self, _session_id: str):
+            raise psycopg.OperationalError("database unavailable")
+
+    monkeypatch.setattr("nurse_scheduling.ai.app.ChatHistory", UnavailableHistory)
+    settings = basic.make_settings(history_postgres_url="postgresql://stub/test")
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
+        response = client.get(f"/v1/sessions/{uuid4()}/export?token=link", headers={"Authorization": ""})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "The chat archive could not be created. Try again."}

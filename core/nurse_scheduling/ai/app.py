@@ -369,12 +369,12 @@ def create_app(
                 elif recovery.history is not None:
                     try:
                         auth_record = await recovery.history.read("session_export_authorization", session_id)
-                    except psycopg.Error as exc:
-                        logger.exception("AI export link authorization lookup failed")
+                    except RuntimeError:
+                        # `ChatHistory.read` has logged the storage failure and raised RuntimeError.
                         raise HTTPException(
                             status_code=503,
                             detail="The chat archive could not be created. Try again.",
-                        ) from exc
+                        ) from None
                     if auth_record is not None:
                         owner_hash, credential_id = auth_record
                 if owner_hash is not None:
