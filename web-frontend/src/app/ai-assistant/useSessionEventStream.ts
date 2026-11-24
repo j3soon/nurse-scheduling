@@ -31,11 +31,13 @@ interface ConnectionOptions {
   onEvent: SessionEventHandler;
   onEventId: (id: number) => void;
   onDisconnect: () => void;
-  onError: (error: unknown) => void;
+  // Return false to stop retrying. The connection record stays until its options change.
+  onError: (error: unknown) => boolean | void;
 }
 
 interface Connection {
   options: ConnectionOptions;
+  resetPending: boolean;
   controller: AbortController | null;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -62,10 +64,12 @@ export function useSessionEventStream() {
   useEffect(() => disconnect, [disconnect]);
 
   const connect = useCallback((options: ConnectionOptions) => {
+    const previous = connection.current;
+    const sameSession = previous?.options.sessionId === options.sessionId && previous?.options.endpoint === options.endpoint;
+    const resetPending = options.resetReplay === true || (sameSession && previous.resetPending);
     disconnect();
-    const current: Connection = { options, controller: null, timer: null };
+    const current: Connection = { options, resetPending, controller: null, timer: null };
     connection.current = current;
-    let resetReplay = options.resetReplay ?? false;
     const open = () => {
       if (connection.current !== current) return;
       current.timer = null;
@@ -86,32 +90,44 @@ export function useSessionEventStream() {
       };
       const stream = streamSessionEvents(options.sessionId, {
         lastEventId: cursor.current,
-        reset: resetReplay,
+        reset: current.resetPending,
         onEventId: id => {
           if (!ownsReader()) return;
           cursor.current = id;
           retryCount.current = 0;
           options.onEventId(id);
         },
-        onEvent: event => { if (ownsReader()) options.onEvent(event); },
+        onEvent: event => {
+          if (!ownsReader()) return;
+          if (event.type === 'session_reset') current.resetPending = false;
+          options.onEvent(event);
+        },
       }, controller.signal, options.authToken, options.endpoint);
-      resetReplay = false;
       void stream.then(reconnect, error => {
         if (!ownsReader()) return;
-        options.onError(error);
-        reconnect();
+        const shouldRetry = options.onError(error) !== false;
+        if (!ownsReader()) return;
+        if (shouldRetry) reconnect();
+        else current.controller = null;
       });
     };
     open();
   }, [disconnect]);
 
+  const retryStopped = useCallback(() => {
+    const current = connection.current;
+    if (current && current.controller === null && current.timer === null) {
+      connect({ ...current.options, resetReplay: current.resetPending });
+    }
+  }, [connect]);
+
   return useMemo(() => ({
-    connect, reset, cursor,
+    connect, reset, cursor, retryStopped,
     connected: (sessionId?: string, authToken?: string | null, endpoint?: string) => {
       const current = connection.current;
       return current !== null && (sessionId === undefined || current.options.sessionId === sessionId)
         && (authToken === undefined || current.options.authToken === authToken)
         && (endpoint === undefined || current.options.endpoint === endpoint);
     },
-  }), [connect, reset]);
+  }), [connect, reset, retryStopped]);
 }

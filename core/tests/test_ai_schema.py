@@ -420,3 +420,23 @@ def test_every_returned_yaml_example_is_frontend_compatible(path: str):
     result = validate_frontend_schedule_spec_yaml(schedule_spec_yaml(payload), SCHEDULE_BYTE_LIMIT)
 
     assert result.valid, result.render()
+
+
+def test_shift_count_schema_example_enforces_exact_target_count():
+    from nurse_scheduling.scheduler import schedule
+
+    topic = SCHEMA_TOPICS["preferences.shift count"]
+    assert topic.example is not None
+    fragment = _load_yaml(topic.example.encode("utf-8"))
+    payload = deepcopy(base_schedule_payload())
+    payload["dates"] = {"range": {"startDate": "2026-10-01", "endDate": "2026-10-05"}}
+    payload["people"]["items"] = [{"id": "P1", "description": "", "history": []}]
+    payload["people"].pop("groups", None)
+    payload["shiftTypes"]["items"] = [{"id": "N", "description": ""}]
+    payload["shiftTypes"].pop("groups", None)
+    payload["preferences"] = [{"type": "at most one shift per day"}, *fragment["preferences"]]
+    payload.pop("export", None)
+
+    solved = schedule(schedule_spec_yaml(payload).encode("utf-8"), solver="ortools/cp-sat")
+    assignments = list(solved.dataframe.iloc[2, 1:6])
+    assert assignments.count("N") == 4

@@ -33,6 +33,7 @@ from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
 
+import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 from starlette.requests import ClientDisconnect
@@ -46,9 +47,10 @@ from nurse_scheduling.ai.chat_archive import (
     create_chat_archive,
 )
 from nurse_scheduling.ai.chat_export import build_saved_chat_export
+from nurse_scheduling.ai.history import ChatHistory, _owner_hash
 from nurse_scheduling.ai.sessions import SessionStore
 from nurse_scheduling.ai.workspace import SandboxAttachment
-from nurse_scheduling.server.auth import create_stream_token
+from nurse_scheduling.server.auth import AuthCredential, create_stream_token
 
 from . import test_ai_basic as basic
 from .test_ai_history import postgres_history, uninitialized_postgres_history
@@ -276,7 +278,7 @@ def test_native_download_link_is_scoped_to_the_session_and_expires(postgres_hist
         other.close()
         expired = create_stream_token(
             basic.AI_AUTH_TOKEN,
-            f"ai-chat-export:{session}",
+            f"ai-chat-export:{session}:{_owner_hash(owner)}",
             ttl_seconds=300,
             now=datetime.now(UTC) - timedelta(seconds=600),
         )
@@ -443,3 +445,134 @@ def test_prepared_archives_bound_disk_files_and_close_on_expiry_failure_and_shut
         abandoned = entry.archive = io.BytesIO()
     prepared.close()
     assert abandoned.closed
+
+
+def test_export_link_cannot_be_forged_across_owners_or_credentials(monkeypatch):
+    alice_token = "alice-bearer-token-1234"
+    bob_token = "bob-bearer-token-5678"
+    saved_auth: dict[str, tuple[str, str | None]] = {}
+
+    class StubHistory:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def initialize(self) -> None:
+            pass
+
+        def prune(self) -> None:
+            pass
+
+        async def maintain(self) -> None:
+            await asyncio.Event().wait()
+
+        async def write(self, operation: str, *args, **kwargs):
+            if operation == "save_session":
+                session_id, state = args[0], kwargs["state"]
+                previous_cred = saved_auth.get(session_id, (None, None))[1]
+                credential_id = kwargs.get("credential_id") or previous_cred
+                saved_auth[session_id] = (_owner_hash(state[0]), credential_id)
+            return True
+
+        async def read(self, operation: str, *args, **kwargs):
+            if operation == "session_export_authorization":
+                return saved_auth.get(args[0])
+            return None
+
+    def fake_archive(_history, _session_id: str, *, owner: str | None = None):
+        return io.BytesIO(b"PK\x05\x06" + b"\x00" * 18)
+
+    monkeypatch.setattr("nurse_scheduling.ai.app.ChatHistory", StubHistory)
+    monkeypatch.setattr("nurse_scheduling.ai.app.create_chat_archive", fake_archive)
+
+    settings = basic.make_settings(
+        history_postgres_url="postgresql://stub/test",
+        auth_token=None,
+        auth_tokens=(AuthCredential("alice", alice_token), AuthCredential("bob", bob_token)),
+    )
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app, headers={"Authorization": f"Bearer {alice_token}"}) as alice:
+        session = basic.create_session(alice)
+        owner = alice.cookies[basic.OWNER_COOKIE]
+        prepared = alice.post(f"/v1/sessions/{session}/export")
+        assert prepared.status_code == 200
+        valid_token = prepared.json()["download_token"]
+        download_id = prepared.json()["download_id"]
+
+        # Another browser sharing Alice's bearer key cannot forge a link without Alice's owner hash.
+        forged_same_key = create_stream_token(alice_token, f"ai-chat-export:{session}", ttl_seconds=300)
+        assert (
+            alice.get(
+                f"/v1/sessions/{session}/export?token={forged_same_key}", headers={"Authorization": ""}
+            ).status_code
+            == 401
+        )
+        # Another credential cannot forge a link even if it knew the owner hash.
+        forged_other_key = create_stream_token(bob_token, f"ai-chat-export:{session}", ttl_seconds=300)
+        forged_other_key_with_owner = create_stream_token(
+            bob_token, f"ai-chat-export:{session}:{_owner_hash(owner)}", ttl_seconds=300
+        )
+        for forged in (forged_other_key, forged_other_key_with_owner):
+            assert (
+                alice.get(f"/v1/sessions/{session}/export?token={forged}", headers={"Authorization": ""}).status_code
+                == 401
+            )
+
+        # Legitimate minted link still works without cookies (loaded and after eviction/restart).
+        other_browser = basic.AuthenticatedTestClient(app, headers={"Authorization": f"Bearer {bob_token}"})
+        assert (
+            other_browser.get(
+                f"/v1/sessions/{session}/export?download={download_id}&token={valid_token}",
+                headers={"Authorization": ""},
+            ).status_code
+            == 200
+        )
+        other_browser.close()
+
+    # After restart (session not in memory), server-side lookup authorizes the valid link and rejects forgeries.
+    restarted = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(restarted, headers={"Authorization": f"Bearer {bob_token}"}) as bob:
+        assert (
+            bob.get(f"/v1/sessions/{session}/export?token={valid_token}", headers={"Authorization": ""}).status_code
+            == 200
+        )
+        assert (
+            bob.get(
+                f"/v1/sessions/{session}/export?token={forged_other_key_with_owner}", headers={"Authorization": ""}
+            ).status_code
+            == 401
+        )
+    # Invalid session IDs fail as missing sessions before querying PostgreSQL.
+    with pytest.raises(ChatSessionNotFoundError):
+        chat_archive.write_chat_archive(StubHistory("postgresql://stub/test"), "not-a-uuid", io.BytesIO())
+
+
+def test_export_link_lookup_reports_a_database_outage_as_unavailable(monkeypatch):
+    class UnavailableHistory:
+        read = ChatHistory.read
+
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def initialize(self) -> None:
+            pass
+
+        def prune(self) -> None:
+            pass
+
+        async def maintain(self) -> None:
+            await asyncio.Event().wait()
+
+        async def write(self, *_args, **_kwargs) -> bool:
+            return True
+
+        def session_export_authorization(self, _session_id: str):
+            raise psycopg.OperationalError("database unavailable")
+
+    monkeypatch.setattr("nurse_scheduling.ai.app.ChatHistory", UnavailableHistory)
+    settings = basic.make_settings(history_postgres_url="postgresql://stub/test")
+    app = basic.create_test_app(settings=settings, provider=basic.FakeProvider())
+    with basic.AuthenticatedTestClient(app, raise_server_exceptions=False) as client:
+        response = client.get(f"/v1/sessions/{uuid4()}/export?token=link", headers={"Authorization": ""})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "The chat archive could not be created. Try again."}

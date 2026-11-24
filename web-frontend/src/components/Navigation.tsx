@@ -56,7 +56,7 @@ export default function Navigation() {
   const router = useRouter();
   const pathname = usePathname();
   const currentTabIndex = TABS.findIndex(tab => tab.path === pathname);
-  const { hasTabSwitchWarningActive } = useUnsavedEditingState();
+  const { hasTabSwitchWarningActive, tabSwitchWarningMessage } = useUnsavedEditingState();
   const { exportData, undo, redo, canUndo, canRedo } = useScheduleSpec();
   const hasCustomExportLayout = exportData !== undefined && !usesOnlyExportDefaults(exportData);
 
@@ -65,12 +65,15 @@ export default function Navigation() {
       return;
     }
 
-    if (hasTabSwitchWarningActive() && !confirm(t("You have unsaved edits. Leave this page without saving?"))) {
+    if (
+      hasTabSwitchWarningActive()
+      && !confirm(tabSwitchWarningMessage() ?? t("You have unsaved edits. Leave this page without saving?"))
+    ) {
       return;
     }
 
     router.push(TABS[index].path);
-  }, [currentTabIndex, hasTabSwitchWarningActive, router, t]);
+  }, [currentTabIndex, hasTabSwitchWarningActive, router, t, tabSwitchWarningMessage]);
 
   const tabStripRef = useRef<HTMLDivElement>(null);
   const hasCenteredTabRef = useRef(false);

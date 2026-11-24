@@ -382,6 +382,19 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     onReset();
   }, [lifecycle, sessionEvents, onReset]);
 
+  const markConversationUnavailable = useCallback((notice: string) => {
+    resetRuntime();
+    setMessages(previous => previous.map(message => {
+      const interrupted = message.status === 'pending' ? failResponse(message) : message;
+      return interrupted.request?.active
+        ? { ...interrupted, request: { ...interrupted.request, active: false } }
+        : interrupted;
+    }));
+    setConversationUnavailable(true);
+    setSessionNotice(notice);
+    clearStoredConversation();
+  }, [resetRuntime]);
+
   useEffect(() => {
     if (!isClientReady) return;
     const refresh = () => {
@@ -572,16 +585,13 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       .catch((statusError: unknown) => {
         if (sessionIdRef.current !== activeSessionId) return;
         if (statusError instanceof AiHttpError && statusError.status === 404) {
-          resetRuntime();
-          setConversationUnavailable(true);
-          setSessionNotice('This chat is no longer available on the AI server. Start a new chat to continue.');
-          clearStoredConversation();
+          markConversationUnavailable('This chat is no longer available on the AI server. Start a new chat to continue.');
         } else {
           checkedSessionRef.current = null;
           reportRequestError(statusError, 'The stored AI chat could not be checked.');
         }
       });
-  }, [activeSessionId, aiEndpoint, authToken, isClientReady, reportRequestError, resetRuntime]);
+  }, [activeSessionId, aiEndpoint, authToken, isClientReady, markConversationUnavailable, reportRequestError]);
 
   useEffect(() => {
     if (!activeSessionId || !retainsUploads || conversationUnavailable) {
@@ -624,35 +634,36 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         timeout = window.setTimeout(checkExpiration, Math.min(delay, 2147483647));
         return;
       }
-      resetRuntime();
-      setConversationUnavailable(true);
-      setSessionNotice(
+      markConversationUnavailable(
         `This chat expired after ${retentionLabel(sessionRetentionSeconds)} of inactivity. Start a new chat to continue.`,
       );
-      clearStoredConversation();
     };
     checkExpiration();
     return () => window.clearTimeout(timeout);
-  }, [activeSessionId, resetRuntime, sessionExpiresAt, sessionRetentionSeconds]);
+  }, [activeSessionId, markConversationUnavailable, sessionExpiresAt, sessionRetentionSeconds]);
 
   const renewSessionExpiration = () => {
     lastActivityRef.current = Date.now();
     setSessionExpiresAt(Date.now() + sessionRetentionSeconds * 1000);
   };
 
-  const markConversationUnavailable = (notice: string) => {
-    resetRuntime();
-    setConversationUnavailable(true);
-    setSessionNotice(notice);
-    clearStoredConversation();
-  };
-
   const startSessionEventStream = useCallback((sessionId: string, endpoint: string, resetReplay = false) => {
+    // Reconstruct completed replies without replacing the active background operation.
+    let completedReplayRuns = new Set<string>();
+    let replayMessageRunId: string | undefined;
+    const backgroundMessageRunId = () => replayMessageRunId ?? lifecycle.current('background')?.id;
+    const finishBackgroundMessage = () => {
+      if (replayMessageRunId === undefined) lifecycle.finish(lifecycle.current('background'));
+      replayMessageRunId = undefined;
+    };
     const beginBackgroundMessage = (runId: string) => {
-      lifecycle.begin('background', runId);
-      // The server renews the session when it starts this turn.
-      setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
-      sandboxScheduleRef.current = scheduleSpecYamlRef.current;
+      replayMessageRunId = completedReplayRuns.has(runId) ? runId : undefined;
+      if (replayMessageRunId === undefined) {
+        lifecycle.begin('background', runId);
+        // The server renews the session when it starts this turn.
+        setSessionExpiresAt(Date.now() + sessionRetentionSecondsRef.current * 1000);
+        sandboxScheduleRef.current = scheduleSpecYamlRef.current;
+      }
       setMessages(previous => {
         const existing = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return existing ? previous.map(message => message.id === existing.id
@@ -663,11 +674,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     // A reconnect replays only retained events, so a long turn can lose its own
     // turn_start. Adopt the remaining output instead of discarding the answer.
     const resumeBackgroundMessage = () => {
+      if (replayMessageRunId !== undefined) return;
       if (lifecycle.getSnapshot().background?.phase !== 'interrupted' && lifecycle.current('background')) return;
       beginBackgroundMessage(lifecycle.current('background')?.id ?? messageId());
     };
     const updateBackgroundMessage = (update: (message: ChatMessage) => ChatMessage, messageId?: string) => {
-      const activeId = lifecycle.current('background')?.id ?? messageId;
+      const activeId = messageId ?? backgroundMessageRunId();
       if (activeId === undefined) return;
       setMessages(previous => {
         const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === activeId);
@@ -676,12 +688,12 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     };
     const failBackgroundTurn = (message: string) => {
       updateBackgroundMessage(entry => failResponse(entry, message));
-      lifecycle.finish(lifecycle.current('background'));
+      finishBackgroundMessage();
       setError(message);
     };
     const ownsConversation = lifecycle.capture();
     const updateBackgroundCosts = (update: (message: ChatMessage) => ChatMessage) => {
-      const runId = lifecycle.current('background')?.id;
+      const runId = backgroundMessageRunId();
       setMessages(previous => {
         const first = previous.find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         return previous.map(message => message.id === first?.id ? update(message) : message);
@@ -695,6 +707,8 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       },
       onModelSelection: modelSelection => updateBackgroundMessage(entry => ({ ...entry, modelSelection })),
       onReset: reset => {
+        completedReplayRuns = new Set(reset.terminalRunIds.filter(id => id !== reset.activeRunId));
+        replayMessageRunId = undefined;
         setMessages(previous => {
           const keptRuns = new Set<string>();
           return previous.flatMap(message => {
@@ -707,7 +721,15 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           });
         });
         setActiveOptimization(null);
-        lifecycle.finish(lifecycle.current('background'));
+        const background = lifecycle.current('background');
+        // Keep a replayed active run, including its pending Stop request.
+        if (background && reset.activeRunId !== background.id
+          && !(reset.runIds.includes(background.id) && !reset.terminalRunIds.includes(background.id))) {
+          if (!reset.runIds.includes(background.id) && !reset.terminalRunIds.includes(background.id)) {
+            updateBackgroundMessage(entry => failResponse(entry, 'This response expired from event replay. Start a new question.'));
+          }
+          lifecycle.finish(background);
+        }
         const foreground = eventRouterRef.current.foreground;
         if (foreground?.runId && !reset.runIds.includes(foreground.runId) && !reset.terminalRunIds.includes(foreground.runId)
           && reset.activeRunId !== foreground.runId) {
@@ -716,11 +738,11 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
         if (reset.incomplete) setSessionNotice('Some earlier response output expired from event replay.');
       },
       onRunContext: id => {
-        if (lifecycle.current('background')?.id !== id) beginBackgroundMessage(id);
+        if (backgroundMessageRunId() !== id) beginBackgroundMessage(id);
       },
       onRunStart: beginBackgroundMessage,
       onSteering: (queuedId, content) => {
-        const runId = lifecycle.current('background')?.id;
+        const runId = backgroundMessageRunId();
         if (!runId) return;
         queuedMessagesRef.current = queuedMessagesRef.current.filter(message => message.id !== queuedId);
         setQueuedMessages(queuedMessagesRef.current);
@@ -756,11 +778,11 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           failureReason: undefined,
           responseCompletedAt: Date.now(),
         }), runId);
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
       },
       onStopped: runId => {
         updateBackgroundMessage(stopResponse, runId);
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
       },
       onStale: message => {
         updateBackgroundMessage(entry => ({
@@ -771,13 +793,13 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           responseCompletedAt: Date.now(),
           activity: [{ kind: 'response', text: message }],
         }));
-        lifecycle.finish(lifecycle.current('background'));
+        finishBackgroundMessage();
         setError(message);
       },
       onDownload: id => updateBackgroundMessage(entry => ({ ...entry, downloadId: id })),
       onWarning: setError,
       onModelInput: input => {
-        const runId = lifecycle.current('background')?.id;
+        const runId = backgroundMessageRunId();
         setMessages(previous => {
         const answer = [...previous].reverse().find(message => message.role === 'assistant' && (message.runId ?? message.id) === runId);
         if (!answer) return previous;
@@ -804,10 +826,18 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       onDisconnect: () => { if (lifecycle.busy) setIsReconnecting(true); },
       onEvent: event => eventRouterRef.current.dispatch(event, value => dispatchPageEvent(value, handlers, setMessages), ownsConversation),
       onError: streamError => {
-        if (isAuthenticationError(streamError)) reportRequestError(streamError, 'The AI session could not reconnect.');
+        if (streamError instanceof AiHttpError && streamError.status === 404) {
+          markConversationUnavailable('This chat is no longer available on the AI server. Start a new chat to continue.');
+          return false;
+        }
+        // Retry a rejected token only after the user enters another one.
+        if (isAuthenticationError(streamError)) {
+          reportRequestError(streamError, 'The AI session could not reconnect.');
+          return false;
+        }
       },
     });
-  }, [applyRunSchedule, authToken, lifecycle, reportRequestError, updateContextUsage, sessionEvents, setError]);
+  }, [applyRunSchedule, authToken, lifecycle, markConversationUnavailable, reportRequestError, updateContextUsage, sessionEvents, setError]);
 
   useEffect(() => {
     if (!isClientReady || activeSessionId === null || conversationUnavailable) return;
@@ -882,6 +912,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
           ...(resume?.recover && original ? {
             content: original.content, activity: original.activity, runId: original.runId,
             scheduleSpecYaml: original.scheduleSpecYaml,
+            truncated: original.truncated, downloadId: original.downloadId,
             modelSelection: original.modelSelection, providerCalls: original.providerCalls, costSummary: original.costSummary,
           } : {}),
         };
@@ -1109,6 +1140,8 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       } finally {
         controller.signal.removeEventListener('abort', aborted);
         eventRouterRef.current.finish(foreground);
+        // Finishing delivers any deferred events, so save their position too.
+        if (lifecycle.owns(operation)) setSessionEventId(lastSessionEventIdRef.current);
       }
       if (!lifecycle.owns(operation)) return;
       setMessages(previous => previous.map(message => (
@@ -1191,6 +1224,10 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
   const submitMessage = async (question: string, attachments: File[]) => {
     if (!question || (authRequired && authToken === null)) return;
     if (isStreaming) {
+      if (attachments.length > 0) {
+        setError('Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.');
+        return;
+      }
       const queuedMessage = { id: messageId(), content: question, createdAt: Date.now() };
       queuedMessagesRef.current = [...queuedMessagesRef.current, queuedMessage];
       setQueuedMessages(queuedMessagesRef.current);
@@ -1266,13 +1303,18 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
       }
       await finished;
     } catch (compactError) {
-      if (lifecycle.owns(operation) && !controller.signal.aborted) {
-        reportRequestError(compactError, 'The conversation could not be compacted.');
+      if (lifecycle.owns(operation)) {
+        if (compactError instanceof AiHttpError && compactError.status === 404) {
+          markConversationUnavailable('This chat expired or is no longer available. Start a new chat to continue.');
+        } else if (!controller.signal.aborted) {
+          reportRequestError(compactError, 'The conversation could not be compacted.');
+        }
       }
     } finally {
       controller.signal.removeEventListener('abort', finishRun);
       eventRouterRef.current.finish(foreground);
       if (lifecycle.owns(operation)) {
+        setSessionEventId(lastSessionEventIdRef.current);
         setCompactionRequested(false);
         setIsReconnecting(false);
         if (currentRequestRef.current === request) currentRequestRef.current = null;
@@ -1406,6 +1448,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
+    retrySessionEventStream: sessionEvents.retryStopped,
     newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles, compactContext, isCompacting,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,

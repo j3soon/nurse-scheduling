@@ -38,12 +38,13 @@ from ..config import ServerSettings
 from ..errors import EventStreamCapacityError
 from ..jobs.controller import JobController
 from ..jobs.models import JobState
+from ..request_limits import ScheduleSpecFormRoute
 from ..solver_capabilities import solver_supports_finish_now
 from ..solver_options import normalize_solver_option
 from .schemas import JobResponse, OptimizationBackendResponse, OptimizationOptionsResponse
 from .sse import format_sse_event
 
-router = APIRouter()
+router = APIRouter(route_class=ScheduleSpecFormRoute)
 # The event stream authorizes through a URL token as well, so it carries its own dependency.
 events_router = APIRouter()
 CLIENT_ID_COOKIE_NAME = "nurse_scheduling_client_id"
@@ -289,6 +290,7 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
     controller = _controller(request)
     job = controller.get_job(job_id)
     _report_foreign_job_access(request, job)
+    supports_finish_now = solver_supports_finish_now(job.request.solver)
     keepalive_seconds = _settings(request).sse_keepalive_seconds
     poll_seconds = min(EVENT_POLL_SECONDS, keepalive_seconds)
 
@@ -305,9 +307,7 @@ def stream_events(request: Request, job_id: str, last_event_id: str | None = Hea
             for event in events:
                 after_id = event.id or after_id
                 if event.type == "job.state_changed":
-                    job = await run_in_threadpool(controller.get_job, job_id)
                     event_state = JobState(str(event.data["state"]))
-                    supports_finish_now = solver_supports_finish_now(job.request.solver)
                     cancel_requested = bool(event.data.get("cancel_requested", False))
                     early_completion_requested = bool(event.data.get("early_completion_requested", False))
                     event = replace(

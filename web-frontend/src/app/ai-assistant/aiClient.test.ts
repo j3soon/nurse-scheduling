@@ -854,17 +854,20 @@ describe('AI client', () => {
     ]);
   });
 
-  it('receives context usage and ignores invalid budgets', async () => {
+  it('receives context usage including retained totals above max_chars and ignores invalid budgets', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(streamedResponse([
       'event: context_usage\ndata: {"used_chars":250,"max_chars":1000}\n\n',
       'event: context_usage\ndata: {"used_chars":10,"max_chars":0}\n\n',
       'event: context_usage\ndata: {"used_chars":-1,"max_chars":100}\n\n',
-      'event: context_usage\ndata: {"used_chars":101,"max_chars":100}\n\n',
+      'event: context_usage\ndata: {"used_chars":101,"max_chars":100,"used_tokens":500,"max_tokens":10000,"estimated":true}\n\n',
       'event: context_usage\ndata: {"used_chars":"25","max_chars":100}\n\n',
     ])));
     const onEvent = vi.fn();
     await streamSessionEvents('session', { onEvent }, new AbortController().signal, null);
-    expect(onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } });
+    expect(onEvent.mock.calls).toEqual([
+      [{ type: 'context_usage', usage: { usedChars: 250, maxChars: 1000 } }],
+      [{ type: 'context_usage', usage: { usedChars: 101, maxChars: 100, usedTokens: 500, maxTokens: 10000, estimated: true } }],
+    ]);
   });
 
   it('reports a trimmed prompt history and ignores a meaningless count', async () => {
@@ -1271,5 +1274,27 @@ describe('provider cost events', () => {
     const events: SessionEvent[] = [];
     await streamSessionEvents('s', { onEvent: event => events.push(event) }, new AbortController().signal, null);
     expect(events.at(-1)).toEqual({ type: 'cost_summary', conversation: totals });
+  });
+
+  it('omits non-IANA browser timezones from session and queue requests', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'session-tz' }) })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    const resolvedOptionsSpy = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValueOnce({ timeZone: '+08:00' } as Intl.ResolvedDateTimeFormatOptions)
+      .mockReturnValueOnce({ timeZone: 'Etc/Unknown' } as Intl.ResolvedDateTimeFormatOptions);
+
+    try {
+      await createSession('people: []\n', null, '/ai');
+      await queueMessage('session-tz', 'msg-1', 'Follow up', null, '/ai');
+    } finally {
+      resolvedOptionsSpy.mockRestore();
+    }
+
+    const createBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const queueBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(createBody).not.toHaveProperty('frontend_timezone');
+    expect(queueBody).not.toHaveProperty('frontend_timezone');
   });
 });

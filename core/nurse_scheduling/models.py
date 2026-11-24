@@ -19,12 +19,13 @@
 
 import datetime
 import math
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from typing_extensions import Self
 
 from . import utils
@@ -47,10 +48,22 @@ def validate_weight(weight: float) -> int | float:
     return weight
 
 
+_INVALID_XLSX_ID_CHARACTER = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _validate_workbook_id(value: int | str) -> int | str:
+    if isinstance(value, str) and _INVALID_XLSX_ID_CHARACTER.search(value):
+        raise ValueError("Remove characters that XLSX cannot store from this ID.")
+    return value
+
+
+WorkbookId = Annotated[int | str, AfterValidator(_validate_workbook_id)]
+
+
 # Base models
 class Person(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | str
+    id: WorkbookId
     description: str | None = None
     history: list[str] | None = None
 
@@ -70,7 +83,7 @@ class PeopleGroup(BaseModel):
 
 class ShiftType(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: int | str
+    id: WorkbookId
     description: str | None = None
 
 
@@ -967,6 +980,10 @@ def _compile_export(data, people_map, shift_map, date_map):
             weight_range = rule.when.preference.weightRange
             if weight_range is not None and len(weight_range) != 2:
                 raise ValueError("export formatting preference weightRange must contain exactly two values")
+            if weight_range is not None and any(
+                isinstance(value, float) and math.isnan(value) for value in weight_range
+            ):
+                raise ValueError("export formatting preference weightRange values cannot be NaN")
             if weight_range is not None and weight_range[0] > weight_range[1]:
                 raise ValueError(
                     "export formatting preference weightRange minimum must be less than or equal to maximum"

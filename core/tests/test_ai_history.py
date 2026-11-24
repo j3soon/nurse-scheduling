@@ -28,7 +28,7 @@ import subprocess
 import threading
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -1270,6 +1270,18 @@ def test_postgres_stores_tool_output_with_nul_characters(postgres_history):
     with postgres_history._connect() as connection:
         assert session_entries(connection)[-1][1]["text"] == "a\ufffdb"
     assert postgres_history.load_events(session, 0)[0][4]["result"] == "a\ufffdb"
+
+
+def test_postgres_saves_a_restored_answer_after_failed_length_recovery(postgres_history):
+    # Length recovery saves the answer as omitted before compaction and restores it when compaction fails.
+    run, session, owner = str(uuid4()), str(uuid4()), str(uuid4())
+    postgres_history.save_session(session, session_state(owner))
+    postgres_history.start_run(run, session, session_state(owner), "question", 0, model="model", attachment_count=0)
+    answer = AssistantMessage("Truncated answer", "length")
+    postgres_history.append_entries(session, [(1, run, replace(answer, context_omitted=True))])
+    postgres_history.append_entries(session, [(1, run, answer)])
+    with postgres_history._connect() as connection:
+        assert "context_omitted" not in session_entries(connection)[-1][1]
 
 
 def test_postgres_writes_survive_cancel_scope(postgres_history):

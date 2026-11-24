@@ -173,6 +173,15 @@ output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
 assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
 write_fixture core/tests/test_scheduler.py
 
+# The ordinary pytest discovery omits the fixed assignment replay.
+for path in core/tests/testcases/real/ward.yaml core/tests/testcases/real/ward.assignment-01.json core/tests/real/assignment_fixture.py; do
+  write_fixture "$path"
+  output="$("$fixture_root/scripts/test_core_affected.sh" --list)"
+  assert_line "$output" 'test: tests/real/schedule_score_ground_truth.py'
+  assert_line "$output" 'tests: primary core suite (CP-SAT and CBC)'
+  rm -- "$fixture_root/$path"
+done
+
 printf 'change\n' >> "$fixture_root/web-frontend/src/app/page.tsx"
 output="$("$fixture_root/scripts/test_frontend_affected.sh" --list)"
 assert_line "$output" 'related: src/app/page.tsx'
@@ -236,6 +245,12 @@ assert_line "$output" 'test: tests/test_ai_history.py::selected_case'
 output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list --full)"
 assert_line "$output" 'tests: full Playwright suite (isolated server)'
 
+write_fixture web-frontend/src/app/ai-assistant/page.tsx
+output="$("$fixture_root/scripts/test_frontend_e2e_affected.sh" --list web-frontend/e2e/page.spec.ts)"
+assert_line "$output" 'spec: e2e/page.spec.ts'
+assert_no_line "$output" 'spec: e2e/ai-assistant-rendering.spec.ts'
+rm -- "$fixture_root/web-frontend/src/app/ai-assistant/page.tsx"
+
 set +e
 output="$("$fixture_root/scripts/test_core_affected.sh" --list --base missing-ref 2>&1)"
 status=$?
@@ -258,6 +273,7 @@ printf '%s\n' \
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "mock pytest: %s\n" "$*"' \
+  'if [[ ${MOCK_REPLAY_FAIL:-} == 1 && ${!#} == tests/real/schedule_score_ground_truth.py ]]; then exit 1; fi' \
   > "$fixture_root/bin/pytest"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -296,6 +312,19 @@ assert_no_line "$output" 'mock python: - pulp/highs'
 output="$(PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" --full)"
 assert_no_line "$output" 'mock python: - pulp/highs pulp/scip'
 assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --solver-profile=primary tests'
+
+write_fixture core/tests/testcases/real/ward.yaml
+set +e
+output="$(MOCK_REPLAY_FAIL=1 PATH="$fixture_root/bin:$PATH" "$fixture_root/scripts/test_core_affected.sh" 2>&1)"
+status=$?
+set -e
+if [[ $status -ne 1 ]]; then
+  printf 'Expected failed assignment replay to stop the affected check, got %d\n' "$status" >&2
+  exit 1
+fi
+assert_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 tests/real/schedule_score_ground_truth.py'
+assert_no_line "$output" 'mock pytest: -q --tb=short --disable-warnings --maxfail=1 --solver-profile=primary tests'
+rm -- "$fixture_root/core/tests/testcases/real/ward.yaml"
 
 set +e
 output="$(MOCK_SOLVER_PREFLIGHT_FAIL=1 PATH="$fixture_root/bin:$PATH" \

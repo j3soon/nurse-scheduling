@@ -19,7 +19,8 @@
 
 # This file is mostly AI generated.
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 
 from starlette._utils import get_route_path
 from starlette.datastructures import Headers
@@ -39,7 +40,9 @@ BODY_TOO_LARGE_MESSAGE = "AI request body is too large."
 class AiRequestLimitsMiddleware:
     """Check credentials before FastAPI buffers JSON, then count received bytes."""
 
-    def __init__(self, app: ASGIApp, *, settings: AiSettings, require_auth: Callable[[Request], None]) -> None:
+    def __init__(
+        self, app: ASGIApp, *, settings: AiSettings, require_auth: Callable[[Request], None | Awaitable[None]]
+    ) -> None:
         self._app = app
         self._require_auth = require_auth
         self._json_max_bytes = JSON_MAX_BYTES
@@ -53,7 +56,9 @@ class AiRequestLimitsMiddleware:
         path = get_route_path(scope).rstrip("/")
         if scope["method"] != "OPTIONS" and (path == "/v1/sessions" or path.startswith("/v1/sessions/")):
             try:
-                self._require_auth(Request(scope))
+                result = self._require_auth(Request(scope))
+                if inspect.isawaitable(result):
+                    await result
             except HTTPException as exc:
                 response = JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
                 await response(scope, receive, send)

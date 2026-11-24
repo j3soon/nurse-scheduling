@@ -209,6 +209,31 @@ describe('applyReferencesForIdChange', () => {
     expect((state.preferences[1] as ShiftRequestPreference).shiftType).toBe('Day');
     expect((state.preferences[3] as ShiftCountPreference).countShiftTypes).toBe('Day');
   });
+
+  it('updates only later date groups when renaming a date group whose old ID matches a date member', () => {
+    const state = createState();
+    state.dates = {
+      range: { startDate: new Date('2026-11-01'), endDate: new Date('2026-11-03') },
+      items: [
+        { id: '01', description: '' },
+        { id: '02', description: '' },
+        { id: '03', description: '' },
+      ],
+      groups: [
+        { id: 'WORKDAY', members: ['01', '02'], description: '' },
+        { id: 'Holiday', members: ['01', '03'], description: '' },
+        { id: 'Dependent', members: ['01'], description: '' },
+      ],
+    };
+
+    const renamed = applyReferencesForIdChange(state, DataType.DATES, '01', 'Holiday');
+
+    expect(renamed.dates.groups).toEqual([
+      { id: 'WORKDAY', members: ['01', '02'], description: '' },
+      { id: 'Holiday', members: ['01', '03'], description: '' },
+      { id: 'Dependent', members: ['Holiday'], description: '' },
+    ]);
+  });
 });
 
 describe('applyReferencesForIdDeletion', () => {
@@ -271,6 +296,29 @@ describe('applyReferencesForIdDeletion', () => {
       shiftType: ['N'],
       shiftTypeCoefficients: [['N', 3]],
     });
+  });
+
+  it('omits coefficient arrays when all referenced shift types are deleted', () => {
+    const initialState = createState();
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftType = ['D', 'N'];
+    (initialState.preferences[0] as ShiftTypeRequirementsPreference).shiftTypeCoefficients = [['D', 2]];
+    (initialState.preferences[3] as ShiftCountPreference).countShiftTypeCoefficients = [['D', 2]];
+    initialState.export!.extraColumns![0] = {
+      type: 'count',
+      header: 'D Count',
+      countShiftTypes: ['D', 'N'],
+      countShiftTypeCoefficients: [['D', 2]],
+      countDates: ['2026-01-01'],
+    };
+
+    const state = applyReferencesForIdDeletion(initialState, DataType.SHIFT_TYPES, ['D']);
+    const requirement = state.preferences.find(pref => pref.type === SHIFT_TYPE_REQUIREMENT) as ShiftTypeRequirementsPreference;
+    const count = state.preferences.find(pref => pref.type === SHIFT_COUNT) as ShiftCountPreference;
+    const extraColumn = state.export?.extraColumns?.[0];
+
+    expect(requirement).not.toHaveProperty('shiftTypeCoefficients');
+    expect(count).not.toHaveProperty('countShiftTypeCoefficients');
+    expect(extraColumn).not.toHaveProperty('countShiftTypeCoefficients');
   });
 
   it('removes IDs inside nested preference reference groups', () => {

@@ -24,7 +24,10 @@ from io import BytesIO
 from typing import Any
 from zipfile import BadZipFile, ZipFile
 
-from openpyxl import load_workbook
+from defusedxml.ElementTree import DefusedXMLParser
+from openpyxl.reader.excel import ExcelReader
+from openpyxl.worksheet.cell_range import CellRange
+from openpyxl.xml.constants import SHEET_MAIN_NS
 from openpyxl.xml.functions import DEFUSEDXML
 from ruamel.yaml import YAML
 
@@ -53,6 +56,48 @@ class OptimizerResultError(ValueError):
     """The returned workbook cannot be safely restored."""
 
 
+MAX_OPTIMIZER_MERGED_CELLS = 1_000_000
+
+
+class _MergedCellBudget:
+    """Count declared merged cells without retaining the worksheet XML tree."""
+
+    def __init__(self) -> None:
+        self._parents: list[str] = []
+        self._area = 0
+
+    def start(self, tag: str, attributes: dict[str, str]) -> None:
+        if (
+            self._parents
+            and self._parents[-1] == f"{{{SHEET_MAIN_NS}}}mergeCells"
+            and tag.rsplit("}", 1)[-1] == "mergeCell"
+        ):
+            size = CellRange(attributes["ref"]).size
+            self._area += size["rows"] * size["columns"]
+            if self._area > MAX_OPTIMIZER_MERGED_CELLS:
+                raise OptimizerResultError("The optimizer workbook contains too many merged cells.")
+        self._parents.append(tag)
+
+    def end(self, _tag: str) -> None:
+        self._parents.pop()
+
+
+class _OptimizerWorkbookReader(ExcelReader):
+    def read_worksheets(self) -> None:
+        # Use the same worksheet targets as openpyxl. It expands merged ranges
+        # while binding cells, so check the total area before binding any sheet.
+        budget = _MergedCellBudget()
+        for _, relationship in self.parser.find_sheets():
+            if relationship.target not in self.valid_files or "chartsheet" in relationship.Type:
+                continue
+            parser = DefusedXMLParser(target=budget, forbid_dtd=True)
+            with self.archive.open(relationship.target) as source:
+                for chunk in iter(lambda: source.read(65_536), b""):
+                    parser.feed(chunk)
+            parser.close()
+        super().read_worksheets()
+
+
 def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, str], people_count: int) -> bytes:
     """Restore first-sheet person IDs before either sandbox inspection or browser download."""
     if not DEFUSEDXML:
@@ -71,13 +116,17 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
                 raise OptimizerResultError("The optimizer result is not an XLSX workbook.")
     except BadZipFile as exc:
         raise OptimizerResultError("The optimizer workbook archive is invalid.") from exc
-    if all(anonymized == original for anonymized, original in original_id_by_anonymized_id.items()):
-        return content
+    identity_mapping = all(anonymized == original for anonymized, original in original_id_by_anonymized_id.items())
     try:
-        workbook = load_workbook(BytesIO(content), keep_links=False)
+        reader = _OptimizerWorkbookReader(BytesIO(content), keep_links=False)
+        with reader.archive:
+            reader.read()
+        workbook = reader.wb
         try:
             if not workbook.worksheets:
                 raise OptimizerResultError("The optimizer workbook has no worksheet.")
+            if identity_mapping:
+                return content
             sheet = workbook.worksheets[0]
             for row_number in range(3, 3 + people_count):
                 cell = sheet.cell(row_number, 1)
@@ -99,6 +148,9 @@ def restore_people_ids(content: bytes, original_id_by_anonymized_id: dict[str, s
     except Exception as exc:
         if isinstance(exc, OptimizerResultError):
             raise
+        # ExcelReader wraps worksheet validation errors in a ValueError.
+        if isinstance(exc.__cause__, OptimizerResultError):
+            raise exc.__cause__ from None
         raise OptimizerResultError("The optimizer workbook could not be restored.") from exc
 
 

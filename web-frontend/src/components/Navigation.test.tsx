@@ -38,24 +38,27 @@ vi.mock('next/navigation', () => ({
   usePathname: () => mockUsePathname(),
 }));
 
-function TestTabSwitchWarning() {
+function TestTabSwitchWarning({ message }: { message?: string }) {
   const { setTabSwitchWarningActive, clearTabSwitchWarningActive } = useUnsavedEditingState();
 
   useEffect(() => {
-    setTabSwitchWarningActive();
+    setTabSwitchWarningActive(message);
 
     return () => {
-      clearTabSwitchWarningActive();
+      clearTabSwitchWarningActive(message);
     };
-  }, [clearTabSwitchWarningActive, setTabSwitchWarningActive]);
+  }, [clearTabSwitchWarningActive, message, setTabSwitchWarningActive]);
 
   return null;
 }
 
-function renderNavigation({ tabSwitchWarningActive = false } = {}) {
+function renderNavigation({
+  tabSwitchWarningActive = false,
+  tabSwitchWarningMessage,
+}: { tabSwitchWarningActive?: boolean; tabSwitchWarningMessage?: string } = {}) {
   return render(
     <UnsavedEditingStateProvider>
-      {tabSwitchWarningActive && <TestTabSwitchWarning />}
+      {tabSwitchWarningActive && <TestTabSwitchWarning message={tabSwitchWarningMessage} />}
       <ScheduleSpecProvider>
         <Navigation />
       </ScheduleSpecProvider>
@@ -204,6 +207,18 @@ describe('Navigation', () => {
 
     expect(confirm).toHaveBeenCalledWith('You have unsaved edits. Leave this page without saving?');
     expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('asks with the registered message when a page describes why leaving matters', async () => {
+    const user = userEvent.setup();
+    (confirm as unknown as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    renderNavigation({ tabSwitchWarningActive: true, tabSwitchWarningMessage: 'The run continues.' });
+
+    await user.click(screen.getByRole('button', { name: '5. Shift Requests' }));
+
+    expect(confirm).toHaveBeenCalledWith('The run continues.');
+    expect(mockPush).toHaveBeenCalledWith('/shift-requests');
   });
 
   it('maps vertical wheel movement to the tab strip and preserves native gestures', () => {

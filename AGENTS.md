@@ -203,6 +203,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   Pi, Claude Code, and Antigravity CLI must use their own active harness and
   model names. If the active model is unclear, verify it before committing.
   Never substitute a shortened family name such as `GPT-5`.
+- When a commit ports or reworks another agent's change, name each harness in
+  the same line, such as `by Antigravity (Gemini 4 Neon) and Claude Code (Opus 5.5)`.
 - Include validation details in a commit body only when they materially help a
   reviewer assess the change, such as a regression reproduction, an unusual check,
   or a known limitation. Omit routine successful-test and lint summaries. Keep

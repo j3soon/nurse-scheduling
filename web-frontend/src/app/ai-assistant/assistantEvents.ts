@@ -206,10 +206,6 @@ export function interruptRunningTools(entries: ActivityEntry[]): ActivityEntry[]
   ));
 }
 
-export function resumeResponse<T extends ChatMessageContent>(message: T): T {
-  return { ...message, status: 'pending', failureReason: undefined, responseCompletedAt: undefined };
-}
-
 export function completeResponse<T extends ChatMessageContent>(message: T, completedAt = Date.now()): T {
   return { ...message, status: undefined, failureReason: undefined, responseCompletedAt: completedAt };
 }

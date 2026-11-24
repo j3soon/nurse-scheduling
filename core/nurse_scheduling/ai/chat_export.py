@@ -820,6 +820,10 @@ def _compaction_summary_html(entry):
     ) + _chunked_text("[Conversation summary]\n" + text, "summary")
 
 
+def _code_fence(text: str) -> str:
+    return "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", text)), default=0))
+
+
 def build_markdown_chat(messages, metadata):
     lines = [
         "# AI Assistant",
@@ -840,14 +844,16 @@ def build_markdown_chat(messages, metadata):
         if files:
             lines += ["", *["- " + _file_markdown(file) for file in files]]
         if message.get("presentation") == "summary":
-            lines += ["", "```text", _compaction_summary_text(message["compaction"]), "```"]
+            summary_text = _compaction_summary_text(message["compaction"])
+            fence = _code_fence(summary_text)
+            lines += ["", fence + "text", summary_text, fence]
         elif message["role"] == "optimizer":
             summary, details = _optimizer_parts(message["content"])
             lines += ["", summary or "[No message text]"]
             if details:
                 lines += ["", *[f"- **{label}:** " + value.replace("\n", "\n  ") for label, value in details]]
         elif message.get("source") == "schedule":
-            fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", message["content"])), default=0))
+            fence = _code_fence(message["content"])
             lines += [
                 "",
                 "<details>",
@@ -860,7 +866,7 @@ def build_markdown_chat(messages, metadata):
                 "</details>",
             ]
         elif message["role"] == "system" or message.get("source"):
-            fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", message["content"])), default=0))
+            fence = _code_fence(message["content"])
             lines += ["", fence + "text", message["content"], fence]
         elif message["role"] == "user":
             lines += ["", message["content"] or "[No message text]"]
@@ -870,7 +876,9 @@ def build_markdown_chat(messages, metadata):
                     lines += ["", _activity_text(entry) or "[No message text]"]
                     lines += ["", _count(entry["text"]) + " characters"]
                 else:
-                    lines += ["", "### " + _activity_label(entry), "", "```text", _activity_text(entry), "```"]
+                    activity_text = _activity_text(entry)
+                    fence = _code_fence(activity_text)
+                    lines += ["", "### " + _activity_label(entry), "", fence + "text", activity_text, fence]
         details = _model_cost_lines(message)
         if "createdAt" in message:
             details.append("Sent: " + _iso(message["createdAt"]))

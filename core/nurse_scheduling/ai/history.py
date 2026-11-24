@@ -27,6 +27,7 @@ from contextlib import suppress
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 import anyio
 import psycopg
@@ -362,6 +363,21 @@ class ChatHistory:
                 (status, "service_restart" if kind is None else None, committed, run_id),
             )
 
+    def session_export_authorization(self, session_id: str) -> tuple[str, str | None] | None:
+        """Return `(owner_hash, auth_credential_id)` for an unexpired session, or `None`."""
+        try:
+            UUID(session_id)
+        except ValueError:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT owner_hash, auth_credential_id FROM chat_sessions WHERE id = %s AND expires_at > now()",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row[0], row[1]
+
     def load_session(self, session_id: str, owner: str) -> dict[str, Any] | None:
         """Load an unexpired owned session, its conversation, and the runs whose terminal event was not stored.
 
@@ -672,7 +688,8 @@ def _recover_run_context(connection, session_id: str, run_id: str) -> None:
 def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) -> None:
     """Save entries by sequence number.
 
-    A later copy of a run's entry can change only its interruption state. Other conflicts keep the first copy.
+    A later copy of a run's entry can change only its interruption or context omission state.
+    Other conflicts keep the first copy.
     """
     rows = []
     for seq, run_id, entry in entries:
@@ -684,7 +701,8 @@ def _insert_entries(connection, session_id: str, entries: Sequence[EntryRow]) ->
                 "INSERT INTO chat_session_entries AS e (session_id, seq, run_id, type, payload) "
                 "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (session_id, seq) DO UPDATE SET payload = EXCLUDED.payload "
                 "WHERE e.run_id = EXCLUDED.run_id AND e.type = EXCLUDED.type AND e.payload <> EXCLUDED.payload "
-                "AND e.payload - 'stop_reason' - 'valid' = EXCLUDED.payload - 'stop_reason' - 'valid'",
+                "AND e.payload - 'stop_reason' - 'valid' - 'context_omitted' "
+                "= EXCLUDED.payload - 'stop_reason' - 'valid' - 'context_omitted'",
                 rows,
             )
 

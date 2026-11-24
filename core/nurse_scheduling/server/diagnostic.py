@@ -192,9 +192,11 @@ class DiagnosticConfig:
     ) -> "DiagnosticConfig":
         """Load a diagnostic configuration from environment variables."""
         return cls(
-            target_url=target_url or os.getenv("DIAGNOSTIC_TARGET_URL", DEFAULT_TARGET_URL),
-            scenario_path=scenario_path or Path(os.getenv("DIAGNOSTIC_SCENARIO_PATH", str(DEFAULT_SCENARIO_PATH))),
-            report_dir=report_dir or Path(os.getenv("DIAGNOSTIC_REPORT_DIR", "/tmp/nurse-scheduling-diagnostics")),
+            target_url=target_url or (os.getenv("DIAGNOSTIC_TARGET_URL") or "").strip() or DEFAULT_TARGET_URL,
+            scenario_path=scenario_path
+            or Path((os.getenv("DIAGNOSTIC_SCENARIO_PATH") or "").strip() or str(DEFAULT_SCENARIO_PATH)),
+            report_dir=report_dir
+            or Path((os.getenv("DIAGNOSTIC_REPORT_DIR") or "").strip() or "/tmp/nurse-scheduling-diagnostics"),
             info_samples=_positive_int_env("DIAGNOSTIC_INFO_SAMPLES", 100),
             parallel_requests=_positive_int_env("DIAGNOSTIC_PARALLEL_REQUESTS", 10),
             expected_concurrency=_positive_int_env("DIAGNOSTIC_EXPECTED_CONCURRENCY", 3),

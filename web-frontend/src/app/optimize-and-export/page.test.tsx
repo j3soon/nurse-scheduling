@@ -19,12 +19,13 @@
 
 // This test is mostly AI generated.
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as renderWithoutProviders, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { act } from 'react';
+import { act, useEffect, type ReactElement } from 'react';
 import OptimizeAndExportPage from '@/app/optimize-and-export/page';
 import { I18nProvider } from '@/i18n/I18nProvider';
 import { LOCALE_STORAGE_KEY } from '@/i18n/messages';
+import { UnsavedEditingStateProvider, useUnsavedEditingState } from '@/utils/unsavedEditingState';
 import {
   BACKEND_API_CANDIDATES,
   buildAuthHeaders,
@@ -73,6 +74,24 @@ vi.mock('@sentry/nextjs', () => ({
 const LOCAL_API_URL = 'http://localhost:8000';
 const PRODUCTION_API_URL = 'https://api.nursescheduling.org';
 const SECONDARY_API_URL = 'https://api-secondary.nursescheduling.org';
+
+let unsavedEditingState: ReturnType<typeof useUnsavedEditingState> | null = null;
+
+function UnsavedEditingStateProbe() {
+  const state = useUnsavedEditingState();
+  useEffect(() => {
+    unsavedEditingState = state;
+  }, [state]);
+  return null;
+}
+
+// The app layout provides the page-leaving warning state.
+const render = (ui: ReactElement) => renderWithoutProviders(
+  <UnsavedEditingStateProvider>
+    <UnsavedEditingStateProbe />
+    {ui}
+  </UnsavedEditingStateProvider>
+);
 
 class MockEventSource {
   static instances: MockEventSource[] = [];
@@ -508,42 +527,22 @@ describe('OptimizeAndExportPage error handling', () => {
     expect(screen.getAllByText('Activity unavailable')).toHaveLength(2);
   });
 
-  it('uses default options and reports an unavailable current submission route without a legacy retry', async () => {
-    const user = userEvent.setup();
+  it('marks a tagged release backend without the options route incompatible before submission', async () => {
+    // A v0.2.0 backend passes the /info checks but serves neither current route.
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchMock.mockImplementation((url: string) => {
-      if (url.endsWith('/optimize/options')) {
-        return Promise.resolve({ ok: false, status: 404 });
-      }
-      if (url.endsWith('/schedule_spec/optimize')) {
-        return Promise.resolve({ ok: false, status: 404, text: vi.fn().mockResolvedValue('Not Found') });
-      }
-      return Promise.resolve(healthyResponse());
-    });
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/optimize/options') ? { ok: false, status: 404 } : healthyResponse()
+    ));
 
     render(<OptimizeAndExportPage />);
 
-    await expect(screen.findByText('Server: Online')).resolves.toBeInTheDocument();
-    expect(screen.queryByText(/backend is too old/i)).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /solver/i })).toHaveValue('ortools/cp-sat');
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveValue(300);
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('min', '1');
-    expect(screen.getByRole('spinbutton', { name: /solver timeout/i })).toHaveAttribute('max', '3600');
-    expect(screen.getByRole('checkbox', { name: /prettify xlsx/i })).toBeChecked();
-
-    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `${LOCAL_API_URL}/schedule_spec/optimize`,
-      expect.objectContaining({ method: 'POST' })
-    ));
-    const optimizeRequest = fetchMock.mock.calls.find(([url]) => url === `${LOCAL_API_URL}/schedule_spec/optimize`);
-    const requestBody = optimizeRequest?.[1]?.body as FormData;
-    expect(requestBody.get('schedule_spec_file')).toBeInstanceOf(File);
-    expect(requestBody.get('file')).toBeNull();
-    expect(requestBody.get('solver')).toBe('ortools/cp-sat');
-    expect(requestBody.get('timeout')).toBe('300');
-    expect(requestBody.get('prettify')).toBe('true');
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      'Incompatible. Backend predates the current optimizer API. Update the backend.'
+    );
+    expect(screen.getByRole('button', { name: /optimize and download/i })).toBeDisabled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/schedule_spec/optimize'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => url === `${LOCAL_API_URL}/optimize`)).toBe(false);
   });
 
@@ -1845,6 +1844,56 @@ describe('OptimizeAndExportPage error handling', () => {
     ))).toHaveLength(1);
   });
 
+  it('warns before leaving the page only while an optimization runs', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('EventSource', MockEventSource);
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({ id: 'opt_leave' })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(optimizeJobResponse({
+          id: 'opt_leave', state: 'completed', outcome: 'optimal', score: 42, solverStatus: 'OPTIMAL',
+        })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: vi.fn().mockResolvedValue(new Blob(['xlsx'])),
+        headers: new Headers({ 'Content-Disposition': 'attachment; filename=schedule.xlsx' }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    const dispatchBeforeUnload = () => {
+      const event = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+
+    render(<OptimizeAndExportPage />);
+    expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
+    expect(dispatchBeforeUnload()).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: /optimize and download/i }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+
+    expect(unsavedEditingState?.tabSwitchWarningMessage()).toBe(
+      'The optimization keeps running and downloads the schedule when it finishes, but this page stops showing its progress. Leave this page?'
+    );
+    expect(dispatchBeforeUnload()).toBe(true);
+
+    act(() => {
+      MockEventSource.instances[0].emit('job.state_changed', { state: 'completed' });
+      MockEventSource.instances[0].emit('job.result_available', { outcome: 'optimal', score: 42 });
+    });
+    await expect(screen.findByText('Schedule optimized and downloaded successfully!')).resolves.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(unsavedEditingState?.hasTabSwitchWarningActive()).toBe(false);
+      expect(dispatchBeforeUnload()).toBe(false);
+    });
+  });
+
   it('shows queued position updates received through SSE', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('EventSource', MockEventSource);
@@ -2395,5 +2444,81 @@ describe('OptimizeAndExportPage backend authentication', () => {
     await user.type(endpointInput, 'http://localhost:9000{Enter}');
 
     await waitFor(() => expect(readStoredServers()).toEqual([{ endpoint: 'http://localhost:9000' }]));
+  });
+
+  it('marks a backend that requires an unsupported authentication scheme as incompatible', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation((url: string) => Promise.resolve(
+      String(url).endsWith('/info')
+        ? healthyResponse({ auth: { required: true, scheme: 'basic' } })
+        : unauthorizedResponse()
+    ));
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByText('Server: Incompatible')).resolves.toBeInTheDocument();
+    expect(screen.getByLabelText(`${LOCAL_API_URL} status: Incompatible`)).toHaveAttribute(
+      'title',
+      expect.stringContaining('Unsupported authentication scheme "basic"')
+    );
+  });
+
+  it('blocks a selected backend that requires Basic authentication even when its options are public', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(healthyResponse({ auth: { required: true, scheme: 'basic' } }))
+      .mockResolvedValueOnce(optimizationOptionsResponse());
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Incompatible');
+    await user.click(screen.getByLabelText(`Select ${LOCAL_API_URL}`));
+
+    expect(screen.queryByRole('button', { name: 'Optimize Anyway and Download' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+    expect(screen.getByText('This backend requires basic authentication. The app supports bearer tokens.')).toBeVisible();
+  });
+
+  it('opens with default backends when device storage is blocked', async () => {
+    queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Blocked', 'SecurityError');
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle(LOCAL_API_URL)).resolves.toBeInTheDocument();
+  });
+
+  it('keeps migrated legacy backends when device storage cannot save them', async () => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      servers: [{ endpoint: 'http://localhost:9001' }],
+      selectedServerEndpoint: 'http://localhost:9001',
+    }));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (url: string) => respondWithHealthyBackend(String(url))
+    );
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('http://localhost:9001')).resolves.toBeInTheDocument();
+  });
+
+  it('keeps valid stored backends next to invalid entries', async () => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({
+      appVersion: 'frontend-test',
+      servers: [null, 'bad-entry', { endpoint: 'http://localhost:9000' }],
+      selectedServerEndpoint: 'http://localhost:9000',
+    }));
+    (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (url: string) => respondWithHealthyBackend(String(url))
+    );
+
+    render(<OptimizeAndExportPage />);
+
+    await expect(screen.findByTitle('http://localhost:9000')).resolves.toBeInTheDocument();
   });
 });

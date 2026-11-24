@@ -20,7 +20,9 @@ below from your local `core/` clone. Activate `.venv` with
   affected pytest suites. AI code, guidance, tests, shared AI fixtures, and deleted AI
   files run all `test_ai_*.py` files. Changes confined to `tests/ai/` run
   `tests/test_ai_testcases.py`. Other source, helper, dependency, and deleted-file changes run the
-  primary solver suite with CP-SAT and CBC regression sweeps. Other backend
+  primary solver suite with CP-SAT and CBC regression sweeps. When real-scenario
+  tests or their fixtures change, the affected command first runs the saved
+  assignment replay to check the fixture hash and objective score. Other backend
   sweeps remain available with `pytest --solver-profile=all`. Tests marked
   `requires_solver` skip automatically when their optional runtime package is absent.
   An installed runtime that fails its availability check still stops the script. Use `--skip-unavailable-solvers` to skip those
@@ -728,6 +730,9 @@ and current session recovery working.
 - For streamed multipart limits, raise `MultiPartException` so Starlette closes
   temporary files, then translate the rejection to HTTP 413. Check file closure
   as well as the response and consumed bytes.
+- Starlette limits each text form field to 1 MiB. Put routes that accept Schedule
+  Spec YAML in a form field on a router with `ScheduleSpecFormRoute`, so text
+  fields and uploads share `OPTIMIZE_MAX_YAML_BYTES`.
 - Bound submitted Schedule Spec by its alias expansion and nesting depth as
   well as its byte size. `loader.measure_yaml_expansion` measures both from the
   parse events without building the structure, and both the API and `load_schedule_spec`
@@ -829,6 +834,9 @@ and current session recovery working.
   and suppresses the full schedule output.
 - Core tests run on Linux, macOS, and Windows in CI. Keep tests platform
   neutral, including paths, line endings, and environment limits.
+  Compare filesystem locations as `Path` objects. When path behavior needs
+  a cross-platform regression, use `PureWindowsPath` and `PurePosixPath` to
+  exercise both path flavors locally.
   Read UTF-8 fixtures and generated reports with explicit `encoding="utf-8"`.
   Reconfigure stdin and stdout to UTF-8 in helpers that exchange text through pipes.
   Set `encoding="utf-8"` on subprocess text pipes as well.

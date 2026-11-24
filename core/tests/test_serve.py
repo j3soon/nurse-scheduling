@@ -36,6 +36,7 @@ import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette import formparsers
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from nurse_scheduling.loader import MAX_NESTING_DEPTH
@@ -980,6 +981,19 @@ def test_server_settings_load_optimization_options_from_env(monkeypatch):
     assert settings.default_prettify is False
 
 
+def test_deployment_environment_examples_document_every_reference_setting():
+    # `docker/.env.example` is the source of truth, so each deployment variant repeats its settings.
+    docker_dir = Path(__file__).resolve().parents[2] / "docker"
+
+    def keys(name: str) -> set[str]:
+        lines = (docker_dir / name).read_text(encoding="utf-8").splitlines()
+        return {line.split("=", 1)[0] for line in lines if line and not line.startswith("#") and "=" in line}
+
+    reference = keys(".env.example")
+    for name in (".env.staging.example", ".env.gpu.example"):
+        assert sorted(reference - keys(name)) == [], name
+
+
 def test_server_settings_load_claimed_performance_from_env(monkeypatch):
     monkeypatch.setenv("CLAIMED_PERFORMANCE_SCORE", "41.524445")
     monkeypatch.setenv("CLAIMED_PERFORMANCE_APP_VERSION", "v0.2.0-66-g959adc4")
@@ -1505,6 +1519,11 @@ def test_optimization_runner_returns_expected_failure(monkeypatch, solver_status
             "nests deeper than",
         ),
         ("non-mapping document", "$0", "top-level mapping"),
+        (
+            "invalid calendar date",
+            _INVALID_INPUT_SCENARIO.replace("startDate: 2026-05-14", "startDate: 2026-02-30"),
+            "Invalid YAML value",
+        ),
         (
             "unsupported api version",
             _INVALID_INPUT_SCENARIO.replace("apiVersion: alpha", "apiVersion: beta"),
@@ -2514,6 +2533,100 @@ def test_file_input_uses_configured_limit_above_multipart_text_default():
         assert oversized.status_code == 413
 
 
+@pytest.mark.parametrize(
+    ("path", "field", "multipart"),
+    [
+        # The AI service sends a multipart part without a filename, which Starlette parses as text.
+        ("/schedule_spec/optimize", "schedule_spec_yaml", True),
+        ("/schedule_spec/optimize", "schedule_spec_yaml", False),
+        ("/optimize", "yaml_content", True),
+    ],
+    ids=["multipart-text", "urlencoded", "legacy-multipart-text"],
+)
+def test_text_input_uses_configured_limit_above_multipart_text_default(path, field, multipart):
+    max_yaml_bytes = 1024 * 1024 + 1
+    settings = _settings(max_yaml_bytes=max_yaml_bytes)
+
+    def submit(client, size):
+        content = "x" * size
+        if multipart:
+            return client.post(path, files={field: (None, content)})
+        return client.post(path, data={field: content})
+
+    with _client(start_background=False, settings=settings) as client:
+        assert submit(client, max_yaml_bytes).status_code == 202
+        oversized = submit(client, max_yaml_bytes + 1)
+        assert oversized.status_code == 413
+        assert oversized.json()["detail"] == "Schedule Spec YAML is too large"
+
+
+@pytest.mark.parametrize("root_path", ["", "/api"])
+@pytest.mark.parametrize("multipart", [True, False], ids=["multipart", "urlencoded"])
+def test_chunked_submission_stops_reading_at_the_body_limit(root_path, multipart, monkeypatch):
+    # A chunked request has no Content-Length, so the middleware must count received bytes.
+    spooled = []
+
+    class RecordingSpooledFile(formparsers.SpooledTemporaryFile):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            spooled.append(self)
+
+    monkeypatch.setattr(formparsers, "SpooledTemporaryFile", RecordingSpooledFile)
+    app = create_app(settings=_settings(max_yaml_bytes=1024), start_background=False)
+    yaml_chunks = [b"a" * 32_768] * 8
+    if multipart:
+        boundary = b"----chunked-limit"
+        content_type = b"multipart/form-data; boundary=" + boundary
+        chunks = [
+            b"--"
+            + boundary
+            + b'\r\nContent-Disposition: form-data; name="schedule_spec_file"; filename="schedule.yaml"\r\n'
+            b"Content-Type: application/x-yaml\r\n\r\n",
+            *yaml_chunks,
+            b"\r\n--" + boundary + b"--\r\n",
+        ]
+    else:
+        content_type = b"application/x-www-form-urlencoded"
+        chunks = [b"schedule_spec_yaml=", *yaml_chunks]
+    path = f"{root_path}/schedule_spec/optimize"
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": root_path,
+        "query_string": b"",
+        "headers": [(b"content-type", content_type)],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    pending = iter(chunks)
+    consumed = 0
+    messages = []
+
+    async def receive():
+        nonlocal consumed
+        chunk = next(pending, None)
+        if chunk is None:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        consumed += len(chunk)
+        return {"type": "http.request", "body": chunk, "more_body": True}
+
+    async def send(message):
+        messages.append(message)
+
+    asyncio.run(app(scope, receive, send))
+
+    assert messages[0]["status"] == 413
+    assert consumed < sum(len(chunk) for chunk in chunks)
+    assert bool(spooled) is multipart
+    assert all(file.closed for file in spooled)
+    assert json.loads(messages[1]["body"])["detail"] == "Schedule Spec YAML is too large"
+
+
 AUTH_TOKEN = "integration-shared-token"
 AUTH_TOKENS = (
     AuthCredential(id="institution-a", token="institution-a-auth-token"),
@@ -2719,6 +2832,9 @@ def test_event_stream_rejects_missing_or_unusable_stream_tokens():
         assert _stream_status(client, MISSING_JOB_ID, "?token=nonsense") == 401
         assert _stream_status(client, MISSING_JOB_ID, "?token=not-a-number.deadbeef") == 401
         assert _stream_status(client, MISSING_JOB_ID, "?token=") == 401
+        invalid_query = client.get(f"/optimize/{MISSING_JOB_ID}/events?token=nonsense")
+        assert invalid_query.status_code == 401
+        assert invalid_query.json()["detail"] == "Backend credentials are invalid."
 
 
 def test_stream_tokens_do_not_authorize_other_routes():
@@ -3044,3 +3160,113 @@ def test_a_store_recovery_is_reported_so_the_silence_ends(monkeypatch):
             time.sleep(0.01)
 
     assert recoveries == [("worker.claim", 3)]
+
+
+def test_stream_events_handles_concurrent_job_deletion(monkeypatch):
+    with _client(start_background=False) as client:
+        job_id = _create(client).json()["id"]
+        controller = client.app.state.job_controller
+        controller.cancel_job(job_id)
+        original_read_events = controller.read_events
+
+        def read_events_then_delete(target_id: str, *, after_id=None):
+            events, _terminal = original_read_events(target_id, after_id=after_id)
+            controller.delete_job(target_id)
+            return events, True
+
+        monkeypatch.setattr(controller, "read_events", read_events_then_delete)
+        response = client.get(f"/optimize/{job_id}/events")
+        assert response.status_code == 200
+        assert "event: job.state_changed" in response.text
+
+
+def test_expire_worker_claims_skips_concurrently_deleted_job():
+    store = MemoryJobStore()
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    clock = [now]
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=4, max_retained=8),
+        retention_seconds=60,
+        worker_lease_seconds=30,
+        clock=lambda: clock[0],
+    )
+    lease1 = controller.register_worker("worker-1")
+    lease2 = controller.register_worker("worker-2")
+    job1 = controller.create_job(
+        input_name="a.yaml",
+        client_id="client-a",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"a",
+    )
+    job2 = controller.create_job(
+        input_name="b.yaml",
+        client_id="client-b",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"b",
+    )
+    claimed1 = controller.claim_next_job(lease1)
+    claimed2 = controller.claim_next_job(lease2)
+    assert claimed1 is not None and claimed2 is not None
+    assert {claimed1.id, claimed2.id} == {job1.id, job2.id}
+
+    clock[0] = now + timedelta(seconds=300)
+    original_find = store.find_jobs_without_live_workers
+
+    def find_and_delete_first(check_time):
+        candidates = original_find(check_time)
+        store.delete(candidates[0].id, expected_revision=candidates[0].revision)
+        return candidates
+
+    store.find_jobs_without_live_workers = find_and_delete_first  # type: ignore[method-assign]
+    expired = controller.expire_worker_claims()
+    assert len(expired) == 1
+    remaining_id = expired[0]
+    assert controller.get_job(remaining_id).state == JobState.FAILED
+
+
+def test_worker_keeps_running_when_job_disappears_before_failure_report(monkeypatch, caplog):
+    store = MemoryJobStore()
+    controller = JobController(
+        store,
+        limits=StoreLimits(max_pending=4, max_retained=8),
+        retention_seconds=60,
+        worker_lease_seconds=30,
+    )
+
+    worker = JobWorker(
+        controller,
+        SuccessfulRunner(),
+        worker_id="worker-survives-delete",
+        claim_poll_seconds=0.01,
+        worker_lease_seconds=30.0,
+        timeout_grace_seconds=5.0,
+    )
+    lease = controller.register_worker("worker-survives-delete")
+    job = controller.create_job(
+        input_name="a.yaml",
+        client_id="client-a",
+        solver="ortools/cp-sat",
+        prettify=False,
+        timeout_seconds=30,
+        input_bytes=b"a",
+    )
+    claimed = controller.claim_next_job(lease)
+    assert claimed is not None and claimed.id == job.id
+    worker._ready.set()
+
+    def disappear_and_fail(*_args, **_kwargs):
+        store.delete(claimed.id, expected_revision=claimed.revision)
+        raise RuntimeError("boom after deletion")
+
+    monkeypatch.setattr("nurse_scheduling.server.jobs.worker.run_optimization_process", disappear_and_fail)
+    # _execute must handle JobNotFoundError from fail_job without raising into _run().
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.server"):
+        worker._execute(claimed, lease)
+    assert worker._ready.is_set()
+    [record] = [record for record in caplog.records if "disappeared while reporting failure" in record.getMessage()]
+    assert record.exc_info is not None and str(record.exc_info[1]) == "boom after deletion"

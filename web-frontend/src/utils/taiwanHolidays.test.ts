@@ -59,6 +59,11 @@ describe('taiwanHolidays', () => {
     })).toBe(true);
 
     expect(includesUnimportedTaiwanLaborDay({
+      startDate: new Date('2025-05-01'),
+      endDate: new Date('2025-05-31'),
+    })).toBe(true);
+
+    expect(includesUnimportedTaiwanLaborDay({
       startDate: new Date('2026-05-01'),
       endDate: new Date('2026-05-31'),
     })).toBe(false);

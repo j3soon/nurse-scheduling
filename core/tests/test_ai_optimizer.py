@@ -890,19 +890,36 @@ def test_absolute_result_links_are_not_followed_with_the_optimizer_token() -> No
             return httpx.Response(200, content=b"workbook")
 
         backend = HttpOptimizerBackend(
-            "http://api:8000",
+            "http://api:8000/prefix",
             "optimizer-token",
             5,
             1_000_000,
             transport=httpx.MockTransport(handle),
         )
-        for link in ("https://elsewhere.example/steal", "//elsewhere.example/steal", ""):
+        for link in (
+            "https://elsewhere.example/steal",
+            "//elsewhere.example/steal",
+            # Stripping the leading slash would otherwise leave an absolute URL.
+            "/https://elsewhere.example/steal",
+            "/http://elsewhere.example/steal",
+            "///elsewhere.example/steal",
+            "/\\elsewhere.example/steal",
+            "../../steal",
+            "/",
+            "",
+        ):
             job = OptimizerJobPayload(id="remote-1", state="completed", terminal=True, links={"schedule": link})
             with pytest.raises(OptimizerError):
                 await backend.result_artifact(job)
+        assert requests == []
+
+        job = OptimizerJobPayload(
+            id="remote-1", state="completed", terminal=True, links={"schedule": "/optimize/remote-1/xlsx"}
+        )
+        assert (await backend.result_artifact(job)).content == b"workbook"
         await backend.close()
 
-        assert requests == []
+        assert [str(request.url) for request in requests] == ["http://api:8000/prefix/optimize/remote-1/xlsx"]
 
     asyncio.run(scenario())
 

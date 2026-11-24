@@ -173,7 +173,7 @@ export function parseStoredConversation(input: unknown): StoredChatConversation 
       || (value.backendVersion !== undefined && typeof value.backendVersion !== 'string')
       || (value.contextUsage != null && (!Number.isSafeInteger(value.contextUsage.usedChars)
         || value.contextUsage.usedChars < 0 || !Number.isSafeInteger(value.contextUsage.maxChars)
-        || value.contextUsage.maxChars <= 0 || value.contextUsage.usedChars > value.contextUsage.maxChars
+        || value.contextUsage.maxChars <= 0
         || (value.contextUsage.usedTokens !== undefined && !Number.isSafeInteger(value.contextUsage.usedTokens))
         || (value.contextUsage.maxTokens !== undefined && !Number.isSafeInteger(value.contextUsage.maxTokens))
         || (value.contextUsage.estimated !== undefined && typeof value.contextUsage.estimated !== 'boolean')))

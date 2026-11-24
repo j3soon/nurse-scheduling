@@ -1574,3 +1574,69 @@ def test_defensive_limit_stops_an_unterminated_sse_line_before_json_parsing(monk
     with pytest.raises(ProviderResponseLimitError, match="defensive response byte limit"):
         _events(provider)
     assert read == [0, 1, 2]
+
+
+def test_reasoning_and_tool_fragment_merging_handles_null_thinking_and_empty_native(monkeypatch):
+    chunks = [
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": None, "index": 0}]}),
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": "step 1", "signature": None, "index": 0}]}),
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": None, "signature": "signed", "index": 0}]}),
+        _delta_chunk(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {"name": "read", "arguments": '{"path":'},
+                        "extra_content": {"google": {"thought_signature": "sig-abc"}},
+                    }
+                ]
+            }
+        ),
+        _delta_chunk(
+            {
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "function": {"arguments": '"/workspace/a"}'},
+                        "extra_content": {},
+                    }
+                ]
+            }
+        ),
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    wire = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+    provider = _transport_provider(monkeypatch, lambda _request: httpx.Response(200, content=wire.encode()))
+    events = _events(provider)
+    replays = [event for event in events if isinstance(event, ReasoningReplay)]
+    tool_reqs = [event for event in events if isinstance(event, ToolCallRequest)]
+    assert replays and replays[0].native["thinking_blocks"] == [
+        {"type": "thinking", "thinking": "step 1", "signature": "signed", "index": 0}
+    ]
+    assert tool_reqs and tool_reqs[0].calls[0].native == {"extra_content": {"google": {"thought_signature": "sig-abc"}}}
+
+
+def test_stream_started_resets_across_retry_attempts(monkeypatch):
+    attempts = 0
+
+    class FirstStreamsThenFails(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield f"data: {json.dumps(_delta_chunk({'content': 'partial'}))}\n\n".encode()
+            raise httpx.ReadTimeout("mid-stream timeout")
+
+    def respond(_request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(200, stream=FirstStreamsThenFails())
+        raise httpx.ReadTimeout("before-stream timeout")
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("nurse_scheduling.ai.provider.asyncio.sleep", no_sleep)
+    provider = _transport_provider(monkeypatch, respond, provider_max_attempts=2)
+    with pytest.raises(ProviderError, match="timed out before starting"):
+        _events(provider)
+    assert attempts == 2

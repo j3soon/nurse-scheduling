@@ -135,3 +135,9 @@ it('restores schedule snapshots and the accepted AI schedule used for later comp
   sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), messages }));
   expect(readStoredConversation()?.messages).toEqual(messages);
 });
+
+it('restores stored conversations when retained context usage exceeds maxChars', () => {
+  const contextUsage = { usedChars: 1500, maxChars: 1000, usedTokens: 500, maxTokens: 10000, estimated: true };
+  sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify({ ...conversation(), contextUsage }));
+  expect(readStoredConversation()?.contextUsage).toEqual(contextUsage);
+});

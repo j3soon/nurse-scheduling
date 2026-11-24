@@ -234,7 +234,7 @@ export function buildTaiwanHolidayGroups(items: Item[], dateRange: DateRange): G
 }
 
 export function includesUnimportedTaiwanLaborDay(dateRange: DateRange): boolean {
-  return ['2023-05-01', '2024-05-01'].some(dateKey => includesDate(dateRange, dateKey));
+  return ['2023-05-01', '2024-05-01', '2025-05-01'].some(dateKey => includesDate(dateRange, dateKey));
 }
 
 export function getTaiwanHolidayEntriesInRange(dateRange: DateRange): TaiwanHolidayEntry[] {

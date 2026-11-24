@@ -91,9 +91,17 @@ def _read_assignments(path: Path, context: dict) -> tuple[dict, Any, Any]:
     try:
         candidates = []
         for sheet in workbook:
-            if sheet.max_row * sheet.max_column > MAX_CELLS:
+            # Read-only sheets without a <dimension> record report None, so also count while reading.
+            if (sheet.max_row or 0) * (sheet.max_column or 0) > MAX_CELLS:
                 raise ValueError("Optimizer worksheet is too large")
-            rows = list(sheet.iter_rows())
+            rows = []
+            cell_count = 0
+            for row in sheet.iter_rows():
+                # Without a <dimension> record, openpyxl yields an empty row for each skipped row number.
+                cell_count += max(len(row), 1)
+                if cell_count > MAX_CELLS:
+                    raise ValueError("Optimizer worksheet is too large")
+                rows.append(row)
             people = set(context["people"])
             for header, row in enumerate(rows[:10]):
                 columns = _date_columns(row, context["dates"])

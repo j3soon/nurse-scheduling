@@ -20,6 +20,7 @@
 // This test is mostly AI generated.
 
 import {
+  mockCompactSession,
   mockCreateSession,
   mockDownloadOptimization,
   mockCancelOptimization,
@@ -559,6 +560,69 @@ describe('AiAssistantPage', () => {
     expect(await screen.findByText('Current answer.')).toBeInTheDocument();
   });
 
+  it('keeps the deferred review and its cursor after a partial reset and failed admission', async () => {
+    const user = userEvent.setup();
+    let fail: ((error: unknown) => void) | undefined;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(() => {}));
+    mockSendMessage.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { fail = reject; }));
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Wait');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(fail).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls[0][1] as SessionStreamOptions;
+    act(() => {
+      const review = runEvents(stream, 'review');
+      review?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' });
+      review?.onEvent({ type: 'delta', text: 'Earlier review.' });
+      review?.onEvent({ type: 'done', runId: 'review' });
+      stream.onEventId?.(3);
+      stream.onEventId?.(6);
+      stream.onEvent({
+        type: 'session_reset',
+        reset: { runIds: ['later-review'], terminalRunIds: ['later-review'], activeRunId: null, incomplete: false },
+      });
+      const later = runEvents(stream, 'later-review');
+      later?.onEvent({ type: 'delta', text: 'Later review.' });
+      later?.onEvent({ type: 'done', runId: 'later-review' });
+    });
+    await act(async () => fail?.(new MockAiHttpError('Server error', 500)));
+    expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    expect(screen.getByText('Later review.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.sessionEventId).toBe(6);
+    expect(JSON.stringify(stored.messages)).toContain('Earlier review.');
+  });
+
+  it('saves the event position of deferred review events when manual compaction fails', async () => {
+    const user = userEvent.setup();
+    let fail: ((error: unknown) => void) | undefined;
+    mockCompactSession.mockImplementationOnce(() => new Promise<string>((_resolve, reject) => { fail = reject; }));
+    mockRunEvents.mockImplementationOnce(async (_id, _q, callbacks) => {
+      callbacks.onEvent({ type: 'delta', text: 'Hello' });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 100, maxChars: 1000, usedTokens: 500, maxTokens: 10000, estimated: false } });
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hi');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Hello');
+    await user.click(await screen.findByRole('button', { name: /Compact/i }));
+    await waitFor(() => expect(fail).toBeDefined());
+    const stream = mockStreamSessionEvents.mock.calls.at(-1)![1] as SessionStreamOptions;
+    act(() => {
+      const review = runEvents(stream, 'review');
+      review?.onEvent({ type: 'run_start', runId: 'review', trigger: 'optimizer' });
+      review?.onEvent({ type: 'delta', text: 'Earlier review.' });
+      review?.onEvent({ type: 'done', runId: 'review' });
+      stream.onEventId?.(9);
+    });
+    await act(async () => fail?.(new MockAiHttpError('Server error', 500)));
+    expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.sessionEventId).toBe(9);
+  });
+
   it('routes a terminal event received before the message acknowledgement to its foreground answer', async () => {
     const user = userEvent.setup();
     mockSendMessage.mockImplementationOnce(async () => {
@@ -958,5 +1022,253 @@ describe('AiAssistantPage', () => {
     expect(screen.getByText('Turn details · ~$0.2000 · Speed unavailable · 1 call')).toBeInTheDocument();
     expect(screen.queryByText('Call: old-gateway')).not.toBeInTheDocument();
     expect(screen.getByText('Call: new-gateway')).toBeInTheDocument();
+  });
+
+  it('interrupts the active reply and stops reconnecting when the event stream returns 404', async () => {
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failStream = reject;
+    }));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: 'description: current Schedule Spec\n',
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<AiAssistantPage />);
+    await waitFor(() => expect(failStream).toBeDefined());
+    expect(screen.getByRole('status', { name: 'Thinking' })).toBeInTheDocument();
+    await act(async () => failStream(new MockAiHttpError('Session not found', 404)));
+
+    expect(screen.getByText(
+      'This chat is no longer available on the AI server. Start a new chat to continue.',
+    )).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Thinking' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops reconnecting the event stream after the AI server rejects its token', async () => {
+    const user = userEvent.setup();
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      failStream = reject;
+    }));
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(failStream).toBeDefined());
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      act(() => failStream(new MockAiHttpError('Unauthorized', 401)));
+      // Pass the longest reconnect delay.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(screen.getByText('AI credentials were rejected. Enter the current AI token and try again.')).toBeInTheDocument();
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the user replace a rejected token while a restored background reply waits for its stream', async () => {
+    const user = userEvent.setup();
+    let failStream!: (error: unknown) => void;
+    let resumed: SessionStreamOptions | undefined;
+    mockStreamSessionEvents
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failStream = reject; }))
+      .mockImplementation(async (_id, callbacks) => {
+        resumed = callbacks;
+        await new Promise<void>(() => {});
+      });
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800,
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      syncedScheduleSpec: 'description: current Schedule Spec\n',
+      sessionEventId: 4,
+      backgroundAssistantId: 'optimizer-turn',
+    }));
+    render(<AiAssistantPage />);
+    await waitFor(() => expect(failStream).toBeDefined());
+
+    act(() => failStream(new MockAiHttpError('Unauthorized', 401)));
+    await user.type(await screen.findByLabelText('Token for AI assistant'), 'replacement-token');
+    const save = screen.getByRole('button', { name: 'Save token for AI assistant' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() => expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2));
+    expect(mockStreamSessionEvents.mock.calls[1][3]).toBe('replacement-token');
+    act(() => resumed?.onEvent({ type: 'delta', runId: 'optimizer-turn', text: 'answer.' }));
+    expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
+    expect(stored.backgroundAssistantId).toBe('optimizer-turn');
+    expect(stored.messages[0]).toEqual(expect.objectContaining({ content: 'Partial answer.', status: 'pending' }));
+  });
+
+  it('retries the reader when a remembered token is saved again after rejection', async () => {
+    const user = userEvent.setup();
+    const token = 'remembered-token';
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failStream = reject; }))
+      .mockImplementation(() => new Promise<void>(() => {}));
+    window.localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { '/ai': token } }));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: 'description: current Schedule Spec\n',
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      sessionEventId: 4, backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<AiAssistantPage />);
+    await waitFor(() => expect(failStream).toBeDefined());
+    await act(async () => failStream(new MockAiHttpError('Unauthorized', 401)));
+    const save = await screen.findByRole('button', { name: 'Save token for AI assistant' });
+    await user.click(save);
+
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2);
+    expect(mockStreamSessionEvents.mock.calls[1][3]).toBe(token);
+    expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(4);
+  });
+
+  it.each([false, true])('preserves a pending Stop during replay with earlier output=%s', async earlierOutput => {
+    const user = userEvent.setup();
+    let streamCallbacks: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    mockStopSession.mockResolvedValue(undefined);
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Working...' });
+    });
+    const stopButton = await screen.findByRole('button', { name: 'Stop' });
+    await user.click(stopButton);
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+
+    act(() => {
+      streamCallbacks?.onEvent({
+        type: 'session_reset',
+        reset: {
+          runIds: earlierOutput ? ['earlier', 'bg-run'] : ['bg-run'],
+          activeRunId: 'bg-run', terminalRunIds: earlierOutput ? ['earlier'] : [], incomplete: false,
+        },
+      });
+      if (earlierOutput) {
+        streamCallbacks?.onEvent({ type: 'run_start', runId: 'earlier', trigger: 'optimizer' });
+        streamCallbacks?.onEvent({ type: 'delta', runId: 'earlier', text: 'Earlier answer.' });
+        streamCallbacks?.onEvent({ type: 'done', runId: 'earlier' });
+      }
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Active answer.' });
+    });
+
+    if (earlierOutput) expect(screen.getByText('Earlier answer.')).toBeInTheDocument();
+    expect(screen.getByText('Active answer.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    act(() => streamCallbacks?.onEvent({ type: 'stopped', runId: 'bg-run' }));
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+
+  it('fails a background answer that a session_reset no longer lists', async () => {
+    const user = userEvent.setup();
+    let streamCallbacks: SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Optimize');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-run', trigger: 'optimizer' });
+      streamCallbacks?.onEvent({ type: 'delta', runId: 'bg-run', text: 'Working...' });
+    });
+    await screen.findByRole('button', { name: 'Stop' });
+
+    act(() => {
+      streamCallbacks?.onEvent({
+        type: 'session_reset',
+        reset: { runIds: [], activeRunId: null, terminalRunIds: [], incomplete: true },
+      });
+    });
+
+    await expect(screen.findByText('This response expired from event replay. Start a new question.'))
+      .resolves.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the truncation notice and ZIP download when a reload recovers a request', async () => {
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'session-recover',
+      endpoint: '/ai',
+      expiresAt: Date.now() + 600_000,
+      retentionSeconds: 3600,
+      sessionEventId: 5,
+      syncedScheduleSpec: 'people: []\n',
+      messages: [
+        {
+          id: 'q1', role: 'user', content: 'Generate files', requestId: 'req-1',
+          request: { id: 'req-1', question: 'Generate files', questionId: 'q1', assistantId: 'a1', activeAssistantId: 'a1', active: true },
+        },
+        {
+          id: 'a1', role: 'assistant', content: 'Partial output', status: 'pending', requestId: 'req-1',
+          truncated: true, downloadId: 'dl-123',
+        },
+      ],
+    }));
+    mockSendMessage.mockImplementationOnce(async () => 'run-1');
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      await new Promise<void>(() => {
+        setTimeout(() => {
+          callbacks.onEvent({ type: 'done', runId: 'run-1' });
+        }, 10);
+      });
+    });
+
+    render(<AiAssistantPage />);
+
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Download files (ZIP)' })).toBeInTheDocument();
+    expect(screen.getByText(/output token limit/i)).toBeInTheDocument();
+  });
+
+  it('marks the conversation unavailable when manual compaction returns 404', async () => {
+    const user = userEvent.setup();
+    mockCompactSession.mockRejectedValueOnce(new MockAiHttpError('Session not found', 404));
+    mockRunEvents.mockImplementationOnce(async (_id, _q, callbacks) => {
+      callbacks.onEvent({ type: 'delta', text: 'Hello' });
+      callbacks.onEvent({ type: 'context_usage', usage: { usedChars: 100, maxChars: 1000, usedTokens: 500, maxTokens: 10000, estimated: false } });
+    });
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Hi');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Hello');
+
+    const compactButton = await screen.findByRole('button', { name: /Compact/i });
+    await user.click(compactButton);
+
+    await expect(
+      screen.findByText('This chat expired or is no longer available. Start a new chat to continue.')
+    ).resolves.toBeInTheDocument();
   });
 });

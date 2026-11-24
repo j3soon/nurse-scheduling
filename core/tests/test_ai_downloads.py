@@ -27,6 +27,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from fastapi.testclient import TestClient
 
+from nurse_scheduling.ai import downloads
 from nurse_scheduling.ai.context import build_provider_messages
 from nurse_scheduling.ai.downloads import WORKSPACE_DOWNLOAD, validate_download_zip
 from nurse_scheduling.ai.provider import TextDelta, ToolCall, ToolCallRequest
@@ -44,10 +45,37 @@ def archive_bytes(value: bytes = b"name,date\nAlex,2026-10-01\n", name: str = "r
     return output.getvalue()
 
 
-@pytest.mark.parametrize("name", ["../escape.csv", "/absolute.csv", "..\\escape.csv"])
+@pytest.mark.parametrize(
+    "name", ["../escape.csv", "/absolute.csv", "..\\escape.csv", "C:/escape.csv", "D:\\escape.csv"]
+)
 def test_zip_rejects_paths_outside_the_download_directory(name):
     with pytest.raises(ValueError, match="relative file paths"):
         validate_download_zip(archive_bytes(name=name), 1000)
+
+
+def test_zip_rejects_corrupt_lzma_data():
+    from zipfile import ZIP_LZMA
+
+    lzma_buf = io.BytesIO()
+    with ZipFile(lzma_buf, "w", compression=ZIP_LZMA) as archive:
+        archive.writestr("a.txt", b"hello world" * 10)
+    raw = bytearray(lzma_buf.getvalue())
+    # Keep zipfile's 9-byte LZMA properties header and corrupt the compressed stream after it.
+    # The decoder then raises LZMAError before the CRC check runs.
+    offset = 30 + len("a.txt") + 9
+    raw[offset : offset + 12] = b"\x00" * 12
+    with pytest.raises(ValueError, match="readable ZIP"):
+        validate_download_zip(bytes(raw), 10_000)
+
+
+def test_zip_rejects_more_entries_than_the_entry_limit(monkeypatch):
+    monkeypatch.setattr(downloads, "MAX_DOWNLOAD_ZIP_ENTRIES", 2)
+    buffer = io.BytesIO()
+    with ZipFile(buffer, "w") as archive:
+        for index in range(3):
+            archive.writestr(f"{index}.txt", b"x")
+    with pytest.raises(ValueError, match="too many entries"):
+        validate_download_zip(buffer.getvalue(), 1000)
 
 
 def test_zip_checks_actual_contents_and_compressed_limit():

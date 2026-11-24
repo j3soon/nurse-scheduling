@@ -24,6 +24,7 @@ import { createServer, type ServerResponse } from 'node:http';
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
+import { selectLanguageInNewTab } from './helpers';
 
 const FRONTEND_TIMEZONE = 'America/Los_Angeles';
 test.use({ timezoneId: FRONTEND_TIMEZONE });
@@ -966,6 +967,112 @@ test('returns to the top of a long chat on desktop and mobile', async ({ page })
     await page.getByRole('button', { name: 'Scroll to bottom' }).click();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(128);
   }
+});
+
+test('ends the pending reply when the AI session stream returns 404', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.addInitScript(() => {
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'active-run',
+    }));
+  });
+  const removeSession = Promise.withResolvers<void>();
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    await removeSession.promise;
+    await route.fulfill({ status: 404, json: { detail: 'Chat session not found.' } });
+  });
+
+  try {
+    await page.goto('/ai-assistant');
+    const thinking = page.getByRole('status', { name: 'Thinking', exact: true });
+    await expect(thinking).toBeVisible();
+    removeSession.resolve();
+    await expect(page.getByText('This chat is no longer available on the AI server. Start a new chat to continue.')).toBeVisible();
+    await expect(thinking).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Start new chat' })).toBeEnabled();
+  } finally {
+    removeSession.resolve();
+  }
+});
+
+test('keeps Stop pending while the AI stream replays an earlier completed reply', async ({ page }) => {
+  await mockAiBackend(page);
+  await page.addInitScript(() => {
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: '', status: 'pending' }],
+      backgroundAssistantId: 'active-run', sessionEventId: 4,
+    }));
+  });
+  const replay = Promise.withResolvers<void>();
+  await page.route('**/v1/sessions/browser-session/stop', route => route.fulfill({ status: 202 }));
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    await replay.promise;
+    const snapshot = {
+      active_run_id: 'active-run',
+      incomplete: false,
+      events: [
+        { type: 'delta', data: { run_id: 'earlier-run', text: 'Earlier answer.' } },
+        { type: 'done', data: { run_id: 'earlier-run' } },
+        { type: 'delta', data: { run_id: 'active-run', text: 'Active answer.' } },
+      ],
+    };
+    await route.fulfill({
+      status: 200, contentType: 'text/event-stream',
+      body: `id: 7\nevent: session_reset\ndata: ${JSON.stringify(snapshot)}\n\n`,
+    });
+  });
+
+  try {
+    await page.goto('/ai-assistant');
+    const stop = page.getByRole('button', { name: 'Stop', exact: true });
+    await stop.click();
+    await expect(stop).toBeDisabled();
+    replay.resolve();
+    await expect(page.getByText('Earlier answer.')).toBeVisible();
+    await expect(page.getByText('Active answer.')).toBeVisible();
+    await expect(stop).toBeDisabled();
+  } finally {
+    replay.resolve();
+  }
+});
+
+test('reconnects an active AI reply after saving the same token again', async ({ page }) => {
+  const token = 'browser-ai-auth-token';
+  await mockAiBackend(page, [], false, token);
+  await page.addInitScript(savedToken => {
+    localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { '/ai': savedToken } }));
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: 'Partial ', status: 'pending',
+        activity: [{ kind: 'response', text: 'Partial ' }] }],
+      backgroundAssistantId: 'active-run', sessionEventId: 4,
+    }));
+  }, token);
+  let reads = 0;
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    reads++;
+    if (reads === 1) {
+      await route.fulfill({ status: 401, json: { detail: 'Backend credentials are invalid.' } });
+    } else {
+      await route.fulfill({
+        status: 200, contentType: 'text/event-stream',
+        body: 'id: 5\nevent: delta\ndata: {"run_id":"active-run","text":"answer."}\n\n'
+          + 'id: 6\nevent: done\ndata: {"run_id":"active-run"}\n\n',
+      });
+    }
+  });
+
+  await page.goto('/ai-assistant');
+  await expect(page.getByRole('textbox', { name: 'Token for AI assistant' })).toHaveValue(token);
+  await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+  await expect(page.getByText('Partial answer.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
 });
 
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
@@ -1978,9 +2085,7 @@ test('keeps pending reasoning when language changes in another tab', async ({ pa
   const started = page.waitForRequest(request => request.url().endsWith('/model-selection') && request.method() === 'PUT');
   await page.getByLabel('Reasoning', { exact: true }).selectOption('high');
   await started;
-  const settings = await context.newPage();
-  await settings.goto('/');
-  await settings.getByRole('combobox', { name: 'Language', exact: true }).selectOption('zh-TW');
+  const settings = await selectLanguageInNewTab(context, 'zh-TW');
   await expect(page.getByLabel('推理', { exact: true })).toBeVisible();
   await settings.close();
   await expect(page.getByRole('button', { name: '傳送', exact: true })).toBeDisabled();

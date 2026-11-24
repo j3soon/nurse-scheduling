@@ -43,14 +43,20 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..sentry import SentryClientAddressMiddleware, init_sentry
-from ..server.auth import AUTH_SCHEME, create_auth_dependency, create_auth_registry, create_stream_token
+from ..server.auth import (
+    AUTH_SCHEME,
+    create_auth_dependency,
+    create_auth_registry,
+    create_stream_token,
+    verify_stream_token,
+)
 from ..service_logging import configure_service_logging
 from ..version import get_app_version
 from .agent_session import AgentSession, SessionRuntime, schedule_spec_changed
 from .chat_archive import ChatArchiveResponse, ChatSessionNotFoundError, PreparedChatArchives, create_chat_archive
 from .config import AiSettings, validate_ai_auth_credentials
 from .context import validate_frontend_timezone
-from .history import ChatHistory, stop_maintenance
+from .history import ChatHistory, _owner_hash, stop_maintenance
 from .lifecycle import TERMINAL_EVENTS, AgentRun, SessionRuns
 from .models import ModelCatalog, ModelSelection, SessionModelSelection
 from .optimizer import (
@@ -337,27 +343,55 @@ def create_app(
     auth_registry = create_auth_registry(settings.auth_token, settings.auth_tokens)
     require_auth = create_auth_dependency(auth_registry)
 
-    def export_scope(session_id: str) -> str:
-        # Namespace the signing primitive so stream tokens cannot authorize an export.
-        # The link is a short-lived capability, like the events stream tokens: browsers
-        # send the owner cookie inconsistently between the minting fetch and the download
-        # navigation, so the redemption request cannot bind it.
-        return f"ai-chat-export:{session_id}"
+    def export_scope(session_id: str, owner_hash: str) -> str:
+        # Namespace the signing primitive and bind it to the server-stored owner digest so
+        # knowing a bearer credential alone cannot forge a download link for another browser
+        # or another key's session. Redemption looks up the digest server-side because
+        # browsers send the owner cookie inconsistently on native download navigations.
+        return f"ai-chat-export:{session_id}:{owner_hash}"
 
-    def require_session_auth(request: Request) -> None:
+    async def require_session_auth(request: Request) -> None:
         # The body-limit middleware runs before router path parameters exist.
+        if getattr(request.state, "export_link", False):
+            return
         path = get_route_path(request.scope).rstrip("/")
         match = re.fullmatch(r"/v1/sessions/([^/]+)/export", path)
         if auth_registry.enabled and request.method == "GET" and match is not None:
-            credential = auth_registry.authenticate_stream(
-                export_scope(match[1]),
-                request.query_params.get("token"),
-            )
-            if credential is not None:
-                request.state.auth_credential_id = credential.id
-                request.state.export_link = True
-                return
-            if request.query_params.get("token") is not None:
+            token = request.query_params.get("token")
+            if token is not None:
+                session_id = match[1]
+                owner_hash: str | None = None
+                credential_id: str | None = None
+                session = store.get(session_id)
+                if session is not None:
+                    owner_hash = _owner_hash(session.owner_token)
+                    credential_id = session.provider_credential_id
+                elif recovery.history is not None:
+                    try:
+                        auth_record = await recovery.history.read("session_export_authorization", session_id)
+                    except RuntimeError:
+                        # `ChatHistory.read` has logged the storage failure and raised RuntimeError.
+                        raise HTTPException(
+                            status_code=503,
+                            detail="The chat archive could not be created. Try again.",
+                        ) from None
+                    if auth_record is not None:
+                        owner_hash, credential_id = auth_record
+                if owner_hash is not None:
+                    scope = export_scope(session_id, owner_hash)
+                    if credential_id is not None:
+                        expected = auth_registry.get(credential_id)
+                        credential = (
+                            expected
+                            if expected is not None and verify_stream_token(expected.token, scope, token)
+                            else None
+                        )
+                    else:
+                        credential = auth_registry.authenticate_stream(scope, token)
+                    if credential is not None:
+                        request.state.auth_credential_id = credential.id
+                        request.state.export_link = True
+                        return
                 raise HTTPException(
                     status_code=401,
                     detail="The export download link is invalid or has expired.",
@@ -688,7 +722,7 @@ def create_app(
         owner: str | None = Cookie(default=None, alias=OWNER_COOKIE),
     ) -> dict[str, str | None]:
         """Prepare the ZIP before returning a short-lived native download link."""
-        store.require_owned(session_id, owner)
+        session = store.require_owned(session_id, owner)
         if recovery.history is None:
             raise HTTPException(status_code=409, detail="Chat export is unavailable on this server.")
         try:
@@ -702,7 +736,7 @@ def create_app(
             if credential is None
             else create_stream_token(
                 credential.token,
-                export_scope(session_id),
+                export_scope(session_id, _owner_hash(session.owner_token)),
                 ttl_seconds=300,
             )
         )

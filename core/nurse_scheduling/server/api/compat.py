@@ -21,9 +21,10 @@
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 
+from ..request_limits import ScheduleSpecFormRoute
 from .optimize import create_job
 
-router = APIRouter()
+router = APIRouter(route_class=ScheduleSpecFormRoute)
 
 
 @router.post("/optimize", status_code=202, deprecated=True, include_in_schema=False)

@@ -293,8 +293,9 @@ Create a local configuration file. The real `docker/.env` file is ignored by Git
 
 ```sh
 cp docker/.env.example docker/.env
-# Review and update the AI values. Set AI_AUTH_REQUIRED=false and leave
-# AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only for intentional local no-auth use.
+# Review and update the AI values. Set AI_COOKIE_SECURE=0 for plain HTTP localhost.
+# Set AI_AUTH_REQUIRED=false and leave AI_AUTH_TOKEN and AI_AUTH_TOKENS empty only
+# for intentional local no-auth use.
 ```
 
 Start the AI backend and frontend in separate terminals:
@@ -325,7 +326,9 @@ cp docker/.env.example docker/.env
 ```
 
 Review the AI assistant block in `docker/.env`. Set the provider URL, API key,
-model, and other settings for your environment. For an authenticated service,
+model, and other settings for your environment. Set `AI_COOKIE_SECURE=0` for
+plain HTTP on `localhost`, because `docker/.env.example` sets `AI_COOKIE_SECURE=1`
+for HTTPS deployments. For an authenticated service,
 also set one or more AI keys. To serve locally without auth, explicitly set
 `AI_AUTH_REQUIRED=false` and leave `AI_AUTH_TOKEN` and `AI_AUTH_TOKENS` empty.
 Then start the service:
@@ -545,7 +548,7 @@ cleaned while the AI service is offline.
 | `AI_SANDBOX_CONTROL_REQUEST_TIMEOUT_SECONDS` | `2` | Deadline for each foreground auto-resume attempt and the E2B request timeout for destruction. |
 | `AI_SANDBOX_REAPER_INTERVAL_SECONDS` | `30` | Interval for reconciling overdue running or paused E2B sandboxes owned by this application. |
 | `AI_BACKEND_PORT` | `8001` | Port used by the development launcher. |
-| `AI_COOKIE_SECURE` | `0` in the launcher | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
+| `AI_COOKIE_SECURE` | `0` in the launcher when unset (`1` in `docker/.env.example`) | Use `0` for local HTTP and `1` for public HTTPS. Secure deployments use `SameSite=None` so approved cross-site frontends can retain session ownership. |
 | `AI_SESSION_TTL_SECONDS` | `2592000` | Idle session lifetime. Session activity renews it. |
 | `AI_MAX_SESSIONS` | `1000` | Maximum process-local sessions. With PostgreSQL, a new or restored session unloads the least recently used idle session instead of getting HTTP 429. Its stored uploads, generated ZIPs, and optimizer files remain in PostgreSQL and load again on demand. A session stays loaded while a response, optimizer run, or recovery write is unfinished, and after a failed save until a later save succeeds. |
 | `AI_MAX_SESSION_BYTES` | `1073741824` | Retained-byte budget across live sessions, including chat text, uploads, and generated downloads. It includes every active attachment and pending file write. New sessions, uploads, Schedule Spec updates, and queued steering that would exceed it get HTTP 429. A completed turn keeps its exchanges. Further input is refused while capacity is exhausted. Size the process above this budget plus the newest turn of each session. |

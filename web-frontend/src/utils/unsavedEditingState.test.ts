@@ -75,6 +75,33 @@ describe('useTabSwitchWarning', () => {
     expect(result.current.hasTabSwitchWarningActive()).toBe(false);
   });
 
+  it('reports a registered warning message until its hook cleans up', () => {
+    const { result, rerender } = renderHook(({ isActive }) => {
+      useTabSwitchWarning(isActive, 'The run continues.');
+      return useUnsavedEditingState();
+    }, {
+      initialProps: { isActive: true },
+      wrapper,
+    });
+
+    expect(result.current.hasTabSwitchWarningActive()).toBe(true);
+    expect(result.current.tabSwitchWarningMessage()).toBe('The run continues.');
+
+    rerender({ isActive: false });
+    expect(result.current.hasTabSwitchWarningActive()).toBe(false);
+    expect(result.current.tabSwitchWarningMessage()).toBeUndefined();
+  });
+
+  it('uses the unsaved edits warning while any editor has unsaved edits', () => {
+    const { result } = renderHook(() => {
+      useTabSwitchWarning(true, 'The run continues.');
+      useTabSwitchWarning(true);
+      return useUnsavedEditingState();
+    }, { wrapper });
+
+    expect(result.current.tabSwitchWarningMessage()).toBeUndefined();
+  });
+
   it('keeps provider warnings active until all provider registrations clear', () => {
     const { result } = renderHook(() => useUnsavedEditingState(), { wrapper });
 

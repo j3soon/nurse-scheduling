@@ -349,7 +349,11 @@ def create_stream_auth_dependency(registry: AuthTokenRegistry) -> Callable[[Requ
             return
         raise HTTPException(
             status_code=401,
-            detail=INVALID_CREDENTIALS_MESSAGE if provided_token else MISSING_CREDENTIALS_MESSAGE,
+            detail=(
+                INVALID_CREDENTIALS_MESSAGE
+                if (provided_token or request.query_params.get("token"))
+                else MISSING_CREDENTIALS_MESSAGE
+            ),
             headers=_AUTHENTICATE_HEADERS,
         )
 

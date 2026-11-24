@@ -1179,3 +1179,15 @@ def test_diagnostic_reads_the_shared_token_from_env(monkeypatch):
 
     monkeypatch.setenv("DIAGNOSTIC_AUTH_TOKEN", "from-diagnostic-env")
     assert DiagnosticConfig.from_env().auth_token == "from-diagnostic-env"
+
+
+def test_diagnostic_treats_empty_env_vars_as_defaults(monkeypatch):
+    monkeypatch.setenv("DIAGNOSTIC_TARGET_URL", "")
+    monkeypatch.setenv("DIAGNOSTIC_SCENARIO_PATH", "")
+    monkeypatch.setenv("DIAGNOSTIC_REPORT_DIR", "")
+
+    config = DiagnosticConfig.from_env()
+
+    assert config.target_url == "https://api.nursescheduling.org"
+    assert config.scenario_path.is_file()
+    assert config.report_dir == Path("/tmp/nurse-scheduling-diagnostics")

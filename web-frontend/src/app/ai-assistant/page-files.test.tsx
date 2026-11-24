@@ -533,4 +533,53 @@ describe('AiAssistantPage', () => {
     expect(screen.queryByText(/did not finish uploading/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
+
+  it('refuses to queue a message while pending attachments are selected', async () => {
+    let streamCallbacks: import('./sessionEvents').SessionStreamOptions | undefined;
+    mockStreamSessionEvents.mockImplementation(async (_id, callbacks) => {
+      streamCallbacks = callbacks;
+      await new Promise<void>(() => {});
+    });
+    const user = userEvent.setup();
+    render(<AiAssistantPage />);
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Initial');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Alice works Monday.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument());
+
+    await user.upload(await screen.findByLabelText('Attach files'), new File(['abc'], 'ward.csv', { type: 'text/csv' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Check ward.csv');
+    act(() => {
+      streamCallbacks?.onEvent({ type: 'run_start', runId: 'bg-review', trigger: 'optimizer' });
+    });
+
+    const queueButton = await screen.findByRole('button', { name: 'Queue message' });
+    expect(queueButton).toBeDisabled();
+    fireEvent.submit(screen.getByRole('form', { name: 'Message composer' }));
+
+    expect(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' })).toHaveValue('Check ward.csv');
+    expect(screen.getByText('ward.csv')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Wait for the current response to finish before sending attached files/);
+  });
+
+
+  it('clears model selection and chat export when switching to an offline AI server', async () => {
+    mockGetCapabilities
+      .mockResolvedValueOnce({ ...defaultCapabilities, model_selection: true, saved_chat_export: true })
+      .mockRejectedValueOnce(new Error('Server unreachable'));
+    const user = userEvent.setup();
+    render(<AiAssistantPage />);
+    expect(await screen.findByLabelText('AI model')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Change' }));
+    await user.clear(screen.getByLabelText('Custom AI server URL'));
+    await user.type(screen.getByLabelText('Custom AI server URL'), 'https://offline.example');
+    await user.click(screen.getByRole('button', { name: 'Use custom' }));
+
+    await waitFor(() => expect(screen.queryByLabelText('AI model')).not.toBeInTheDocument());
+    await user.type(screen.getByRole('textbox', { name: 'Ask about the current Schedule Spec' }), 'Retry offline');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('button', { name: 'Export Chat' })).toBeDisabled();
+  });
 });

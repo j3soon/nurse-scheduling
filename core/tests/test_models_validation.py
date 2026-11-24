@@ -359,3 +359,39 @@ def test_model_rejects_unsupported_backend_semantics(mutate, message):
 
     with pytest.raises(ValueError, match=message):
         ScheduleSpec.model_validate(payload)
+
+
+def _weight_range_payload(weight_range: list[int | float]) -> dict:
+    payload = _base_payload()
+    payload["export"] = {
+        "formatting": [
+            {
+                "type": "cell",
+                "people": ["ALL"],
+                "dates": ["ALL"],
+                "shiftTypes": ["ALL"],
+                "backgroundColor": "#ffffff",
+                "when": {"preference": {"types": ["shift request"], "weightRange": weight_range}},
+            }
+        ]
+    }
+    return payload
+
+
+def test_export_weight_range_rejects_nan():
+    with pytest.raises(ValueError, match="weightRange"):
+        ScheduleSpec.model_validate(_weight_range_payload([float("nan"), 10]))
+
+
+def test_export_weight_range_accepts_integer_bounds_beyond_float_range():
+    # math.isnan converts an int to float, which overflows for bounds like this one.
+    ScheduleSpec.model_validate(_weight_range_payload([0, 10**400]))
+
+
+@pytest.mark.parametrize("section", ["people", "shiftTypes"])
+@pytest.mark.parametrize("character", ["\x07", "\uffff"], ids=["control", "noncharacter"])
+def test_schedule_spec_rejects_item_ids_that_cannot_be_written_to_xlsx(section, character):
+    payload = _base_payload()
+    payload[section]["items"].append({"id": payload[section]["items"][0]["id"] + character})
+    with pytest.raises(ValidationError, match="XLSX cannot store"):
+        ScheduleSpec.model_validate(payload)

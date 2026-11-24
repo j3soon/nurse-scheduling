@@ -1642,3 +1642,34 @@ def test_complete_summary_can_exceed_old_character_ceiling_and_original_size():
     (entry,) = [event.entry for event in events if isinstance(event, AgentCompaction)]
     assert entry.summary.endswith("s" * 25000)
     assert history_chars(apply_compaction(messages, entry)) > history_chars(messages)
+
+
+def test_agent_loop_resets_response_chars_and_tokens_on_provider_retry():
+    from nurse_scheduling.ai.agent_loop import agent_loop
+    from nurse_scheduling.ai.agent_types import AgentContextUsage
+    from nurse_scheduling.ai.provider import ProviderRetry, TokenUsage
+
+    class RetryingProvider(CompactionProvider):
+        async def stream_events(self, messages, tools=None):
+            yield TextDelta("x" * 400)
+            yield TokenUsage(prompt_tokens=100, completion_tokens=100, total_tokens=200)
+            yield ProviderRetry("Retrying after transient failure.")
+            yield TextDelta("ok")
+            yield ResponseEnd("stop")
+
+    provider = RetryingProvider()
+    provider.context_tokens = 262144
+    events = asyncio.run(
+        collect(
+            agent_loop(
+                provider,
+                [{"role": "system", "content": "System"}, {"role": "user", "content": "Hello"}],
+                [],
+            )
+        )
+    )
+    usages = [event for event in events if isinstance(event, AgentContextUsage)]
+    initial = usages[0]
+    after_retry = usages[-1]
+    assert after_retry.used_chars == initial.used_chars + len("ok")
+    assert after_retry.used_tokens == initial.used_tokens + 1

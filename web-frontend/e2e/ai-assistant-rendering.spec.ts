@@ -274,7 +274,9 @@ async function replay(
         await page.getByRole('button', { name: 'Send', exact: true }).click();
         await expect.poll(() => backend.accepted).toBe(++sent);
         // Cover a slow first event that arrives after the accepted request was saved.
+        // Flush through the page-hide path instead of waiting for the streaming save delay.
         await page.waitForFunction(({ storageKey, runId }) => {
+          window.dispatchEvent(new Event('pagehide'));
           const stored = sessionStorage.getItem(storageKey);
           return stored && JSON.parse(stored).messages.some((message: { runId?: string }) => message.runId === runId);
         }, { storageKey, runId: run.id });
@@ -418,11 +420,11 @@ test('persists many questions with one unchanged large Schedule Spec', async ({ 
     // arrive together and wait for its saved cursor before sending the next.
     await replay(page, snapshot, backend, { waitForEveryEvent: false });
     expect((snapshot.events.find(event => event.type === 'model_input')!.data.schedule_spec_yaml as string).length).toBeGreaterThan(100_000);
-    const lastSavedAnswer = await page.evaluate(() => {
+    // The history writer saves asynchronously, so wait for it after the last event.
+    await expect.poll(() => page.evaluate(() => {
       const history = JSON.parse(localStorage.getItem('nurse-scheduling-ai-history')!);
       return history.entries[0].conversation.messages.at(-1).content;
-    });
-    expect(lastSavedAnswer).toBe('Answer 54');
+    })).toBe('Answer 54');
     await page.reload();
     await expect(page.getByText('Answer 54', { exact: true })).toBeVisible();
     await expect(page.getByText('Initial Schedule Spec sent', { exact: true })).toHaveCount(1);

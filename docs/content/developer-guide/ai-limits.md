@@ -133,6 +133,7 @@ These components have no corresponding hosted-service quota in Pi.
 | Active attachment bytes per chat | N/A | 500,000,000 bytes (500 MB) |
 | Archived file bytes per chat | N/A | `AI_MAX_ARCHIVE_BYTES=10000000000` (10 GB, including removed files) |
 | Generated ZIP and uncompressed contents | N/A | 250,000,000 bytes (250 MB) |
+| Entries in a generated ZIP | N/A | 10,000 entries |
 | Live sessions | N/A | `AI_MAX_SESSIONS=1000` |
 | Retained text and file bytes in memory | N/A | `AI_MAX_SESSION_BYTES=1073741824` (1 GiB shared across sessions) |
 | Concurrent AI runs | N/A | `AI_MAX_CONCURRENT_REQUESTS=4` |
@@ -169,6 +170,7 @@ overhead below the proxy request bound when changing upload capacity.
 | `AI_MAX_DOWNLOAD_BYTES` | 250,000,000 | Generated ZIP bytes and total uncompressed contents. |
 | `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | 1,000 | Optimizer runs per chat. |
 | `AI_OPTIMIZER_MAX_RESULT_BYTES` | 64,000,000 | Bytes per optimizer workbook. |
+| Merged cells in an optimizer workbook | 1,000,000 | Total declared merged area across all worksheets, checked before loading. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | 2,000 | Tool rounds per agent run. |
 | `AI_AGENT_MAX_TOOL_CALLS` | 6,000 | Tool calls per agent run. |
 

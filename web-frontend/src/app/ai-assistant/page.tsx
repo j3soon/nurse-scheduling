@@ -310,7 +310,7 @@ export default function AiAssistantPage() {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
-    setSessionRetentionSeconds, restoreConversation,
+    setSessionRetentionSeconds, restoreConversation, retrySessionEventStream,
     captureSession, newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles, compactContext, isCompacting,
   } = useAiChat({
@@ -604,6 +604,7 @@ export default function AiAssistantPage() {
 
   const saveAuthToken = (token: string, remember: boolean) => {
     if (token !== authToken) setSelection(undefined);
+    else if (authRejected) retrySessionEventStream();
     setAuthToken(token);
     setRememberAuthToken(remember);
     setIsEditingAuthToken(false);
@@ -652,6 +653,8 @@ export default function AiAssistantPage() {
     if (endpoint !== aiEndpoint) {
       setSelection(undefined);
       setAuthRequired(false);
+      setModelSelectionEnabled(false);
+      setSavedChatExportEnabled(false);
       setFileCapability(DISABLED_FILE_CAPABILITY);
       setBackendVersion(undefined);
     }
@@ -1099,7 +1102,8 @@ export default function AiAssistantPage() {
               token={authToken}
               rememberToken={rememberAuthToken}
               isEditing={isEditingAuthToken}
-              disabled={isStreaming}
+              // A rejected token stops the event stream, so accept its replacement during a reply.
+              disabled={isStreaming && !authRejected}
               onEdit={() => setIsEditingAuthToken(true)}
               onCancel={() => setIsEditingAuthToken(false)}
               onSave={saveAuthToken}
@@ -1540,9 +1544,11 @@ export default function AiAssistantPage() {
               <>
                 <button
                   type="submit"
-                  disabled={!isClientReady || composerUnavailable || !draft.trim()}
+                  disabled={!isClientReady || composerUnavailable || !draft.trim() || selectedAttachments.length > 0}
                   aria-label={t("Queue message")}
-                  title={t("Queue message")}
+                  title={selectedAttachments.length > 0
+                    ? t("Wait for the current response to finish before sending attached files, or remove the attachments to queue a text message.")
+                    : t("Queue message")}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
                 >
                   <FiArrowUp aria-hidden="true" className="h-5 w-5" />

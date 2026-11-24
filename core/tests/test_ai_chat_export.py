@@ -696,3 +696,33 @@ def test_chinese_conversion_is_reversible_browser_display_only():
     assert "unsafe()" not in document
     assert script.count("</script>") == 1
     assert text in build_markdown_chat(messages, CASES[0]["metadata"])
+
+
+def test_markdown_export_fences_activity_and_summaries_that_contain_backticks():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Done.",
+            "activity": [
+                {"kind": "tool", "name": "bash", "arguments": "{}", "result": "before\n```\nafter", "ok": True},
+                {
+                    "kind": "compaction",
+                    "reason": "manual",
+                    "state": "completed",
+                    "text": "Summarized.",
+                    "summary": "Summary with ```fence``` inside",
+                    "keepMessages": 1,
+                },
+            ],
+        },
+        {
+            "role": "assistant",
+            "presentation": "summary",
+            "content": "",
+            "compaction": {"summary": "Kept ```code``` here", "keepMessages": 1},
+        },
+    ]
+    markdown = build_markdown_chat(messages, CASES[0]["metadata"])
+
+    assert "before\n```\nafter\n````" in markdown
+    assert markdown.count("````text\n") == 3

@@ -65,3 +65,51 @@ test('optimize request body reflects YAML-edited state', async ({ page }) => {
   expect(submittedBody).toContain('Team Omega');
   expect(submittedBody).not.toContain('Team Alpha');
 });
+
+test('anonymized optimize request maps numeric people group members from YAML', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Save YAML whose people and group members use numeric IDs.
+   * 2. Trigger optimize with default anonymization and a mocked backend.
+   * 3. Confirm the posted group lists the anonymized people instead of the numeric IDs.
+   */
+  await disableModalDialogs(page);
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'numeric people seed',
+    dates: { range: { startDate: '2026-05-01', endDate: '2026-05-01' }, groups: [] },
+    people: { items: [{ id: 'P1', description: '', history: [] }], groups: [], history: [] },
+    shiftTypes: { items: [{ id: 'D', description: 'Day' }], groups: [] },
+    preferences: [{ type: 'at most one shift per day' }],
+    export: { formatting: [] },
+  });
+
+  await page.goto('/save-and-load');
+  await page.getByRole('button', { name: 'Edit YAML' }).click();
+  await page.locator('textarea').fill([
+    'apiVersion: alpha',
+    'dates:',
+    '  range: {startDate: 2026-05-01, endDate: 2026-05-01}',
+    'people:',
+    '  items: [{id: 1001}, {id: 1002}]',
+    '  groups: [{id: Team, members: [1001, 1002]}]',
+    'shiftTypes:',
+    '  items: [{id: D}]',
+    'preferences:',
+    '  - {type: at most one shift per day}',
+    '',
+  ].join('\n'));
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.locator('pre')).toContainText('id: Team');
+
+  let submittedBody = '';
+  await mockOptimizeAndExport(page, { onSubmit: body => { submittedBody = body; } });
+
+  await page.goto('/optimize-and-export');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Optimize and Download' }).click();
+  await downloadPromise;
+  await expect(page.getByText('Schedule optimized and downloaded successfully!')).toBeVisible();
+  expect(submittedBody).toContain('members: [P1, P2]');
+  expect(submittedBody).not.toContain('1001');
+});

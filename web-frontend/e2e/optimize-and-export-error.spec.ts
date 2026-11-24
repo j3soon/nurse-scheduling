@@ -64,13 +64,9 @@ test('optimize and export renders backend errors without a stale success state',
   await expect(page.getByText('Schedule optimized and downloaded successfully!')).toHaveCount(0);
 });
 
-test('allows an explicitly selected incompatible backend with a warning', async ({ page }) => {
-  /*
-   * Steps:
-   * 1. Seed a valid schedule and return reachable backend information for an unsupported API version.
-   * 2. Confirm Auto declines the backend and the missing options endpoint uses legacy defaults.
-   * 3. Select the backend explicitly, inspect its details, and confirm the warning action sends the request.
-   */
+for (const scenario of ['API version mismatch', 'unsupported authentication'] as const) test(
+  `handles explicit optimizer selection with ${scenario}`, async ({ page }) => {
+  const basicAuth = scenario === 'unsupported authentication';
   await seedScheduleSpecState(page, {
     apiVersion: 'test',
     description: 'incompatible backend seed',
@@ -105,7 +101,8 @@ test('allows an explicitly selected incompatible backend with a warning', async 
       body: JSON.stringify({
         status: 'ready',
         service_name: 'nurse-scheduling-api',
-        api_version: 'alpha',
+        api_version: basicAuth ? '0.2.0' : 'alpha',
+        ...(basicAuth ? { auth: { required: true, scheme: 'basic' } } : {}),
         app_version: 'old-backend',
         jobs: { running: 1, queued: 3, cancelling: 1 },
         workers: { online: 2 },
@@ -115,8 +112,25 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   await page.route('http://localhost:8000/optimize/options', async route => {
     optimizationOptionsRequested = true;
     await route.fulfill({
-      status: 404,
-      headers: { 'Access-Control-Allow-Origin': '*' },
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        schema_version: 'alpha',
+        solver: {
+          default: 'ortools/cp-sat',
+          choices: [{
+            value: 'ortools/cp-sat',
+            label: 'OR-Tools | CP-SAT',
+            compute: 'cpu',
+            timeout: { default: 300, minimum: 1, maximum: 3600 },
+            controls: { cancel_running: true, finish_now: true },
+          }],
+        },
+        prettify: { default: true },
+      }),
     });
   });
   await page.route('http://localhost:8000/schedule_spec/optimize', async route => {
@@ -137,15 +151,23 @@ test('allows an explicitly selected incompatible backend with a warning', async 
   // The reason is reachable from the Status icon rather than printed into the server cell.
   await expect(page.getByLabel('http://localhost:8000 status: Incompatible')).toHaveAttribute(
     'title',
-    'Incompatible. Unsupported API version "alpha". Expected "0.2.0".'
+    basicAuth
+      ? 'Incompatible. Unsupported authentication scheme "basic". Expected "bearer".'
+      : 'Incompatible. Unsupported API version "alpha". Expected "0.2.0".'
   );
-  await expect(page.getByText(/auto found no compatible backend/i)).toBeVisible();
+  if (!basicAuth) await expect(page.getByText(/auto found no compatible backend/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\)/i)).toHaveCount(0);
   expect(optimizationOptionsRequested).toBe(true);
 
   await page.getByText('http://localhost:8000', { exact: true }).click();
   await expect(page.getByLabel('Select http://localhost:8000')).toBeChecked();
+  if (basicAuth) {
+    await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+    await expect(page.getByText('This backend requires basic authentication. The app supports bearer tokens.')).toBeVisible();
+    expect(optimizeRequested).toBe(false);
+    return;
+  }
 
   await expect(page.getByText(/API version: alpha \(expected 0\.2\.0\).*Frontend version:/i)).toBeVisible();
   await expect(page.getByText('Incompatible backend. The request may fail.')).toBeVisible();
@@ -158,4 +180,55 @@ test('allows an explicitly selected incompatible backend with a warning', async 
 
   await expect(page.getByText('Server error (422): old API rejected request')).toBeVisible();
   expect(optimizeRequested).toBe(true);
+});
+
+test('marks a tagged release backend without the options route incompatible', async ({ page }) => {
+  /*
+   * Steps:
+   * 1. Mock a backend that passes the /info checks but has no /optimize/options route, like v0.2.0.
+   * 2. Confirm the Status icon names the outdated backend and Optimize stays disabled.
+   * 3. Select the backend explicitly and confirm the page still sends no submission.
+   */
+  await seedScheduleSpecState(page, {
+    apiVersion: 'test',
+    description: 'tagged release backend seed',
+    dates: {
+      range: { startDate: '2026-05-01', endDate: '2026-05-01' },
+      items: [{ id: '01', description: '' }],
+      groups: [],
+    },
+    people: {
+      items: [{ id: 'P1', description: 'Primary nurse', history: [] }],
+      groups: [],
+      history: [],
+    },
+    shiftTypes: {
+      items: [{ id: 'D', description: 'Day' }],
+      groups: [],
+    },
+    preferences: [],
+    export: { formatting: [] },
+  });
+  await setDateRange(page);
+  let optimizeRequested = false;
+  await mockOptimizeAndExport(page, { onSubmit: () => { optimizeRequested = true; } });
+  await page.route('http://localhost:8000/optimize/options', route => route.fulfill({
+    status: 404,
+    headers: { 'Access-Control-Allow-Origin': '*' },
+  }));
+
+  await page.goto('/optimize-and-export');
+
+  await expect(page.getByText('Server: Incompatible')).toBeVisible();
+  await expect(page.getByLabel('http://localhost:8000 status: Incompatible')).toHaveAttribute(
+    'title',
+    'Incompatible. Backend predates the current optimizer API. Update the backend.'
+  );
+  await expect(page.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+
+  await page.getByLabel('Select http://localhost:8000').check({ force: true });
+
+  await expect(page.getByText('Backend optimization options are unavailable.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Optimize.*Download/ })).toBeDisabled();
+  expect(optimizeRequested).toBe(false);
 });

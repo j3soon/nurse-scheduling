@@ -213,13 +213,17 @@ class ModelCatalog:
                         continue
                     model_id = item["id"]
                     deployment = metadata.get(model_id, {})
-                    details = {**item, **deployment.get("model_info", {})}
+                    model_info = deployment.get("model_info")
+                    if model_info is not None and not isinstance(model_info, dict):
+                        raise TypeError
+                    details = {**item, **(model_info or {})}
                     if details.get("mode", "chat") != "chat" or details.get("supports_function_calling") is False:
                         continue
                     # Explicit choices avoid guessing effort levels from model names.
-                    choices = tuple(
-                        ReasoningOption.model_validate(option) for option in details.get("chat_reasoning_options", [])
-                    )
+                    raw_choices = details.get("chat_reasoning_options")
+                    if raw_choices is not None and not isinstance(raw_choices, list):
+                        raise TypeError
+                    choices = tuple(ReasoningOption.model_validate(option) for option in (raw_choices or ()))
                     if len({option.id for option in choices}) != len(choices):
                         raise TypeError
                     configured = deployment.get("litellm_params") or {}
