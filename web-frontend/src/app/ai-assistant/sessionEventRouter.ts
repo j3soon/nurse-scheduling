@@ -35,8 +35,6 @@ interface ForegroundRun {
   reject: (error: Error) => void;
   refresh: () => void;
   pendingReset?: SessionReset;
-  /** Deferred events before this index arrived before the latest session reset. */
-  resetIndex?: number;
 }
 
 /** Route one session stream independently of React and HTTP response timing. */
@@ -54,7 +52,12 @@ export class SessionEventRouter {
     if (event.type === 'session_reset' && !event.runId) {
       background(event);
       this.reset(event.reset);
-      for (const runId of event.reset.runIds) this.dispatch({ ...event, runId }, background, ownsConversation);
+      const foreground = this.foreground;
+      for (const runId of event.reset.runIds) {
+        if (foreground && (foreground.runId === undefined || foreground.runId === runId)) {
+          this.dispatch({ ...event, runId }, background, ownsConversation);
+        }
+      }
       return;
     }
     const foreground = this.foreground;
@@ -75,9 +78,9 @@ export class SessionEventRouter {
     const terminalBuffered = run.deferred.some(({ event }) => event.runId === runId
       && ['done', 'stopped', 'stale', 'error'].includes(event.type));
     for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
-      if (ownsConversation()) {
-        (event.runId === runId ? run.handle : background)(event);
-      }
+      if (!ownsConversation()) continue;
+      if (event.runId === runId) run.handle(event);
+      else if (event.type !== 'session_reset') background(event);
     }
     // An earlier snapshot may predate acceptance. Refresh it after identifying the
     // run instead of treating missing output as proof that a new run expired.
@@ -90,7 +93,10 @@ export class SessionEventRouter {
     const run = this.foreground;
     if (run && !run.runId) {
       run.pendingReset = reset;
-      run.resetIndex = run.deferred.length;
+      // A snapshot replaces only the runs it includes. A reconnect can omit
+      // complete turns that were already read but are still deferred here.
+      const replacedRuns = new Set(reset.runIds);
+      run.deferred = run.deferred.filter(({ event }) => !event.runId || !replacedRuns.has(event.runId));
     }
     if (run?.runId && !reset.runIds.includes(run.runId)
       && !reset.terminalRunIds.includes(run.runId) && reset.activeRunId !== run.runId) {
@@ -102,9 +108,8 @@ export class SessionEventRouter {
     if (this.foreground !== run) return;
     this.foreground = null;
     // A rejected or aborted request never identifies its run, so every deferred
-    // event belongs to another run. Background already applied each session reset,
-    // which replaced the output that arrived before it.
-    for (const { event, background, ownsConversation } of run.deferred.splice(0).slice(run.resetIndex ?? 0)) {
+    // event belongs to another run. Background already applied each session reset.
+    for (const { event, background, ownsConversation } of run.deferred.splice(0)) {
       if (ownsConversation() && event.type !== 'session_reset') background(event);
     }
   }

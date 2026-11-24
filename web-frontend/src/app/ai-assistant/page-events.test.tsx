@@ -560,7 +560,7 @@ describe('AiAssistantPage', () => {
     expect(await screen.findByText('Current answer.')).toBeInTheDocument();
   });
 
-  it('saves the event position of deferred review events when the foreground message fails', async () => {
+  it('keeps the deferred review and its cursor after a partial reset and failed admission', async () => {
     const user = userEvent.setup();
     let fail: ((error: unknown) => void) | undefined;
     mockStreamSessionEvents.mockImplementationOnce(() => new Promise<void>(() => {}));
@@ -576,12 +576,21 @@ describe('AiAssistantPage', () => {
       review?.onEvent({ type: 'delta', text: 'Earlier review.' });
       review?.onEvent({ type: 'done', runId: 'review' });
       stream.onEventId?.(3);
+      stream.onEventId?.(6);
+      stream.onEvent({
+        type: 'session_reset',
+        reset: { runIds: ['later-review'], terminalRunIds: ['later-review'], activeRunId: null, incomplete: false },
+      });
+      const later = runEvents(stream, 'later-review');
+      later?.onEvent({ type: 'delta', text: 'Later review.' });
+      later?.onEvent({ type: 'done', runId: 'later-review' });
     });
     await act(async () => fail?.(new MockAiHttpError('Server error', 500)));
     expect(screen.getByText('Earlier review.')).toBeInTheDocument();
+    expect(screen.getByText('Later review.')).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('pagehide')));
     const stored = JSON.parse(window.sessionStorage.getItem('nurse-scheduling-ai-conversation') ?? '{}');
-    expect(stored.sessionEventId).toBe(3);
+    expect(stored.sessionEventId).toBe(6);
     expect(JSON.stringify(stored.messages)).toContain('Earlier review.');
   });
 
