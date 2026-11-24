@@ -1579,7 +1579,8 @@ def test_defensive_limit_stops_an_unterminated_sse_line_before_json_parsing(monk
 def test_reasoning_and_tool_fragment_merging_handles_null_thinking_and_empty_native(monkeypatch):
     chunks = [
         _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": None, "index": 0}]}),
-        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": "step 1", "index": 0}]}),
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": "step 1", "signature": None, "index": 0}]}),
+        _delta_chunk({"thinking_blocks": [{"type": "thinking", "thinking": None, "signature": "signed", "index": 0}]}),
         _delta_chunk(
             {
                 "tool_calls": [
@@ -1610,7 +1611,9 @@ def test_reasoning_and_tool_fragment_merging_handles_null_thinking_and_empty_nat
     events = _events(provider)
     replays = [event for event in events if isinstance(event, ReasoningReplay)]
     tool_reqs = [event for event in events if isinstance(event, ToolCallRequest)]
-    assert replays and replays[0].native["thinking_blocks"][0]["thinking"] == "step 1"
+    assert replays and replays[0].native["thinking_blocks"] == [
+        {"type": "thinking", "thinking": "step 1", "signature": "signed", "index": 0}
+    ]
     assert tool_reqs and tool_reqs[0].calls[0].native == {"extra_content": {"google": {"thought_signature": "sig-abc"}}}
 
 

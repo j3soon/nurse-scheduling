@@ -943,6 +943,8 @@ def _merge_reasoning(target: dict[str, Any], delta: dict[str, Any]) -> int:
             if field and same:
                 for name, part in block.items():
                     if name == field or (key == "thinking_blocks" and name == "signature"):
+                        if part is None:
+                            continue
                         if not isinstance(part, str):
                             raise ProviderError.for_user("The AI provider returned invalid reasoning metadata.")
                         existing = last.get(name)
