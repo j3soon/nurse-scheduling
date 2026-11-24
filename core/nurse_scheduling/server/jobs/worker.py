@@ -471,7 +471,11 @@ class JobWorker:
             try:
                 failed = self._controller.fail_job(job.id, failure, lease=lease)
             except JobNotFoundError:
-                server_logger.warning("[server:worker] job disappeared while reporting failure job_id=%s", job.id)
+                server_logger.warning(
+                    "[server:worker] job disappeared while reporting failure job_id=%s",
+                    job.id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
                 return
             except Exception:
                 try:

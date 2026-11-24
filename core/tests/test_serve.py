@@ -3220,7 +3220,7 @@ def test_expire_worker_claims_skips_concurrently_deleted_job():
     assert controller.get_job(remaining_id).state == JobState.FAILED
 
 
-def test_worker_keeps_running_when_job_disappears_before_failure_report(monkeypatch):
+def test_worker_keeps_running_when_job_disappears_before_failure_report(monkeypatch, caplog):
     store = MemoryJobStore()
     controller = JobController(
         store,
@@ -3256,5 +3256,8 @@ def test_worker_keeps_running_when_job_disappears_before_failure_report(monkeypa
 
     monkeypatch.setattr("nurse_scheduling.server.jobs.worker.run_optimization_process", disappear_and_fail)
     # _execute must handle JobNotFoundError from fail_job without raising into _run().
-    worker._execute(claimed, lease)
+    with caplog.at_level(logging.WARNING, logger="nurse_scheduling.server"):
+        worker._execute(claimed, lease)
     assert worker._ready.is_set()
+    [record] = [record for record in caplog.records if "disappeared while reporting failure" in record.getMessage()]
+    assert record.exc_info is not None and str(record.exc_info[1]) == "boom after deletion"
