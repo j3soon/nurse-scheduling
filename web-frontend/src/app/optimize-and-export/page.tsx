@@ -172,6 +172,10 @@ const useIsomorphicLayoutEffect = typeof window === 'undefined' ? useEffect : us
 // /schedule_spec/optimize, so their missing options mark them incompatible.
 const MISSING_OPTIMIZATION_OPTIONS_ERROR = "Backend predates the current optimizer API. Update the backend.";
 
+function unsupportedAuthScheme(auth: ServerInfoResponse['auth']): string | undefined {
+  return auth?.required && auth.scheme !== SUPPORTED_AUTH_SCHEME ? auth.scheme : undefined;
+}
+
 function createServerEntry(
   server: StoredOptimizeServerEntry,
   status: ServerStatus = 'unchecked',
@@ -405,8 +409,9 @@ async function fetchServerInfo(
   }
 
   const auth = parseAuthRequirement(info.auth);
-  if (auth?.required && auth.scheme !== SUPPORTED_AUTH_SCHEME) {
-    incompatibilities.push(`Unsupported authentication scheme "${auth.scheme}". Expected "${SUPPORTED_AUTH_SCHEME}".`);
+  const unsupportedScheme = unsupportedAuthScheme(auth);
+  if (unsupportedScheme !== undefined) {
+    incompatibilities.push(`Unsupported authentication scheme "${unsupportedScheme}". Expected "${SUPPORTED_AUTH_SCHEME}".`);
   }
   const health: ServerInfoResponse = {
     status: typeof info.status === 'string' ? info.status : 'missing',
@@ -809,8 +814,12 @@ export default function OptimizeAndExportPage() {
   ) ?? null;
   const hasVersionMismatch = Boolean(activeServerHealth && hasAppVersionMismatch(CURRENT_APP_VERSION, activeServerHealth.app_version));
   const activeClaimedPerformance = activeServerHealth?.claimed_performance ?? null;
+  const activeUnsupportedAuthScheme = unsupportedAuthScheme(activeServerHealth?.auth);
   const isExplicitlySelectedIncompatibleServer = selectedServerEndpoint !== 'auto'
-    && activeServerStatus === 'incompatible';
+    && activeServerStatus === 'incompatible'
+    && activeUnsupportedAuthScheme === undefined;
+  const hasIncompatibleBackendOverride = serverEntries.some(server => server.status === 'incompatible'
+    && server.options !== null && unsupportedAuthScheme(server.health?.auth) === undefined);
   const canUseActiveServer = activeServerStatus === 'online' || isExplicitlySelectedIncompatibleServer;
   const isDateDataMissing = !dateData.range?.startDate || !dateData.range?.endDate || dateData.items.length === 0;
   const isPeopleDataMissing = peopleData.items.length === 0;
@@ -825,19 +834,22 @@ export default function OptimizeAndExportPage() {
   const isCancelling = scheduleStatus === 'cancelling';
   const isOptimizeDisabled = isOptimizing || isRequiredDataMissing
     || Boolean(dateReferenceIssue) || !canUseActiveServer || !activeOptimizationOptions;
-  const optimizeDisabledReason = isRequiredDataMissing
-    ? t("Complete the required Schedule Spec fields before optimizing.")
-    : activeServerStatus === 'unauthorized'
-      ? t("This backend requires credentials. Enter its token to continue.")
-    : activeServerStatus === 'degraded'
-      ? t("Optimization options are unavailable. Check the backend and try again.")
-    : !canUseActiveServer
-      ? activeServerStatus === 'incompatible'
-        ? t("Auto found no compatible backend. Explicitly select an incompatible backend to continue anyway.")
-        : t("Backend unavailable. Check or select an online backend.")
-      : !activeOptimizationOptions
-        ? t("Backend optimization options are unavailable.")
-      : null;
+  let optimizeDisabledReason: string | null = null;
+  if (activeUnsupportedAuthScheme !== undefined) {
+    optimizeDisabledReason = t("This backend requires {value0} authentication. The app supports bearer tokens.", { value0: activeUnsupportedAuthScheme });
+  } else if (isRequiredDataMissing) {
+    optimizeDisabledReason = t("Complete the required Schedule Spec fields before optimizing.");
+  } else if (activeServerStatus === 'unauthorized') {
+    optimizeDisabledReason = t("This backend requires credentials. Enter its token to continue.");
+  } else if (activeServerStatus === 'degraded') {
+    optimizeDisabledReason = t("Optimization options are unavailable. Check the backend and try again.");
+  } else if (!canUseActiveServer) {
+    optimizeDisabledReason = activeServerStatus === 'incompatible' && hasIncompatibleBackendOverride
+      ? t("Auto found no compatible backend. Explicitly select an incompatible backend to continue anyway.")
+      : t("Backend unavailable. Check or select an online backend.");
+  } else if (!activeOptimizationOptions) {
+    optimizeDisabledReason = t("Backend optimization options are unavailable.");
+  }
 
   const clearSavedDownload = useCallback(() => {
     if (savedDownloadUrlRef.current) {
@@ -1650,7 +1662,8 @@ export default function OptimizeAndExportPage() {
         }
 
         const { server } = row;
-        const showCredentials = server.authRequired || server.token !== null;
+        const showCredentials = server.token !== null
+          || (server.authRequired && unsupportedAuthScheme(server.health?.auth) === undefined);
         return (
           <div className="min-w-0 overflow-hidden">
           <label className="flex min-w-0 cursor-pointer items-start">
@@ -2010,7 +2023,10 @@ export default function OptimizeAndExportPage() {
                     {activeServerStatus === 'incompatible' ? (
                       selectedServerEndpoint === 'auto' ? (
                         <p className="font-medium">
-                          {t("No compatible backend is available. Select a backend explicitly to continue anyway.")}</p>
+                          {hasIncompatibleBackendOverride
+                            ? t("No compatible backend is available. Select a backend explicitly to continue anyway.")
+                            : t("No compatible backend is available.")}
+                        </p>
                       ) : (
                         <>
                           {!activeServerHealth && <p>{t("Server information: invalid")}</p>}
@@ -2023,7 +2039,9 @@ export default function OptimizeAndExportPage() {
                             <p className="mt-1">
                               {t("Status: ")}{activeServerHealth?.status ?? t("missing")}{t(" (expected ready)")}</p>
                           )}
-                          <p className="mt-1 font-medium">{t("Incompatible backend. The request may fail.")}</p>
+                          {isExplicitlySelectedIncompatibleServer && (
+                            <p className="mt-1 font-medium">{t("Incompatible backend. The request may fail.")}</p>
+                          )}
                         </>
                       )
                     ) : hasVersionMismatch && (

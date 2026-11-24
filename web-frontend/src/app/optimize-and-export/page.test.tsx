@@ -2461,6 +2461,22 @@ describe('OptimizeAndExportPage backend authentication', () => {
     );
   });
 
+  it('blocks a selected backend that requires Basic authentication even when its options are public', async () => {
+    const user = userEvent.setup();
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(healthyResponse({ auth: { required: true, scheme: 'basic' } }))
+      .mockResolvedValueOnce(optimizationOptionsResponse());
+
+    render(<OptimizeAndExportPage />);
+    await screen.findByText('Server: Incompatible');
+    await user.click(screen.getByLabelText(`Select ${LOCAL_API_URL}`));
+
+    expect(screen.queryByRole('button', { name: 'Optimize Anyway and Download' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Optimize and Download' })).toBeDisabled();
+    expect(screen.getByText('This backend requires basic authentication. The app supports bearer tokens.')).toBeVisible();
+  });
+
   it('opens with default backends when device storage is blocked', async () => {
     queueInitialLocalSelection(fetch as unknown as ReturnType<typeof vi.fn>);
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
