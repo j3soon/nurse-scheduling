@@ -88,6 +88,14 @@ def test_optimizer_submission_matches_frontend_basic_anonymization() -> None:
     assert "Bob" not in prepared.submission_yaml
 
 
+def test_optimizer_rejects_unwritable_person_id_before_anonymization() -> None:
+    payload = base_schedule_payload()
+    payload["people"]["items"][1]["id"] = "P2\x07"
+    payload["people"]["groups"][0]["members"][1] = "P2\x07"
+    with pytest.raises(ValueError, match="XLSX cannot store"):
+        prepare_optimizer_spec(schedule_spec_yaml(payload), 1_000_000)
+
+
 def test_optimizer_preserves_omitted_and_explicit_export_layouts() -> None:
     payload = base_schedule_payload()
     del payload["export"]

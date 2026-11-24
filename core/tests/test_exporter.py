@@ -1329,14 +1329,16 @@ def test_exporter_counts_a_repeated_request_date_once_in_cell_notes():
 def test_exporter_removes_control_characters_that_worksheets_reject(prettify):
     from nurse_scheduling.exporter import export_to_excel
 
-    res = schedule(_single_day_spec("P1\\x07", "['01']"), solver="ortools/cp-sat", prettify=prettify)
-    # Export formatting notes render user-written text.
+    res = schedule(_single_day_spec("P1", "['01']"), solver="ortools/cp-sat", prettify=prettify)
+    # An annotation can put user-written text in the schedule and notes.
+    dataframe = res.dataframe.data if prettify else res.dataframe
+    dataframe.iloc[2, 1] = "Bell\x07 label"
     res.cell_export_info["comments"][(3, 2)] = ["Bell\x07 note"]
     out = BytesIO()
     export_to_excel(res.dataframe, out, res.cell_export_info)
     wb = load_workbook(BytesIO(out.getvalue()))
     try:
-        assert wb.active["A3"].value == "P1"
+        assert wb.active["B3"].value == "Bell label"
         assert wb["Notes"]["C2"].value == "Bell note"
     finally:
         wb.close()

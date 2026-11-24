@@ -386,3 +386,12 @@ def test_export_weight_range_rejects_nan():
 def test_export_weight_range_accepts_integer_bounds_beyond_float_range():
     # math.isnan converts an int to float, which overflows for bounds like this one.
     ScheduleSpec.model_validate(_weight_range_payload([0, 10**400]))
+
+
+@pytest.mark.parametrize("section", ["people", "shiftTypes"])
+@pytest.mark.parametrize("character", ["\x07", "\uffff"], ids=["control", "noncharacter"])
+def test_schedule_spec_rejects_item_ids_that_cannot_be_written_to_xlsx(section, character):
+    payload = _base_payload()
+    payload[section]["items"].append({"id": payload[section]["items"][0]["id"] + character})
+    with pytest.raises(ValidationError, match="XLSX cannot store"):
+        ScheduleSpec.model_validate(payload)
