@@ -170,6 +170,7 @@ overhead below the proxy request bound when changing upload capacity.
 | `AI_MAX_DOWNLOAD_BYTES` | 250,000,000 | Generated ZIP bytes and total uncompressed contents. |
 | `AI_OPTIMIZER_MAX_RUNS_PER_SESSION` | 1,000 | Optimizer runs per chat. |
 | `AI_OPTIMIZER_MAX_RESULT_BYTES` | 64,000,000 | Bytes per optimizer workbook. |
+| Merged cells in an optimizer workbook | 1,000,000 | Total declared merged area across all worksheets, checked before loading. |
 | `AI_AGENT_MAX_TOOL_ROUNDS` | 2,000 | Tool rounds per agent run. |
 | `AI_AGENT_MAX_TOOL_CALLS` | 6,000 | Tool calls per agent run. |
 

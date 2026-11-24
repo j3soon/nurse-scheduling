@@ -24,7 +24,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from openpyxl import load_workbook
+from openpyxl.reader.excel import ExcelReader
 
+from nurse_scheduling.ai import optimizer_privacy
 from nurse_scheduling.ai.optimizer_privacy import OptimizerResultError, prepare_optimizer_spec, restore_people_ids
 
 from .ai_test_helper import base_schedule_payload, optimizer_workbook_bytes, parse_schedule, schedule_spec_yaml
@@ -125,6 +127,34 @@ def test_optimizer_workbook_restores_ids_before_download_and_attachment() -> Non
         assert workbook.active.column_dimensions["A"].width == 16
         assert workbook.active.sheet_properties.pageSetUpPr.fitToPage
         assert workbook.active.print_area.endswith("!$A$1:$C$4")
+    finally:
+        workbook.close()
+
+
+@pytest.mark.parametrize("original_id", ["P1", "Alice"], ids=["identity", "restore"])
+def test_optimizer_workbook_checks_the_total_merged_area_before_loading(monkeypatch, original_id) -> None:
+    workbook = load_workbook(BytesIO(optimizer_workbook_bytes(("P1",))))
+    workbook.active.merge_cells("B1:C1")
+    workbook.create_sheet("Second sheet").merge_cells("B1:C1")
+    output = BytesIO()
+    workbook.save(output)
+    workbook.close()
+
+    def unexpected_binding(_reader):
+        pytest.fail("Worksheets must not be bound before checking the merged area.")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(optimizer_privacy, "MAX_OPTIMIZER_MERGED_CELLS", 3)
+        patch.setattr(ExcelReader, "read_worksheets", unexpected_binding)
+        with pytest.raises(OptimizerResultError, match="too many merged cells"):
+            restore_people_ids(output.getvalue(), {"P1": original_id}, 1)
+
+    monkeypatch.setattr(optimizer_privacy, "MAX_OPTIMIZER_MERGED_CELLS", 4)
+    restored = restore_people_ids(output.getvalue(), {"P1": original_id}, 1)
+    workbook = load_workbook(BytesIO(restored))
+    try:
+        assert workbook.active["A3"].value == original_id
+        assert str(workbook["Second sheet"].merged_cells) == "B1:C1"
     finally:
         workbook.close()
 
