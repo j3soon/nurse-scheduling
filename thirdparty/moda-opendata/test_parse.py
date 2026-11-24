@@ -17,12 +17,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pandas", "pytest"]
+# ///
+
 # This test is mostly AI generated.
 
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from parse import parse_special_date_info
 
 
@@ -53,3 +59,7 @@ def test_parse_script_output_matches_taiwan_holidays_ts_entries():
     assert output_lines
     for line in output_lines:
         assert line in taiwan_holidays_source
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-q"]))

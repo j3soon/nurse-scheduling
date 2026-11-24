@@ -1,6 +1,6 @@
 # Ref: https://docs.nvidia.com/cuopt/user-guide/latest/cuopt-server/quick-start.html#container-from-docker-hub
 # Ref: https://hub.docker.com/r/nvidia/cuopt/tags
-FROM nvidia/cuopt:26.8.0a-cuda13.3-py3.14
+FROM nvidia/cuopt:26.8.0-cuda13.3-py3.14
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -46,13 +46,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     glpk-utils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY core/requirements.txt core/requirements-optional.txt /tmp/
-# highspy 1.12.0 has no CPython 3.14 wheel, so omit PuLP/HiGHS from this image.
-RUN sed -i '/^highspy==/d' /tmp/requirements-optional.txt \
-    && pip3 install --no-cache-dir -r /tmp/requirements-optional.txt
+# Install uv and the locked core packages into the active /opt/venv. The venv
+# also reads the cuOpt packages that the base image installs system-wide. After
+# a dependency change, `uv sync --active --locked --all-extras` in core/ updates it.
+COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /uvx /usr/local/bin/
+COPY core/pyproject.toml core/uv.lock /tmp/core/
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:${PATH}"
+# The BuildKit uv cache keeps downloads across lock changes. It sits on another
+# file system, so uv copies files instead of hard-linking them.
+RUN --mount=type=cache,id=dev-uv,target=/root/.cache/uv,sharing=locked \
+    uv venv --system-site-packages --python "$(command -v python)" /opt/venv \
+    && uv sync --active --project /tmp/core --locked --all-extras --link-mode copy
 
 # Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.5"
 ENV PATH="/root/.bun/bin:${PATH}"
 
 # Install the frontend's locked Playwright version and bake browser binaries into
@@ -69,7 +77,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-co
 
 # Ref: https://github.com/j3soon/dockerfile-fragments/blob/main/codex/Dockerfile
 # Install Codex CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+RUN curl -fsSL https://deb.nodesource.com/setup_26.x | bash -
 RUN apt-get update && apt-get install -y \
     nodejs \
     && rm -rf /var/lib/apt/lists/*

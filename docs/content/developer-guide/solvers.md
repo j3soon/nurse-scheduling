@@ -38,11 +38,11 @@ choice.
 🐧 is Linux, 🍎 is macOS, and 🪟 is Windows. Only validated platforms are
 shown.
 
-`core/requirements.txt` is the minimal runtime set that the deployment images
-install. It covers every OR-Tools selector plus PuLP with its bundled CBC.
-`pulp/highs` and `pulp/scip` need `highspy` and `pyscipopt` from
-`core/requirements-optional.txt`, so a deployment that advertises either one
-must install that file as well. `pulp/glpk` and `pulp/cuopt` additionally need
+The `core/pyproject.toml` runtime dependencies are the minimal set that the
+deployment images install. They cover every OR-Tools selector plus PuLP with
+its bundled CBC. `pulp/highs` and `pulp/scip` need `highspy` and `pyscipopt`
+from the `highs` and `scip` extras, so a deployment that advertises either one
+must install that extra as well. `pulp/glpk` and `pulp/cuopt` additionally need
 their external runtimes.
 
 Recommended is the default. Experimental is tested but not recommended.
@@ -59,6 +59,7 @@ Limited is intended only for small or bounded cases.
 - PuLP/GLPK requires `glpsol`.
 - PuLP/GLPK uses smoke coverage because some full regression models take
   several minutes without proving optimality.
+- PuLP/HiGHS needs Python 3.13 or earlier. Its `highspy` must match the HiGHS release that OR-Tools bundles, and that release has no CPython 3.14 wheel.
 - PuLP/HiGHS is skipped on macOS because its native library may conflict with the HiGHS library bundled with OR-Tools in the same Python process. Observed failure in GitHub runners, should investigate further in the future.
 - PuLP/SCIP validation on macOS is pending.
 - MPSolver/BOP is a legacy engine intended only for small cases.

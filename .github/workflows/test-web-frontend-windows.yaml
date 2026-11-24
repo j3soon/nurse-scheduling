@@ -22,13 +22,17 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.5'
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile
@@ -37,7 +41,7 @@ jobs:
         run: bun run test:coverage -- --testTimeout=15000
       - name: Upload frontend coverage to Codecov
         if: github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./web-frontend/coverage/lcov.info
@@ -50,23 +54,31 @@ jobs:
       E2E_COVERAGE: ${{ inputs.bundle_coverage && '1' || '0' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.5'
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
       - name: Install dependencies
         working-directory: web-frontend
         run: bun install --frozen-lockfile
-      - uses: actions/setup-python@v5
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@v10.4.0
         with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: core/requirements.txt
+          version: "0.13.9"
+          python-version: "3.14"
+          working-directory: core
+          activate-environment: true
+          cache-suffix: runtime
       - name: Install core runtime for the export comparison
-        run: python -m pip install -r core/requirements.txt
+        working-directory: core
+        run: uv sync --locked --no-dev
       - name: Install Playwright Chromium
         working-directory: web-frontend
         run: bunx playwright install chromium
@@ -79,7 +91,7 @@ jobs:
         run: bun run coverage:e2e:report
       - name: Upload Playwright coverage to Codecov
         if: inputs.bundle_coverage && github.event_name != 'pull_request'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./web-frontend/coverage-e2e/lcov.info
@@ -87,7 +99,7 @@ jobs:
           name: web-frontend-playwright-windows
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-windows
           path: |

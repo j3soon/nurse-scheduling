@@ -2,6 +2,78 @@
 name = "nurse-scheduling"
 version = "0.0.0"
 requires-python = ">=3.12"
+# Runtime packages for the CLI, the backend, and the AI service. Deployment
+# images install only this set with `uv sync --locked --no-dev`.
+dependencies = [
+    "ortools==9.15.6755",
+    "pandas",
+    "ruamel.yaml",
+    "pydantic",
+    "openpyxl", # For XLSX input and output support
+    "defusedxml", # For parsing untrusted XLSX XML safely
+    "Pillow", # For Pi-compatible image reads
+    "jinja2", # For prettifying output
+    "markdown-it-py[linkify]>=4.2.0", # For safe GFM chat export rendering
+    # PuLP is pure Python with a bundled CBC binary, so it stays in the minimal set.
+    # PuLP 4 rebuilds the HiGHS model path, so upgrade it with a solver review.
+    "pulp>=3.3.2,<4",
+    # For web backend
+    "fastapi[standard]",
+    "httpx",
+    "python-multipart",
+    "redis",
+    "psycopg[binary]>=3.3.5", # For durable AI chat history
+    "e2b==2.46.0", # For isolated AI sandbox execution and template builds
+    # For error tracking
+    "sentry-sdk",
+]
+
+# Optional solver backends on top of OR-Tools and PuLP/CBC. Development and CI
+# install them with `--all-extras`.
+[project.optional-dependencies]
+# highspy must match the HiGHS 1.12.0 that OR-Tools 9.15 bundles. Another
+# version in the same process crashes OR-Tools MathOpt HiGHS solves. highspy
+# 1.12.0 has no CPython 3.14 wheel, so Python 3.14 omits PuLP/HiGHS.
+highs = ["highspy==1.12.0; python_version < '3.14'"]
+# pyscipopt bundles SCIP. Pin it because the pulp/scip regression tests
+# compare exact schedules.
+scip = [
+    "pyscipopt==6.3.0",
+]
+
+[dependency-groups]
+# The E2B template installs these for sandbox scripts and attachment tools.
+# The server never imports pypdf or pypdfium2. Only the sandbox and the core
+# tests need them. tests/test_dependency_lock.py checks the template pins.
+sandbox = [
+    "openpyxl",
+    "defusedxml",
+    "Pillow",
+    "pypdf>=7.1.1", # For PDF text and embedded-image inspection
+    "pypdfium2>=5.13.0", # For bounded PDF page rendering in the sandbox
+    "ruamel.yaml",
+]
+lint = ["ruff"]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "fakeredis",
+    "pyyaml>=6.0.3", # For tests that read YAML with PyYAML
+    "ty==0.0.107",
+    { include-group = "lint" },
+    { include-group = "sandbox" },
+]
+
+[tool.uv]
+# The cuOpt dev image venv also reads the base image's cuOpt stack. Keep the
+# NumPy and pandas versions that its Numba and cuDF accept on every Python
+# version, so CI tests the versions that the cuOpt image runs. cuOpt 26.8
+# installs Numba 0.64, which needs NumPy below 2.5, and cuDF 26.8, which needs
+# pandas below 3.0.4.
+constraint-dependencies = [
+    "numpy<2.5",
+    "pandas<3.0.4",
+]
 
 [tool.pytest.ini_options]
 # Exclude legacy AI modules before import through tests/conftest.py.

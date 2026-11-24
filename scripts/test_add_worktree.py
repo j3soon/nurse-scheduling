@@ -1,4 +1,4 @@
-"""Check that agent worktrees stay isolated and survive a changed mount path."""
+"""Check that agent worktrees stay isolated, survive a changed mount path, and keep staging settings."""
 
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Johnson Sun
@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HELPER = ROOT / "scripts/add_worktree.sh"
+REMOVER = ROOT / "scripts/remove_worktree.sh"
 
 
 class AgentWorktreeTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class AgentWorktreeTests(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "--local", "user.name", "Worktree Test")
         self.git("config", "--local", "user.email", "worktree-test@example.invalid")
-        (self.root / ".gitignore").write_text("/.worktrees/\n", encoding="utf-8")
+        (self.root / ".gitignore").write_text("/.worktrees/\n.env.*\n", encoding="utf-8")
         (self.root / "shared.txt").write_text("original\n", encoding="utf-8")
         self.git("add", ".")
         self.git("commit", "-qm", "Seed worktree fixture")
@@ -39,8 +40,14 @@ class AgentWorktreeTests(unittest.TestCase):
         ).strip()
 
     def add(self, *args, cwd=None, env=None):
+        return self.run_script(HELPER, *args, cwd=cwd, env=env)
+
+    def remove(self, *args, env=None):
+        return self.run_script(REMOVER, *args, env=env)
+
+    def run_script(self, script, *args, cwd=None, env=None):
         return subprocess.run(
-            ["bash", str(HELPER), *args],
+            ["bash", str(script), *args],
             cwd=cwd or self.root,
             env=env,
             text=True,
@@ -48,6 +55,12 @@ class AgentWorktreeTests(unittest.TestCase):
             timeout=20,
             check=False,
         )
+
+    def write_staging_env(self, root, text):
+        path = root / "docker/.env.staging"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
 
     def test_parallel_checkouts_survive_a_different_mount_path(self):
         with ThreadPoolExecutor(max_workers=2) as workers:
@@ -141,6 +154,95 @@ class AgentWorktreeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Git 2.48+", result.stderr)
         self.assertFalse((self.root / ".worktrees").exists())
+
+    def test_new_checkout_receives_the_staging_env_file(self):
+        self.write_staging_env(self.root, "API_TOKEN=main\n")
+        self.assertEqual(self.add("feat/env").returncode, 0)
+        checkout = self.root / ".worktrees/feat/env"
+        self.assertEqual((checkout / "docker/.env.staging").read_text(encoding="utf-8"), "API_TOKEN=main\n")
+        self.assertEqual(self.git("status", "--porcelain", cwd=checkout), "")
+
+    def test_remove_requires_every_branch_commit_in_the_base(self):
+        self.git("branch", "dev")
+        self.assertEqual(self.add("fix/merge").returncode, 0)
+        checkout = self.root / ".worktrees/fix/merge"
+        (checkout / "shared.txt").write_text("fix\n", encoding="utf-8")
+        self.git("commit", "-qam", "Unmerged fix", cwd=checkout)
+        result = self.remove("fix/merge")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Unmerged fix", result.stderr)
+        self.assertTrue(checkout.exists())
+        self.git("branch", "-f", "dev", "fix/merge")
+        result = self.remove("fix/merge")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(checkout.parent.exists())
+
+    def test_remove_waits_for_a_decision_on_a_changed_staging_env(self):
+        self.git("branch", "dev")
+        main_env = self.write_staging_env(self.root, "KEEP=1\nTOKEN=old-secret\nDROP=1\n")
+        changed = "KEEP=1\nTOKEN=new-secret\nADDED=1\n"
+        for name in ("fix/keep", "fix/update"):
+            self.assertEqual(self.add(name).returncode, 0)
+            self.write_staging_env(self.root / ".worktrees" / name, changed)
+        result = self.remove("fix/keep")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        for line in ("added: ADDED", "removed: DROP", "changed: TOKEN"):
+            self.assertIn(line, result.stderr)
+        self.assertNotIn("secret", result.stdout + result.stderr)
+        self.assertTrue((self.root / ".worktrees/fix/keep").exists())
+        self.assertEqual(self.remove("fix/keep", "--keep-env-staging").returncode, 0)
+        self.assertIn("TOKEN=old-secret", main_env.read_text(encoding="utf-8"))
+        self.assertEqual(self.remove("fix/update", "--update-env-staging").returncode, 0)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), changed)
+
+    def test_remove_keeps_a_main_staging_env_changed_after_the_copy(self):
+        self.git("branch", "dev")
+        main_env = self.write_staging_env(self.root, "TOKEN=old\n")
+        self.assertEqual(self.add("fix/stale").returncode, 0)
+        main_env.write_text("TOKEN=rotated\n", encoding="utf-8")
+        result = self.remove("fix/stale")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Only the main clone changed", result.stdout)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), "TOKEN=rotated\n")
+
+    def test_remove_explains_how_to_recover_from_a_partial_staging_env_write(self):
+        self.git("branch", "dev")
+        main_env = self.write_staging_env(self.root, "TOKEN=old\n")
+        self.assertEqual(self.add("fix/env").returncode, 0)
+        checkout = self.root / ".worktrees/fix/env"
+        changed = "TOKEN=new\n"
+        worktree_env = self.write_staging_env(checkout, changed)
+
+        shim_dir = Path(self.temporary.name) / "bin"
+        shim_dir.mkdir()
+        shim = shim_dir / "cat"
+        shim.write_text(
+            '#!/bin/sh\n'
+            'if [ "${2:-}" = "$WORKTREE_TEST_STAGING_ENV" ]; then printf "TOKEN="; exit 1; fi\n'
+            'exec "$WORKTREE_TEST_REAL_CAT" "$@"\n',
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        result = self.remove(
+            "fix/env",
+            "--update-env-staging",
+            env={
+                **os.environ,
+                "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}",
+                "WORKTREE_TEST_REAL_CAT": shutil.which("cat"),
+                "WORKTREE_TEST_STAGING_ENV": str(worktree_env),
+            },
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), "TOKEN=")
+        self.assertEqual(worktree_env.read_text(encoding="utf-8"), changed)
+        self.assertIn("It may be incomplete.", result.stderr)
+        self.assertIn("restore the main file from a backup before using --keep-env-staging", result.stderr)
+
+        result = self.remove("fix/env", "--update-env-staging")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(main_env.read_text(encoding="utf-8"), changed)
+        self.assertFalse(checkout.exists())
 
 
 if __name__ == "__main__":

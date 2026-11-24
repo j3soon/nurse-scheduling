@@ -11,12 +11,10 @@ On Windows, enable Git symlink support or build in Linux or WSL. A checkout that
 replaces symlinks with plain text does not render those pages correctly.
 
 ```sh
-# create virtual environment
-uv venv --python 3.12 docs/.venv
+# create docs/.venv with the locked dependencies
+uv sync --locked --project docs --python 3.14
 # activate virtual environment
 source docs/.venv/bin/activate
-# install dependencies
-uv pip install -r docs/requirements.txt
 # preview documentation on the port used by local page-help links
 zensical serve
 ```

@@ -1,6 +1,6 @@
 ---
 name: run-ci
-description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs offline vendor integrity checks, documentation link-checker tests, core lint, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
+description: Run and fix the repository's local CI checks when asked to "Run CI", "Run all CI", or verify all CI locally. Runs offline vendor integrity checks, documentation link-checker and worktree helper tests, dependency pin checks, core lint and type checks, and the primary core pytest suite with coverage for CP-SAT and CBC, excluding optional backend sweeps and explicit real-scenario tests, then runs frontend lint, build, unit coverage, and Playwright E2E tests. Fix failures and rerun until the full script passes.
 ---
 
 # Run CI
@@ -18,21 +18,22 @@ working directory.
 
 Check `test -f /.dockerenv` first, per the root `AGENTS.md` environment
 rules. Pass the repository root from `git rev-parse --show-toplevel`
-(`/app` in a dev container), and never create a virtual environment
-inside a dev container, where project packages are installed system-wide.
+(`/app` in a dev container), and never create another virtual environment
+inside a dev container, where the active `/opt/venv` holds the locked packages.
 
 The script intentionally:
 
 - Runs offline vendor integrity checks and their regression tests, followed by
-  documentation link-checker regression tests, before the module checks.
+  documentation link-checker and worktree helper regression tests and the
+  dependency pin check, before the module checks.
   The Check Vendor Integrity workflow separately compares the pinned upstream
   npm package. Local CI does not require that network request.
 - Uses `--solver-profile=primary` for the complete CP-SAT and CBC schedule
   fixture sweeps, CP-SAT workbook fixtures, and low-level OR-Tools adapters.
   Other backend sweeps remain available with `--solver-profile=all`.
 - Does not explicitly run the three `core/tests/real/schedule_*.py` scenarios.
-- Runs core Ruff format checking, Ruff lint, and the remaining normal pytest
-  suite with coverage.
+- Runs core Ruff format checking, Ruff lint, the ty type check, and the
+  remaining normal pytest suite with coverage.
 - Uses compact test output flags to keep CI output small. pytest uses the
   flags from `scripts/test_core_affected.sh`
   (`-q --tb=short --disable-warnings --maxfail=1`). Playwright uses

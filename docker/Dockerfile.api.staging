@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl redis-tools \
@@ -10,10 +10,16 @@ RUN useradd -m -u 1000 user \
 
 WORKDIR /app/nurse-scheduling/core
 
-COPY --chown=user:user core/requirements.txt ./requirements.txt
+COPY --chown=user:user core/pyproject.toml core/uv.lock ./
 
-RUN --mount=type=cache,id=api-pip,target=/root/.cache/pip,sharing=locked \
-    pip install -r requirements.txt
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PATH="/opt/venv/bin:${PATH}"
+RUN --mount=from=ghcr.io/astral-sh/uv:0.13.9,source=/uv,target=/bin/uv \
+    --mount=type=cache,id=api-uv,target=/root/.cache/uv,sharing=locked \
+    uv sync --locked --no-dev
 
 COPY --chown=user:user core/ /app/nurse-scheduling/core/
 COPY --chown=user:user thirdparty/opencc/ /app/nurse-scheduling/thirdparty/opencc/

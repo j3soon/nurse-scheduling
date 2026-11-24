@@ -13,8 +13,9 @@ file and line that shows the control, or the reproduction when it is missing.
   as pgAdmin bind to `127.0.0.1` only.
 - The env file sets `API_AUTH_REQUIRED`, `AI_AUTH_REQUIRED`, and the cookie
   `Secure` flags as intended. Secret files stay ignored by Git.
-- Third-party images use pinned tags. The `cloudflared` image holds the tunnel
-  token.
+- Third-party images use pinned tags. `cloudflared` follows its `latest` tag on
+  purpose, so do not report it as unpinned. The `cloudflared` image holds the
+  tunnel token.
 - NGINX replaces `X-Forwarded-For` with `CF-Connecting-IP` and bounds request
   bodies and timeouts for each route.
 

@@ -8,6 +8,7 @@ set -euo pipefail
 if [[ ${1:-} == --help ]]; then
   echo 'Usage: scripts/add_worktree.sh TYPE/NAME [BASE_REF]'
   echo 'Create a branch such as fix/api in .worktrees/fix/api using relative Git paths (Git 2.48+).'
+  echo 'Copy the main clone docker/.env.staging into it when that file exists.'
   exit 0
 fi
 if (($# < 1 || $# > 2)) ||
@@ -49,3 +50,14 @@ fi
 mkdir -p -- "$type_dir"
 git worktree add --relative-paths -b "$branch" -- "$worktree_path" "$base_ref"
 printf 'Worktree: %s\nBranch: %s\n' "$worktree_path" "$branch"
+
+# Copy the ignored staging settings and record the copied version, so
+# remove_worktree.sh can tell whether the checkout changed them.
+env_file=docker/.env.staging
+if [[ -f "$root_dir/$env_file" ]]; then
+  mkdir -p -- "$worktree_path/docker"
+  cp -p -- "$root_dir/$env_file" "$worktree_path/$env_file"
+  git hash-object --no-filters -- "$worktree_path/$env_file" \
+    > "$(git -C "$worktree_path" rev-parse --absolute-git-dir)/env-staging.copied"
+  printf 'Copied: %s\n' "$env_file"
+fi

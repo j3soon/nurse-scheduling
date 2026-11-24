@@ -205,9 +205,13 @@
   SVG in a closed shadow root, so an SVG locator cannot detect it.
 - Run `zensical build --clean --strict` from the repository root and
   `git diff --check` before finishing. Dev images do not include the docs
-  dependencies. Install them outside the repository with
-  `python -m pip install --target /tmp/docs-deps -r docs/requirements.txt`,
-  then run `PYTHONPATH=/tmp/docs-deps python -m zensical build --clean --strict`.
+  dependencies. Sync them outside the repository with
+  `UV_PROJECT_ENVIRONMENT=/tmp/docs-venv uv sync --locked --project docs`,
+  then run `/tmp/docs-venv/bin/python -m zensical build --clean --strict`.
+  Never pass `--active` here. An exact sync of the docs project into the
+  active `/opt/venv` removes the core packages.
+- Change docs dependencies with `uv add --project docs` and commit
+  `docs/pyproject.toml` with `docs/uv.lock`.
 - When changing the link checker, run
   `python -m unittest discover -s scripts -p test_check_docs_links.py`.
 - Run `python scripts/check_docs_links.py` after the build. It checks pages,
