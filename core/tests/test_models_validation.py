@@ -361,7 +361,7 @@ def test_model_rejects_unsupported_backend_semantics(mutate, message):
         ScheduleSpec.model_validate(payload)
 
 
-def test_export_weight_range_rejects_nan():
+def _weight_range_payload(weight_range: list[int | float]) -> dict:
     payload = _base_payload()
     payload["export"] = {
         "formatting": [
@@ -371,9 +371,18 @@ def test_export_weight_range_rejects_nan():
                 "dates": ["ALL"],
                 "shiftTypes": ["ALL"],
                 "backgroundColor": "#ffffff",
-                "when": {"preference": {"types": ["shift request"], "weightRange": [float("nan"), 10]}},
+                "when": {"preference": {"types": ["shift request"], "weightRange": weight_range}},
             }
         ]
     }
+    return payload
+
+
+def test_export_weight_range_rejects_nan():
     with pytest.raises(ValueError, match="weightRange"):
-        ScheduleSpec.model_validate(payload)
+        ScheduleSpec.model_validate(_weight_range_payload([float("nan"), 10]))
+
+
+def test_export_weight_range_accepts_integer_bounds_beyond_float_range():
+    # math.isnan converts an int to float, which overflows for bounds like this one.
+    ScheduleSpec.model_validate(_weight_range_payload([0, 10**400]))

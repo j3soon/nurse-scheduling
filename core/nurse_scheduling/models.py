@@ -967,7 +967,9 @@ def _compile_export(data, people_map, shift_map, date_map):
             weight_range = rule.when.preference.weightRange
             if weight_range is not None and len(weight_range) != 2:
                 raise ValueError("export formatting preference weightRange must contain exactly two values")
-            if weight_range is not None and any(math.isnan(value) for value in weight_range):
+            if weight_range is not None and any(
+                isinstance(value, float) and math.isnan(value) for value in weight_range
+            ):
                 raise ValueError("export formatting preference weightRange values cannot be NaN")
             if weight_range is not None and weight_range[0] > weight_range[1]:
                 raise ValueError(
