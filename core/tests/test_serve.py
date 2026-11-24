@@ -2561,7 +2561,8 @@ def test_text_input_uses_configured_limit_above_multipart_text_default(path, fie
 
 
 @pytest.mark.parametrize("root_path", ["", "/api"])
-def test_chunked_upload_stops_reading_at_the_body_limit(root_path, monkeypatch):
+@pytest.mark.parametrize("multipart", [True, False], ids=["multipart", "urlencoded"])
+def test_chunked_submission_stops_reading_at_the_body_limit(root_path, multipart, monkeypatch):
     # A chunked request has no Content-Length, so the middleware must count received bytes.
     spooled = []
 
@@ -2572,15 +2573,21 @@ def test_chunked_upload_stops_reading_at_the_body_limit(root_path, monkeypatch):
 
     monkeypatch.setattr(formparsers, "SpooledTemporaryFile", RecordingSpooledFile)
     app = create_app(settings=_settings(max_yaml_bytes=1024), start_background=False)
-    boundary = b"----chunked-limit"
-    chunks = [
-        b"--"
-        + boundary
-        + b'\r\nContent-Disposition: form-data; name="schedule_spec_file"; filename="schedule.yaml"\r\n'
-        b"Content-Type: application/x-yaml\r\n\r\n",
-        *[b"a" * 32_768] * 8,
-        b"\r\n--" + boundary + b"--\r\n",
-    ]
+    yaml_chunks = [b"a" * 32_768] * 8
+    if multipart:
+        boundary = b"----chunked-limit"
+        content_type = b"multipart/form-data; boundary=" + boundary
+        chunks = [
+            b"--"
+            + boundary
+            + b'\r\nContent-Disposition: form-data; name="schedule_spec_file"; filename="schedule.yaml"\r\n'
+            b"Content-Type: application/x-yaml\r\n\r\n",
+            *yaml_chunks,
+            b"\r\n--" + boundary + b"--\r\n",
+        ]
+    else:
+        content_type = b"application/x-www-form-urlencoded"
+        chunks = [b"schedule_spec_yaml=", *yaml_chunks]
     path = f"{root_path}/schedule_spec/optimize"
     scope = {
         "type": "http",
@@ -2592,7 +2599,7 @@ def test_chunked_upload_stops_reading_at_the_body_limit(root_path, monkeypatch):
         "raw_path": path.encode(),
         "root_path": root_path,
         "query_string": b"",
-        "headers": [(b"content-type", b"multipart/form-data; boundary=" + boundary)],
+        "headers": [(b"content-type", content_type)],
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
     }
@@ -2615,7 +2622,9 @@ def test_chunked_upload_stops_reading_at_the_body_limit(root_path, monkeypatch):
 
     assert messages[0]["status"] == 413
     assert consumed < sum(len(chunk) for chunk in chunks)
-    assert spooled and all(file.closed for file in spooled)
+    assert bool(spooled) is multipart
+    assert all(file.closed for file in spooled)
+    assert json.loads(messages[1]["body"])["detail"] == "Schedule Spec YAML is too large"
 
 
 AUTH_TOKEN = "integration-shared-token"
