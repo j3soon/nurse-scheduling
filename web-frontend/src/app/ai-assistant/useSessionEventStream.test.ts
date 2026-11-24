@@ -47,6 +47,11 @@ describe('session event connection ownership', () => {
     const { result, readers, options } = setup();
     act(() => result.current.connect({ ...options, resetReplay: true }));
     readers[0].callbacks.onEventId?.(7);
+    readers[0].callbacks.onEvent({
+      type: 'session_reset',
+      reset: { runIds: [], activeRunId: null, terminalRunIds: [], incomplete: false },
+    });
+    options.onEvent.mockClear();
     readers[0].end();
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(readers).toHaveLength(2);
@@ -58,6 +63,25 @@ describe('session event connection ownership', () => {
     expect(options.onEvent).toHaveBeenCalledExactlyOnceWith({ type: 'delta', text: 'current' });
     expect(result.current.cursor.current).toBe(7);
     expect(options.onDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the reset request after an empty reader closes and after the token changes', async () => {
+    const { result, readers, options } = setup();
+    act(() => result.current.connect({ ...options, resetReplay: true }));
+    readers[0].end();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(readers[1].callbacks.reset).toBe(true);
+
+    act(() => result.current.connect({ ...options, authToken: 'replacement' }));
+    expect(readers[2].callbacks.reset).toBe(true);
+    readers[2].callbacks.onEvent({
+      type: 'session_reset',
+      reset: { runIds: [], activeRunId: null, terminalRunIds: [], incomplete: false },
+    });
+    readers[2].callbacks.onEventId?.(7);
+    readers[2].end();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(readers[3].callbacks).toMatchObject({ lastEventId: 7, reset: false });
   });
 
   it('keeps retry ownership during backoff and cancels it when credentials change or the page unmounts', async () => {

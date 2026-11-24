@@ -1434,6 +1434,7 @@ export function useAiChat({ scheduleSpecYaml, aiEndpoint, authRequired, authToke
     sessionNotice, trimmedHistoryCount, isStreaming, isStopping, isReconnecting,
     activeOptimization, queuedMessages, steeringAssistantId,
     setSessionRetentionSeconds, restoreConversation, captureSession,
+    retrySessionEventStream: sessionEvents.retryStopped,
     newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles, compactContext, isCompacting,
     sessionEndpoint: sessionEndpoint ?? aiEndpoint,

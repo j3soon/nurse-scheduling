@@ -1097,6 +1097,32 @@ describe('AiAssistantPage', () => {
     expect(stored.messages[0]).toEqual(expect.objectContaining({ content: 'Partial answer.', status: 'pending' }));
   });
 
+  it('retries the reader when a remembered token is saved again after rejection', async () => {
+    const user = userEvent.setup();
+    const token = 'remembered-token';
+    let failStream!: (error: unknown) => void;
+    mockStreamSessionEvents
+      .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failStream = reject; }))
+      .mockImplementation(() => new Promise<void>(() => {}));
+    window.localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { '/ai': token } }));
+    window.sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'restored-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: 'description: current Schedule Spec\n',
+      messages: [{ id: 'optimizer-turn', role: 'assistant', content: 'Partial ', status: 'pending' }],
+      sessionEventId: 4, backgroundAssistantId: 'optimizer-turn',
+    }));
+
+    render(<AiAssistantPage />);
+    await waitFor(() => expect(failStream).toBeDefined());
+    await act(async () => failStream(new MockAiHttpError('Unauthorized', 401)));
+    const save = await screen.findByRole('button', { name: 'Save token for AI assistant' });
+    await user.click(save);
+
+    expect(mockStreamSessionEvents).toHaveBeenCalledTimes(2);
+    expect(mockStreamSessionEvents.mock.calls[1][3]).toBe(token);
+    expect(mockStreamSessionEvents.mock.calls[1][1].lastEventId).toBe(4);
+  });
+
   it('preserves stopping state when session_reset replays an active background run', async () => {
     const user = userEvent.setup();
     let streamCallbacks: SessionStreamOptions | undefined;

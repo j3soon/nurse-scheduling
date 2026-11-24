@@ -310,7 +310,7 @@ export default function AiAssistantPage() {
     messages, uploadedFiles, removingUploadId, removingDownloadId, contextUsage, costSummary, activeSessionId,
     sessionExpiresAt, sessionRetentionSeconds, conversationUnavailable, sessionNotice, trimmedHistoryCount,
     isStreaming, isStopping, isReconnecting, activeOptimization, queuedMessages, steeringAssistantId,
-    setSessionRetentionSeconds, restoreConversation,
+    setSessionRetentionSeconds, restoreConversation, retrySessionEventStream,
     captureSession, newConversation, submitMessage, stop, removeUploadedFile,
     removeGeneratedFiles, compactContext, isCompacting,
   } = useAiChat({
@@ -604,6 +604,7 @@ export default function AiAssistantPage() {
 
   const saveAuthToken = (token: string, remember: boolean) => {
     if (token !== authToken) setSelection(undefined);
+    else if (authRejected) retrySessionEventStream();
     setAuthToken(token);
     setRememberAuthToken(remember);
     setIsEditingAuthToken(false);

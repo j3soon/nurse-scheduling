@@ -969,6 +969,40 @@ test('returns to the top of a long chat on desktop and mobile', async ({ page })
   }
 });
 
+test('reconnects an active AI reply after saving the same token again', async ({ page }) => {
+  const token = 'browser-ai-auth-token';
+  await mockAiBackend(page, [], false, token);
+  await page.addInitScript(savedToken => {
+    localStorage.setItem('nurse-scheduling-ai-auth', JSON.stringify({ tokens: { '/ai': savedToken } }));
+    sessionStorage.setItem('nurse-scheduling-ai-conversation', JSON.stringify({
+      sessionId: 'browser-session', endpoint: '/ai', expiresAt: Date.now() + 60_000,
+      retentionSeconds: 172800, syncedScheduleSpec: '',
+      messages: [{ id: 'active-run', role: 'assistant', content: 'Partial ', status: 'pending',
+        activity: [{ kind: 'response', text: 'Partial ' }] }],
+      backgroundAssistantId: 'active-run', sessionEventId: 4,
+    }));
+  }, token);
+  let reads = 0;
+  await page.route('**/v1/sessions/browser-session/events', async route => {
+    reads++;
+    if (reads === 1) {
+      await route.fulfill({ status: 401, json: { detail: 'Backend credentials are invalid.' } });
+    } else {
+      await route.fulfill({
+        status: 200, contentType: 'text/event-stream',
+        body: 'id: 5\nevent: delta\ndata: {"run_id":"active-run","text":"answer."}\n\n'
+          + 'id: 6\nevent: done\ndata: {"run_id":"active-run"}\n\n',
+      });
+    }
+  });
+
+  await page.goto('/ai-assistant');
+  await expect(page.getByRole('textbox', { name: 'Token for AI assistant' })).toHaveValue(token);
+  await page.getByRole('button', { name: 'Save token for AI assistant' }).click();
+  await expect(page.getByText('Partial answer.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+});
+
 test('authenticates AI session requests with an explicitly remembered token', async ({ page }) => {
   const authToken = 'browser-ai-auth-token';
   const captured = await mockAiBackend(
