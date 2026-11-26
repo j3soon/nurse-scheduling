@@ -738,6 +738,27 @@ and current session recovery working.
   parse events without building the structure, and both the API and `load_schedule_spec`
   refuse past either bound. Read untrusted data off the event loop.
 
+## Solver Formulations
+
+- For an integer expression with a known range, check whether an equality
+  target is at an endpoint before using a general Big-M reification. At the
+  upper endpoint, a mismatch can only be below the target. Use two
+  implications with coefficients derived from the domain width. A succession
+  count reaches its upper bound only when every day matches. The one-shift
+  constraint makes each day's match Boolean even when it sums several shifts.
+- Derive auxiliary variable domains from hard constraints already in the
+  model. For preferred staffing, the required minimum bounds the shortfall
+  because shortfall equals preferred staffing minus actual staffing. This
+  can help integer search even when the row count and root LP bound are
+  similar. Keep the constraints that establish the tighter bounds.
+- Diagnose a solver plateau by comparing the incumbent score with the root LP
+  bound and inspecting their progress separately. A tight bound with poor
+  incumbents points to difficulty finding good integer schedules. Check how
+  presolve, cuts, and heuristics affect that search before changing the
+  objective or raising the time limit. Use
+  [benchmark-solvers](../skills/benchmark-solvers/SKILL.md) for real-case
+  measurements and examples.
+
 ## Testing
 - Normal tests live under `tests/`.
 - Test ordering with equal timestamps and IDs whose lexical order differs from

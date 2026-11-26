@@ -143,7 +143,8 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   and the score reached within the budget. Repeat nondeterministic runs and
   record both correctness and performance evidence in the upgrade pull request.
   Use [benchmark-solvers](skills/benchmark-solvers/SKILL.md) for paired
-  real-case comparisons of solver versions or model formulations.
+  real-case comparisons of solver versions, formulations, and search settings.
+  The skill records the 87-person ward experiments and how to reproduce them.
 - Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
   CORS error for the APIs can mean the origin never responded, so isolate the
   hop before changing CORS or proxy configuration.
