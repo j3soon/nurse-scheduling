@@ -6,6 +6,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
+# Work around https://github.com/NVIDIA/cuopt/issues/1670. The cuOpt 26.10 Ubuntu image includes the fix.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Common Tools
 RUN apt-get update && apt-get install -y \
     ca-certificates \
