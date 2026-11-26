@@ -350,7 +350,7 @@ def schedule(
     if prettify and progress_callback is not None:
 
         def progress_callback_with_export(payload: ScheduleProgress) -> None:
-            if isinstance(payload, SchedulePhaseProgress):
+            if isinstance(payload, SchedulePhaseProgress) or not payload.assignment_available:
                 progress_callback(payload)
                 return
             df, cell_export_info = exporter.get_people_versus_date_dataframe(ctx, prettify=True)

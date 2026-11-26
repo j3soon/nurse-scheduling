@@ -646,6 +646,34 @@ def test_scheduler_ortools_progress_includes_solution_index():
     assert all(isinstance(event.solutionIndex, int) for event in solver_events)
 
 
+def test_scheduler_prettify_forwards_cuopt_log_score_before_assignment(monkeypatch):
+    events = []
+
+    def fake_solve(self, *, progress_callback, **kwargs):
+        payload = self._parse_solver_log_progress(
+            "S                             +4.478446e+12     +4.478447e+12      0.00%    104.00",
+            start_time=0,
+        )
+        assert payload is not None
+        progress_callback(payload)
+        return SolverStatus.UNKNOWN
+
+    monkeypatch.setattr("nurse_scheduling.solver_pulp_cuopt.PuLPCuOptSolver.solve", fake_solve)
+    result = scheduler.schedule(
+        _load_valid_yaml_bytes(),
+        solver="pulp/cuopt",
+        prettify=True,
+        progress_callback=events.append,
+    )
+
+    assert result.solver_status == "UNKNOWN"
+    [event] = [event for event in events if isinstance(event, SolverProgress)]
+    assert event.source == "pulp/cuopt:solver-log:subproblem"
+    assert event.currentBestScore == 4_478_446_000_000
+    assert event.df is None
+    assert event.cell_export_info is None
+
+
 def test_scheduler_ortools_prettify_progress_includes_export_info():
     events = []
     yaml_content = textwrap.dedent(

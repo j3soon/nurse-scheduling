@@ -49,6 +49,7 @@ class SolverProgress:
     solutionIndex: int | None = None
     df: Any | None = None
     cell_export_info: Any | None = None
+    assignment_available: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Return the API payload for this progress update."""

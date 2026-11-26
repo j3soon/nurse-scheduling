@@ -34,6 +34,7 @@ class PuLPCuOptSolver(BasePuLPSolver):
     # Targets:
     # - B ... <objective> <bound> ...: incumbent branch-and-bound report row.
     # - H <objective> <bound> ...: incumbent heuristic report row.
+    # - S <objective> <bound> ...: incumbent subproblem report row.
     # - New solution from primal heuristics. Objective <objective>. ...
     # - New solution from early primal heuristics (<name>). Objective <objective>. ...
     # - Optimal solution found at root node. Objective <objective>. ...
@@ -43,6 +44,7 @@ class PuLPCuOptSolver(BasePuLPSolver):
     _PROGRESS_PATTERNS = (
         ("branch-and-bound", re.compile(rf"^[A-Z]\s+\d+\s+\d+\s+{_NUMBER_RE}")),
         ("heuristic", re.compile(rf"^H\s+{_NUMBER_RE}")),
+        ("subproblem", re.compile(rf"^S\s+{_NUMBER_RE}")),
         (
             "primal-heuristic",
             re.compile(rf"New solution from (?:early )?primal heuristics(?: \([^)]+\))?\.\s+Objective\s+{_NUMBER_RE}"),
@@ -72,4 +74,5 @@ class PuLPCuOptSolver(BasePuLPSolver):
             source=f"pulp/cuopt:solver-log:{source}",
             currentBestScore=assert_int_score(raw_objective, label="PuLP/cuOpt progress score"),
             elapsedSeconds=round(time.monotonic() - start_time, 3),
+            assignment_available=False,
         )
