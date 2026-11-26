@@ -132,6 +132,16 @@ def test_create_bool_var_with_constraint_eq_matches_truth_table(k: int):
         assert y_value == expected
 
 
+def test_eq_at_upper_bound_uses_no_side_variable():
+    solver = PuLPSolver()
+    x = solver.new_int_var(-2, 3, "x")
+
+    solver.create_bool_var_with_constraint("is_max", x + 5, Operator.EQ, 8, (3, 8))
+
+    assert list(solver.variables) == ["x", "is_max"]
+    assert len(solver.model.constraints) == 2
+
+
 @pytest.mark.parametrize("k", [-1, 5])
 def test_create_bool_var_with_constraint_eq_out_of_range_is_always_zero(k: int):
     """If K is outside [m, M], EQ is impossible, so the reified variable must be 0."""

@@ -480,7 +480,29 @@ class BasePuLPSolver(SolverInterface):
             return var
 
         if operator == Operator.EQ:
-            # Compact exact reification for integer x in [m, M]:
+            if K < m or K > M:
+                return _fix_bool(0, "fixed_zero")
+            if K == M and m < M:
+                # Let x := source_expr, with integer x in [m, M].
+                # At the upper endpoint, x == K is equivalent to x >= M.
+                # A mismatch can only be below M, so no side variable is needed.
+                # The m < M condition selects a non-singleton range.
+                #
+                # Part A: (var = 0) => (x <= M - 1)
+                #   x <= M - 1 + var
+                # When var = 0, this row excludes x = M by forcing x <= M - 1.
+                # When var = 1, this row reduces to the existing bound x <= M.
+                #
+                # Part B: (var = 1) => (x >= M)
+                #   x >= m + (M - m) * var
+                # When var = 1, this row forces x = M together with x <= M.
+                # When var = 0, this row reduces to the existing bound x >= m.
+                # The coefficient M - m is the exact width of the domain.
+                self.add_constraint(source_expr <= M - 1 + var)
+                self.add_constraint(source_expr >= m + (M - m) * var)
+                return var
+
+            # Exact reification for a general target in integer x's range [m, M]:
             # (var = 1) <=> (x = K), where x := source_expr and K := target_value.
             #
             # Linearize the constraint with Big-M method.
@@ -508,9 +530,6 @@ class BasePuLPSolver(SolverInterface):
             #   B2: x - K >=  1 - (K - m + 1) * (1 - side_var) - var
             # When var = 0, B1/B2 force x != K for any side_var choice.
             # (when var = 1, B1/B2 have no effect, since x = K is allowed)
-            if K < m or K > M:
-                return _fix_bool(0, "fixed_zero")
-
             x_minus_k = source_expr - K
             side_var = self.new_bool_var(f"{name}_eq_side")
 
