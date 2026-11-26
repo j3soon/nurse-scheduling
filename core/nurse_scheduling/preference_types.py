@@ -150,9 +150,11 @@ def shift_type_requirements(
                 solver.add_constraint(actual_n_people <= preference.preferredNumPeople)
                 # Create a variable to track the difference between actual and preferred number of people
                 diff_var_name = f"pref_{preference_idx}_d_{d}_g_{group_idx}_diff"
-                ctx.model_vars[diff_var_name] = diff = solver.new_int_var(
-                    0, preference.preferredNumPeople, diff_var_name
+                max_shortfall = min(
+                    preference.preferredNumPeople,
+                    max(0, preference.preferredNumPeople - preference.requiredNumPeople),
                 )
+                ctx.model_vars[diff_var_name] = diff = solver.new_int_var(0, max_shortfall, diff_var_name)
                 solver.add_constraint(diff == preference.preferredNumPeople - actual_n_people)
 
                 # Add the objective
