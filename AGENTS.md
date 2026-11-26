@@ -136,6 +136,14 @@ Before modifying `core/` or `web-frontend/`, read its `AGENTS.md`.
   copy of the services. Never scan the public domain or the running deployment.
 - Upgrade dependencies with `skills/upgrade-dependencies`. Unless the user says
   otherwise, give each upgrade its own worktree and pull request.
+- When upgrading cuOpt or OR-Tools, require passing correctness tests and
+  comparable or better performance on representative real Schedule Specs.
+  Run the old and new versions on the same hardware with the same inputs,
+  solver settings, and time budgets. Compare time to a fixed quality target
+  and the score reached within the budget. Repeat nondeterministic runs and
+  record both correctness and performance evidence in the upgrade pull request.
+  Use [benchmark-solvers](skills/benchmark-solvers/SKILL.md) for paired
+  real-case comparisons of solver versions or model formulations.
 - Diagnose hanging backend requests with `skills/debug-backend-hangs`. A browser
   CORS error for the APIs can mean the origin never responded, so isolate the
   hop before changing CORS or proxy configuration.
